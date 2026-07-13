@@ -336,19 +336,34 @@ uv run doc-ui
 **Or start everything with one command:**
 
 ```bash
-uv run doc-app
-# or
+# Cross-platform (recommended if run.bat fails)
+python run_both.py
+# Windows also:
+py -3 run_both.py
+
+# Wrappers
 ./run.sh          # macOS / Linux
 run.bat           # Windows CMD
 .\run.ps1         # Windows PowerShell
+uv run doc-app    # via UV entry point
+```
+
+Install deps first if needed:
+
+```bash
+uv sync
+# or
+pip install -r requirements.txt
 ```
 
 Options:
 
 ```bash
-uv run doc-app --api-only    # FastAPI only
-uv run doc-app --ui-only     # Gradio only (API must already be running)
-uv run doc-app --no-wait     # Skip health check before UI
+python run_both.py --api-only    # FastAPI only
+python run_both.py --ui-only     # Gradio only (API must already be running)
+python run_both.py --no-wait     # Skip health check before UI
+python run_both.py --use-uv      # Force child processes via `uv run`
+uv run doc-app --api-only
 ```
 
 Open **http://127.0.0.1:7860**

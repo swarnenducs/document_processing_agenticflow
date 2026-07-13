@@ -18,6 +18,7 @@ from document_processing_agenticflow.ui.api_client import (
     wait_for_job,
 )
 
+# Allow: python -m document_processing_agenticflow.ui.gradio_app
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SAMPLE_TEMPLATE = PROJECT_ROOT / "samples" / "templates" / "invoice_template.docx"
 SAMPLE_JSON = PROJECT_ROOT / "samples" / "data" / "invoice.json"
