@@ -58,11 +58,37 @@ async def _save_upload(upload: UploadFile, dest: Path, allowed_suffixes: set[str
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    from document_processing_agenticflow.services.llm_factory import (
+        is_mapper_available,
+        is_validator_available,
+        mapper_config,
+        validator_config,
+    )
+    from document_processing_agenticflow.services.speech_to_text import resolve_speech_provider
+
     cfg = settings()
+    mapper = mapper_config()
+    validator = validator_config()
+    mapper_ok = is_mapper_available()
+    validator_ok = is_validator_available()
+    try:
+        resolve_speech_provider()
+        speech_ok = True
+    except Exception:  # noqa: BLE001
+        speech_ok = False
+
     return HealthResponse(
         storage_base_path=str(cfg.storage_base_path),
         sqlite_database_path=str(cfg.sqlite_database_path),
         speech_provider=cfg.speech_provider,
+        mapper_provider=mapper.provider,
+        mapper_model=mapper.model,
+        mapper_available=mapper_ok,
+        validator_provider=validator.provider,
+        validator_model=validator.model,
+        validator_available=validator_ok,
+        speech_available=speech_ok,
+        status="ok" if mapper_ok else "degraded",
     )
 
 
@@ -221,13 +247,14 @@ async def transcribe_voice(
     ),
     provider: str | None = Form(
         default=None,
-        description="Override SPEECH_PROVIDER: openai | groq",
+        description="Override SPEECH_PROVIDER: auto | openai | groq",
     ),
 ) -> TranscriptionResponse:
     """
     Voice / audio → natural language text (speech-to-text).
 
-    Uses OpenAI Whisper or Groq Whisper per SPEECH_PROVIDER env.
+    Uses OpenAI Whisper or Groq Whisper. With SPEECH_PROVIDER=auto (default),
+    picks OpenAI when OPENAI_API_KEY is set, otherwise Groq.
     """
     transcription_id = str(uuid.uuid4())
     suffix = Path(audio.filename or "audio.wav").suffix.lower()

@@ -8,7 +8,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load project-root `.env` so keys work even if the process cwd differs
+# (common on Windows when starting the API from another folder).
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv()  # optional cwd `.env` fills any remaining unset keys
 
 
 def _path_from_env(key: str, default: str) -> Path:
@@ -40,7 +44,7 @@ class Settings:
     gradio_port: int
 
     # Speech-to-text (voice → natural language text)
-    speech_provider: str  # openai | groq
+    speech_provider: str  # auto | openai | groq
     openai_whisper_model: str
     groq_whisper_model: str
 
@@ -77,7 +81,7 @@ def get_settings() -> Settings:
         job_ttl_hours=int(os.getenv("JOB_TTL_HOURS", "24")),
         gradio_host=os.getenv("GRADIO_HOST", "127.0.0.1"),
         gradio_port=int(os.getenv("GRADIO_PORT", "7860")),
-        speech_provider=os.getenv("SPEECH_PROVIDER", "openai").lower(),
+        speech_provider=os.getenv("SPEECH_PROVIDER", "groq").lower(),
         openai_whisper_model=os.getenv("OPENAI_WHISPER_MODEL", "whisper-1"),
         groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
     )
@@ -92,3 +96,10 @@ def settings() -> Settings:
         _settings = get_settings()
         _settings.ensure_directories()
     return _settings
+
+
+def reload_settings() -> Settings:
+    """Re-read env (useful in tests)."""
+    global _settings
+    _settings = None
+    return settings()

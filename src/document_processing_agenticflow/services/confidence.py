@@ -120,14 +120,14 @@ def build_confidence_report(
     mapper_llm = None
     if mapping and mapping.mapper_provider and mapping.mapper_model:
         mapper_llm = f"{mapping.mapper_provider}/{mapping.mapper_model}"
-    elif mapping and mapping.mapper_source == "rules":
-        mapper_llm = "rules"
+    elif mapping and mapping.mapper_source:
+        mapper_llm = mapping.mapper_source
 
     validator_llm = None
     if validation and validation.validator_provider and validation.validator_model:
         validator_llm = f"{validation.validator_provider}/{validation.validator_model}"
-    elif validation and validation.validator_source == "rules":
-        validator_llm = "rules"
+    elif validation and validation.validator_source:
+        validator_llm = validation.validator_source
 
     scores_pct = scores_to_percent_dict(
         overall=overall,

@@ -102,6 +102,25 @@ def _env(key: str, default: str | None = None) -> str | None:
     return value.strip()
 
 
+def _is_placeholder_value(value: str | None) -> bool:
+    """True for empty or template placeholders left in .env."""
+    if not value or not value.strip():
+        return True
+    lowered = value.strip().lower()
+    markers = (
+        "your_resource",
+        "your-resource",
+        "your_key",
+        "your-key",
+        "paste_your",
+        "changeme",
+        "placeholder",
+        "example.openai.azure.com",
+        "<",
+    )
+    return any(m in lowered for m in markers)
+
+
 def _role_prefix(role: str) -> str:
     return role.upper()  # MAPPER / VALIDATOR / AGENT
 
@@ -191,7 +210,9 @@ def _resolve_api_key(role: str, provider: str) -> str | None:
     if provider == "openai":
         return _env("OPENAI_API_KEY")
     if provider == "azure_openai":
-        return _env("AZURE_OPENAI_API_KEY") or _env("OPENAI_API_KEY")
+        # Do not fall back to OPENAI_API_KEY — that masks missing Azure config
+        # and causes silent rule fallback when the Azure call fails.
+        return _env("AZURE_OPENAI_API_KEY")
     if provider == "groq":
         return _env("GROQ_API_KEY")
     if provider == "openai_compatible":
@@ -220,7 +241,7 @@ def _resolve_base_url(role: str, provider: str) -> str | None:
         candidates = []
 
     for raw in candidates:
-        if raw:
+        if raw and not _is_placeholder_value(raw):
             return raw.rstrip("/")
     return None
 
@@ -317,20 +338,57 @@ def _build_openai(config: LLMRoleConfig, temperature: float = 0) -> Any:
     return ChatOpenAI(**kwargs)
 
 
-def _build_azure_openai(config: LLMRoleConfig, temperature: float = 0) -> Any:
-    from langchain_openai import AzureChatOpenAI
+def _normalize_azure_endpoint(endpoint: str) -> tuple[str, str]:
+    """
+    Return (style, base_url).
 
+    - foundry_v1: Azure AI Foundry / ``*.services.ai.azure.com/.../openai/v1``
+      → use OpenAI-compatible ChatOpenAI(base_url=...)
+    - classic: ``*.openai.azure.com`` → use AzureChatOpenAI
+    """
+    url = endpoint.strip().rstrip("/")
+    for suffix in ("/responses", "/chat/completions", "/completions"):
+        if url.lower().endswith(suffix):
+            url = url[: -len(suffix)].rstrip("/")
+
+    if "services.ai.azure.com" in url.lower() or "/openai/v1" in url.lower():
+        if not url.lower().endswith("/openai/v1"):
+            url = f"{url}/openai/v1"
+        return "foundry_v1", url
+    return "classic", url
+
+
+def _build_azure_openai(config: LLMRoleConfig, temperature: float = 0) -> Any:
     api_key = _require_key(config, hint="AZURE_OPENAI_API_KEY")
     endpoint = config.base_url or _env("AZURE_OPENAI_ENDPOINT")
-    if not endpoint:
+    if not endpoint or _is_placeholder_value(endpoint):
         raise RuntimeError(
-            "Azure OpenAI requires AZURE_OPENAI_ENDPOINT (or MAPPER_BASE_URL / "
-            "VALIDATOR_BASE_URL)."
+            "Azure OpenAI requires a real AZURE_OPENAI_ENDPOINT "
+            "(or MAPPER_BASE_URL / VALIDATOR_BASE_URL)."
         )
+
+    style, base = _normalize_azure_endpoint(endpoint)
+
+    # Azure AI Foundry OpenAI v1 endpoint (chat via OpenAI-compatible client)
+    if style == "foundry_v1":
+        from langchain_openai import ChatOpenAI
+
+        kwargs: dict[str, Any] = {
+            "model": config.model,
+            "api_key": api_key,
+            "base_url": base,
+        }
+        # Some newer models reject custom temperature — only set when non-default
+        if temperature not in (None, 0, 0.0):
+            kwargs["temperature"] = temperature
+        return ChatOpenAI(**kwargs)
+
+    from langchain_openai import AzureChatOpenAI
+
     api_version = config.api_version or "2024-12-01-preview"
     return AzureChatOpenAI(
         azure_deployment=config.model,
-        azure_endpoint=endpoint,
+        azure_endpoint=base,
         api_key=api_key,
         api_version=api_version,
         temperature=temperature,
@@ -430,9 +488,9 @@ def provider_credentials_available(config: LLMRoleConfig) -> bool:
     if provider == "openai":
         return bool(config.api_key or _env("OPENAI_API_KEY"))
     if provider == "azure_openai":
-        has_key = bool(config.api_key or _env("AZURE_OPENAI_API_KEY") or _env("OPENAI_API_KEY"))
-        has_endpoint = bool(config.base_url or _env("AZURE_OPENAI_ENDPOINT"))
-        return has_key and has_endpoint
+        key = config.api_key or _env("AZURE_OPENAI_API_KEY")
+        endpoint = config.base_url or _env("AZURE_OPENAI_ENDPOINT")
+        return bool(key) and not _is_placeholder_value(key) and not _is_placeholder_value(endpoint)
     if provider == "groq":
         return bool(config.api_key or _env("GROQ_API_KEY"))
     if provider == "openai_compatible":

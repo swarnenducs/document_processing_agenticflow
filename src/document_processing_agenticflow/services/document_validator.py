@@ -1,9 +1,8 @@
-"""Validate generated Word docs against the template and source JSON (LLM #2 + rules)."""
+"""Validate generated Word docs against template + JSON using the validator LLM only."""
 
 from __future__ import annotations
 
 import json
-import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -17,11 +16,9 @@ from document_processing_agenticflow.models.schemas import (
     ValidationIssue,
     ValidationResult,
 )
-
 from document_processing_agenticflow.services.placeholders import PLACEHOLDER_REGEXES as LEFTOVER_PATTERNS
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-NS = {"w": W_NS}
 
 
 def _qn(tag: str) -> str:
@@ -56,103 +53,19 @@ def _find_leftovers(text: str) -> list[str]:
     return found
 
 
-def _rule_based_validation(
-    template: ExtractedTemplate,
-    generated_path: str | Path,
-    json_data: dict[str, Any],
-    mapping: MappingResult,
-) -> ValidationResult:
-    issues: list[ValidationIssue] = []
-    generated_text = _docx_plain_text(generated_path)
-
-    leftovers = _find_leftovers(generated_text)
-    unmapped = set(mapping.unmapped_placeholders)
-    for key in leftovers:
-        # Unmapped leftovers are expected (missing JSON fields); mapped leftovers are real bugs
-        severity = "medium" if key in unmapped else "high"
-        issues.append(
-            ValidationIssue(
-                severity=severity,  # type: ignore[arg-type]
-                field=key,
-                message=f"Leftover placeholder still present: <{key}> (or equivalent token)",
-                expected="filled value from JSON",
-                actual=f"<{key}>",
-            )
-        )
-
-    missing_values = 0
-    checked = 0
-    for item in mapping.mappings:
-        if item.value is None:
-            continue
-        value_str = str(item.value)
-        if not value_str:
-            continue
-        checked += 1
-        if value_str not in generated_text:
-            missing_values += 1
-            issues.append(
-                ValidationIssue(
-                    severity="high",
-                    field=item.placeholder,
-                    message="Mapped value not found in generated document",
-                    expected=value_str,
-                    actual=None,
-                )
-            )
-
-    for placeholder in mapping.unmapped_placeholders:
-        issues.append(
-            ValidationIssue(
-                severity="medium",
-                field=placeholder,
-                message="Placeholder was never mapped from JSON",
-            )
-        )
-
-    # Style part presence check (styles.xml should still exist)
-    with zipfile.ZipFile(generated_path, "r") as zf:
-        if "word/styles.xml" not in zf.namelist():
-            issues.append(
-                ValidationIssue(
-                    severity="high",
-                    field=None,
-                    message="word/styles.xml missing from generated document",
-                )
-            )
-
-    high = sum(1 for i in issues if i.severity == "high")
-    medium = sum(1 for i in issues if i.severity == "medium")
-    # Score: start at 1.0, subtract for issues
-    score = 1.0
-    score -= 0.15 * high
-    score -= 0.05 * medium
-    if checked:
-        score -= 0.1 * (missing_values / checked)
-    score = round(min(max(score, 0.0), 1.0), 4)
-
-    passed = high == 0 and score >= 0.7
-    return ValidationResult(
-        passed=passed,
-        validation_score=score,
-        issues=issues,
-        summary=(
-            f"Rule validator: {len(issues)} issue(s), "
-            f"{checked - missing_values}/{checked} mapped values found in output"
-            if checked
-            else f"Rule validator: {len(issues)} issue(s)"
-        ),
-        validator_source="rules",
-        validator_provider="rules",
-        validator_model=None,
-    )
+class _LLMValidationIssue(BaseModel):
+    severity: str = Field(default="medium", description="high | medium | low")
+    field: str = Field(default="", description="Placeholder or field name if known")
+    message: str = Field(description="What is wrong")
+    expected: str = Field(default="", description="Expected value or state")
+    actual: str = Field(default="", description="Actual value or state")
 
 
 class _LLMValidationPayload(BaseModel):
     passed: bool = False
     validation_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    issues: list[ValidationIssue] = Field(default_factory=list)
-    summary: str | None = None
+    issues: list[_LLMValidationIssue] = Field(default_factory=list)
+    summary: str = Field(default="")
 
 
 def _llm_validation(
@@ -160,22 +73,26 @@ def _llm_validation(
     generated_path: str | Path,
     json_data: dict[str, Any],
     mapping: MappingResult,
-) -> ValidationResult | None:
+) -> ValidationResult:
     from document_processing_agenticflow.services.llm_factory import (
         get_validator_llm,
         is_validator_available,
     )
 
     if not is_validator_available():
-        return None
+        raise RuntimeError(
+            "Validator LLM is required. Check VALIDATOR_PROVIDER credentials "
+            "(e.g. GROQ_API_KEY or Azure OpenAI settings)."
+        )
 
     try:
         llm, config = get_validator_llm(structured_schema=_LLMValidationPayload)
-    except (ImportError, RuntimeError, ValueError):
-        return None
+    except (ImportError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"Failed to build validator LLM: {exc}") from exc
 
     template_text = "\n".join(b.text for b in template.blocks if b.text.strip())
     generated_text = _docx_plain_text(generated_path)
+    leftovers = _find_leftovers(generated_text)
     mapping_summary = [
         {
             "placeholder": m.placeholder,
@@ -207,6 +124,7 @@ MAPPINGS:
 {json.dumps(mapping_summary, indent=2)[:8000]}
 
 UNMAPPED PLACEHOLDERS: {json.dumps(mapping.unmapped_placeholders)}
+DETECTED LEFTOVER PLACEHOLDER TOKENS IN OUTPUT: {json.dumps(leftovers)}
 
 Rules for scoring (validation_score 0-1):
 - 1.0 = all mapped values present, no leftover placeholders, structure intact
@@ -218,15 +136,26 @@ Rules for scoring (validation_score 0-1):
 
     try:
         result: _LLMValidationPayload = llm.invoke(prompt)  # type: ignore[assignment]
-    except Exception:
-        return None
-    source_tag = f"{config.provider}+rules" if config.provider != "rules" else config.provider
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Validator LLM invoke failed ({config.label}): {exc}") from exc
+
+    issues = [
+        ValidationIssue(
+            severity=i.severity if i.severity in {"high", "medium", "low"} else "medium",  # type: ignore[arg-type]
+            field=i.field or None,
+            message=i.message,
+            expected=i.expected or None,
+            actual=i.actual or None,
+        )
+        for i in result.issues
+    ]
+
     return ValidationResult(
         passed=result.passed,
         validation_score=round(min(max(result.validation_score, 0.0), 1.0), 4),
-        issues=result.issues,
+        issues=issues,
         summary=result.summary or f"Produced by LLM #2 validator ({config.label})",
-        validator_source=source_tag,
+        validator_source="llm",
         validator_provider=config.provider,
         validator_model=config.model,
     )
@@ -237,44 +166,6 @@ def validate_documents(
     generated_path: str | Path,
     json_data: dict[str, Any],
     mapping: MappingResult,
-    *,
-    prefer_llm: bool = True,
 ) -> ValidationResult:
-    """
-    Step 4: Validate template vs generated document vs JSON.
-    Uses a separate validator LLM when available; always merges with rule checks.
-    """
-    rules = _rule_based_validation(template, generated_path, json_data, mapping)
-
-    if not prefer_llm:
-        return rules
-
-    llm_result = _llm_validation(template, generated_path, json_data, mapping)
-    if llm_result is None:
-        return rules
-
-    # Merge: keep LLM score/summary, but always surface rule high-severity leftovers
-    merged_issues = list(llm_result.issues)
-    existing = {(i.field, i.message) for i in merged_issues}
-    for issue in rules.issues:
-        key = (issue.field, issue.message)
-        if key not in existing and issue.severity == "high":
-            merged_issues.append(issue)
-
-    high = any(i.severity == "high" for i in merged_issues)
-    # Conservative: take the min of LLM and rule scores when rules found high issues
-    score = llm_result.validation_score
-    if high:
-        score = min(score, rules.validation_score)
-
-    return ValidationResult(
-        passed=llm_result.passed and not high and score >= 0.7,
-        validation_score=round(score, 4),
-        issues=merged_issues,
-        summary=llm_result.summary,
-        validator_source=f"{llm_result.validator_provider}+rules"
-        if llm_result.validator_provider
-        else "llm+rules",
-        validator_provider=llm_result.validator_provider,
-        validator_model=llm_result.validator_model,
-    )
+    """Step 4: LLM-only validation of template vs generated document vs JSON."""
+    return _llm_validation(template, generated_path, json_data, mapping)

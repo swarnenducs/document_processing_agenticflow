@@ -10,7 +10,7 @@ For setup and API reference, see [README.md](README.md). For Azure Web Apps + Gi
 
 > This project fills a Word `.docx` template from JSON while **preserving original OOXML styles**.  
 > Orchestration is a **LangGraph state machine**: extract styles → map fields with **LLM #1 (OpenAI)** → generate the document → validate with an **independent LLM #2 (Groq)** → aggregate **confidence as percentages**.  
-> The same services power a **CLI**, **async FastAPI jobs** (SQLite + filesystem), a **Gradio UI**, and an optional **tool-calling agent**. Without API keys, deterministic rules still run so demos and tests stay reliable.
+> The same services power a **CLI**, **async FastAPI jobs** (SQLite + filesystem), a **Gradio UI**, and an optional **tool-calling agent**. Mapper and validator LLMs are required (no rule-based fallback).
 
 **One-liner variant:** “LangGraph document pipeline with dual-LLM map/validate, style-preserving OOXML generation, and job-based FastAPI + Gradio.”
 
@@ -66,7 +66,7 @@ For setup and API reference, see [README.md](README.md). For Azure Web Apps + Gi
 | `services/placeholders.py` | Token **syntax** only — design choice |
 | `services/field_mapper.py` | LLM #1 + rule fallback |
 | `services/document_generator.py` | OOXML rewrite + `table_fills` |
-| `services/document_validator.py` | LLM #2 + rules |
+| `services/document_validator.py` | LLM #2 critic |
 | `services/confidence.py` / `scoring.py` | Weighted overall + `%` for UI |
 | `api/routes.py` + `storage/job_store.py` | Async jobs, SQLite, files |
 | `ui/gradio_app.py` | Product surface; talks to API only |
@@ -101,7 +101,7 @@ Produces:
 - Computes **integrity** (e.g. leftover placeholders).
 
 ### 5.5 `validate_document` → `document_validator.validate_documents` (**LLM #2**)
-- Always runs deterministic rules.
+- Runs the critic LLM only (fails if validator credentials are missing).
 - Optionally merges critic LLM score/issues.
 - On high-severity leftovers, can take `min(llm_score, rule_score)`.
 
@@ -129,7 +129,7 @@ The critic should not share the same model bias as the mapper — classic *gener
 
 **Provider injection:** swap Azure OpenAI / Groq / local Ollama via env, or register a custom LangChain chat model builder without rewriting the pipeline.
 
-**Graceful degradation:** missing credentials → rules still produce a scored result (`mapper_source="rules"`, `validator_source="rules"`). Good for CI and local demos.
+**Graceful degradation:** none for mapping/validation — mapper and validator LLMs are required. Jobs fail clearly if credentials are missing.
 
 **Speech STT** (`speech_to_text.py`) is a separate Whisper path (OpenAI or Groq), not the map/validate pair.
 
@@ -257,7 +257,7 @@ Explain the elevator pitch, then whiteboard the graph, then answer 3 Q&As from �
 3. **Live CLI or UI** — Invoice sample; show output `.docx` and confidence %.  
 4. **Code jump** — Show `table_fills` in schemas + expand in generator.  
 5. **API** — Mention `202` job + poll + download; SQLite vs files.  
-6. **Tradeoffs** — BackgroundTasks vs queue; rules fallback; no auth / TTL cleanup.  
+6. **Tradeoffs** — BackgroundTasks vs queue; no auth / TTL cleanup.
 7. **Next steps** — Job TTL worker, Redis queue, auth, richer layout validation.
 
 Optional stretch: contract template with `<DATE>`, `<ACCOUNT NAME>`, and a products table — show LLM-driven table fills.
@@ -270,7 +270,7 @@ Optional stretch: contract template with `<DATE>`, `<ACCOUNT NAME>`, and a produ
 A: Explicit state, conditional edges (retry), observability of steps, same graph invocable from CLI/API; room to grow checkpoints/streaming later.
 
 **Q: Why not hardcode field aliases?**  
-A: Domain-specific dictionaries don’t generalize. We detect *syntax*; LLM (or exact-name rules) decides *semantics* from template + JSON.
+A: Domain-specific dictionaries don’t generalize. We detect *syntax*; the mapper LLM decides *semantics* from template + JSON.
 
 **Q: How do you preserve Word formatting?**  
 A: `.docx` is OOXML ZIP; we copy the package and rewrite `document.xml`, preserving run/paragraph properties where possible instead of recreating styles from scratch.

@@ -113,7 +113,7 @@ class TableFillPlan(BaseModel):
 
 
 class MappingResult(BaseModel):
-    """LLM (or rule-based) mapping of JSON data onto template fields."""
+    """LLM mapping of JSON data onto template fields."""
 
     mappings: list[FieldMapping] = Field(default_factory=list)
     table_fills: list[TableFillPlan] = Field(
@@ -182,7 +182,7 @@ class ValidationIssue(BaseModel):
 
 
 class ValidationResult(BaseModel):
-    """LLM #2 (or rule-based) validation of template vs generated doc vs JSON."""
+    """LLM #2 validation of template vs generated doc vs JSON."""
 
     passed: bool = False
     validation_score: float = Field(default=0.0, ge=0.0, le=1.0)

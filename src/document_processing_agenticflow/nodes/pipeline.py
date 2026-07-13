@@ -70,7 +70,7 @@ def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingSta
 
 
 def map_fields_node(state: DocumentProcessingState) -> DocumentProcessingState:
-    """Step 2 — map JSON data onto template placeholders (LLM #1 or rules)."""
+    """Step 2 — map JSON data onto template placeholders (LLM #1 required)."""
     errors = list(state.get("errors") or [])
     if state.get("status") == "failed":
         return state

@@ -28,25 +28,6 @@ def normalize_placeholder_key(raw: str) -> str:
     return re.sub(r"\s+", " ", key)
 
 
-def generic_key_variants(text: str) -> list[str]:
-    """
-    Mechanical string variants only (camelCase / snake_case).
-    No hardcoded business synonyms — LLM decides semantic matches.
-    """
-    h = text.strip()
-    if not h:
-        return []
-    lower = h.lower().replace("/", " ")
-    snake = re.sub(r"[^a-z0-9]+", "_", lower).strip("_")
-    parts = snake.split("_")
-    camel = parts[0] + "".join(p.title() for p in parts[1:]) if parts else snake
-    out: list[str] = []
-    for item in (h, h.strip(), snake, camel, lower):
-        if item and item not in out:
-            out.append(item)
-    return out
-
-
 def find_placeholders(text: str) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()

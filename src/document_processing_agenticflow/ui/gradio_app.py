@@ -65,7 +65,7 @@ def ui_transcribe(
 
     try:
         lang = language.strip() or None
-        prov = None if provider == "default" else provider
+        prov = None if provider in {"", "default", "auto"} else provider
         result = transcribe_audio_file(path, language=lang, provider=prov)
         return _format_transcription(result)
     except ApiError as exc:
@@ -97,6 +97,19 @@ def ui_generate_document(
     json_text: str,
     skip_validation: bool,
 ) -> tuple[str, str | None]:
+    try:
+        health = check_health()
+        if not health.get("mapper_available"):
+            return (
+                "**Mapper LLM is NOT available** — document generation requires LLM #1 "
+                "(rules fallback is disabled).\n\n"
+                f"Configured: `{health.get('mapper_provider')}/{health.get('mapper_model')}`\n\n"
+                "Fix credentials in `.env`, restart the API, then **Refresh API status**.",
+                None,
+            )
+    except ApiError as exc:
+        return f"Cannot reach API: {exc}", None
+
     template_path = _resolve_gradio_path(template_file)
     if not template_path:
         return "Upload a Word `.docx` template.", None
@@ -238,19 +251,42 @@ def ui_health() -> str:
     cfg = settings()
     try:
         health = check_health()
-        return (
-            f"API reachable at `{cfg.api_base_url}`\n\n"
-            f"- Storage: `{health.get('storage_base_path')}`\n"
-            f"- SQLite: `{health.get('sqlite_database_path')}`\n"
-            f"- Speech provider: `{health.get('speech_provider')}`"
-        )
     except ApiError as exc:
         return (
-            f"Cannot reach API at `{cfg.api_base_url}`.\n\n"
-            f"Start the backend first:\n\n"
-            f"```bash\nuv run doc-api\n```\n\n"
+            f"**API unreachable** at `{cfg.api_base_url}`\n\n"
+            f"Start the backend:\n\n"
+            f"```bash\npython run_both.py\n```\n\n"
             f"Error: {exc}"
         )
+
+    def _badge(ok: bool) -> str:
+        return "✅ available" if ok else "❌ NOT available"
+
+    mapper_ok = bool(health.get("mapper_available"))
+    validator_ok = bool(health.get("validator_available"))
+    speech_ok = bool(health.get("speech_available"))
+
+    lines = [
+        f"**API:** `{cfg.api_base_url}` · status `{health.get('status', 'ok')}`",
+        "",
+        "### LLM status (required — no rule-based fallback)",
+        f"- **LLM #1 Mapper:** {_badge(mapper_ok)} — "
+        f"`{health.get('mapper_provider')}/{health.get('mapper_model')}`",
+        f"- **LLM #2 Validator:** {_badge(validator_ok)} — "
+        f"`{health.get('validator_provider')}/{health.get('validator_model')}`",
+        f"- **Speech:** {_badge(speech_ok)} — `{health.get('speech_provider')}`",
+        "",
+        f"- Storage: `{health.get('storage_base_path')}`",
+    ]
+    if not mapper_ok:
+        lines.extend(
+            [
+                "",
+                "> **Document generate is blocked until mapper LLM is available.** "
+                "Set Azure credentials in `.env` and restart the API.",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def build_ui() -> gr.Blocks:
@@ -343,8 +379,9 @@ def build_ui() -> gr.Blocks:
                     )
                     provider = gr.Dropdown(
                         label="Speech provider",
-                        choices=["default", "openai", "groq"],
-                        value="default",
+                        choices=["auto", "groq", "openai", "azure_openai"],
+                        value="groq",
+                        info="Default Groq Whisper; auto picks Azure/OpenAI/Groq from available keys",
                     )
                     transcribe_btn = gr.Button("Transcribe", variant="primary")
                 with gr.Column():

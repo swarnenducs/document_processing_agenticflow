@@ -260,7 +260,7 @@ Exact-name rules are used only when the configured **mapper** provider has no cr
 uv run pytest
 ```
 
-Tests use rule-based fallback (no live API keys required).
+Tests exercise offline generation with manual mappings (no live API keys required). Mapper/validator require LLMs at runtime.
 
 ## FastAPI + storage
 

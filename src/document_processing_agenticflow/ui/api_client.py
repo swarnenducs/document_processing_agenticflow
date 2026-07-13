@@ -43,7 +43,7 @@ def transcribe_audio_file(
     data: dict[str, str] = {}
     if language:
         data["language"] = language
-    if provider and provider != "default":
+    if provider and provider not in {"default", "auto"}:
         data["provider"] = provider
 
     with path.open("rb") as fh:

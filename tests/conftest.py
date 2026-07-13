@@ -7,6 +7,14 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def no_llm_api_keys_in_tests(monkeypatch):
-    """Tests use rule-based fallback unless explicitly mocking LLM calls."""
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    """Clear live provider keys so unit tests never call external LLMs."""
+    for key in (
+        "OPENAI_API_KEY",
+        "GROQ_API_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_ENDPOINT",
+        "MAPPER_API_KEY",
+        "VALIDATOR_API_KEY",
+        "SPEECH_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)

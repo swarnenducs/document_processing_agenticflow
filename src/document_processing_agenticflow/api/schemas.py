@@ -52,3 +52,11 @@ class HealthResponse(BaseModel):
     storage_base_path: str
     sqlite_database_path: str
     speech_provider: str
+    # LLM availability for UI banners (no secrets)
+    mapper_provider: str | None = None
+    mapper_model: str | None = None
+    mapper_available: bool = False
+    validator_provider: str | None = None
+    validator_model: str | None = None
+    validator_available: bool = False
+    speech_available: bool = False

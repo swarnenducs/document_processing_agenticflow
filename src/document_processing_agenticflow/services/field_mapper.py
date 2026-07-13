@@ -1,4 +1,4 @@
-"""Map JSON onto Word template — LLM analyzes both; rules are exact-match fallback only."""
+"""Map JSON onto Word template using the mapper LLM only (no rule fallback)."""
 
 from __future__ import annotations
 
@@ -16,30 +16,42 @@ from document_processing_agenticflow.models.schemas import (
     TableFillPlan,
 )
 from document_processing_agenticflow.services.confidence import enrich_mapping_scores
-from document_processing_agenticflow.services.placeholders import generic_key_variants
+
+
+class _LLMFieldMapping(BaseModel):
+    """Azure/OpenAI-compatible schema — no Any / untyped fields."""
+
+    json_path: str = Field(description="Dot path into JSON, e.g. customer.name")
+    placeholder: str = Field(description="Exact placeholder key from the template")
+    value: str = Field(
+        default="",
+        description="Resolved value as a string (numbers/bools as text)",
+    )
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    rationale: str = Field(default="", description="Short reason for the match")
+
+
+class _LLMTableColumnMap(BaseModel):
+    header: str
+    json_field: str
+    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+
+
+class _LLMTableFillPlan(BaseModel):
+    table_index: int = Field(ge=0)
+    array_json_path: str
+    columns: list[_LLMTableColumnMap] = Field(default_factory=list)
+    rationale: str = Field(default="")
 
 
 class _LLMMappingPayload(BaseModel):
-    mappings: list[FieldMapping] = Field(default_factory=list)
-    table_fills: list[TableFillPlan] = Field(default_factory=list)
+    """Structured mapper output — all properties have explicit JSON types for Azure."""
+
+    mappings: list[_LLMFieldMapping] = Field(default_factory=list)
+    table_fills: list[_LLMTableFillPlan] = Field(default_factory=list)
     unmapped_json_keys: list[str] = Field(default_factory=list)
     unmapped_placeholders: list[str] = Field(default_factory=list)
-    notes: str | None = None
-
-
-def _flatten_json(data: Any, prefix: str = "") -> dict[str, Any]:
-    flat: dict[str, Any] = {}
-    if isinstance(data, dict):
-        for key, value in data.items():
-            path = f"{prefix}.{key}" if prefix else str(key)
-            flat.update(_flatten_json(value, path))
-    elif isinstance(data, list):
-        for idx, value in enumerate(data):
-            path = f"{prefix}[{idx}]"
-            flat.update(_flatten_json(value, path))
-    else:
-        flat[prefix] = data
-    return flat
+    notes: str = Field(default="")
 
 
 def _resolve_path(data: dict[str, Any], path: str) -> Any:
@@ -115,125 +127,19 @@ def _table_summaries(template: ExtractedTemplate) -> list[dict[str, Any]]:
     return summaries
 
 
-def _rule_based_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult:
-    """
-    Fallback ONLY when LLM is unavailable.
-    Exact / generic string-variant matches — no business synonym dictionary.
-    """
-    flat = _flatten_json(data)
-    leaf_index: dict[str, list[str]] = {}
-    for path in flat:
-        leaf = path.split(".")[-1].split("[")[0]
-        leaf_index.setdefault(leaf.lower(), []).append(path)
-
-    mappings: list[FieldMapping] = []
-    used_paths: set[str] = set()
-    mapped_placeholders: set[str] = set()
-
-    for placeholder in template.placeholders:
-        candidates = generic_key_variants(placeholder)
-        if "." in placeholder:
-            candidates.append(placeholder.split(".")[-1])
-
-        matched_path: str | None = None
-        for candidate in candidates:
-            if candidate in flat:
-                matched_path = candidate
-                break
-            leaf_hits = leaf_index.get(candidate.lower(), [])
-            if len(leaf_hits) == 1:
-                matched_path = leaf_hits[0]
-                break
-            value = _resolve_path(data, candidate)
-            if value is not None:
-                matched_path = candidate
-                break
-
-        if matched_path is None:
-            continue
-
-        value = flat.get(matched_path)
-        if value is None:
-            value = _resolve_path(data, matched_path)
-
-        block_id = next(
-            (b.block_id for b in template.blocks if placeholder in b.placeholder_keys),
-            None,
-        )
-        mappings.append(
-            FieldMapping(
-                json_path=matched_path,
-                placeholder=placeholder,
-                block_id=block_id,
-                value=value,
-                confidence=0.7,
-                rationale="Exact/generic string match (rule fallback — prefer LLM)",
-            )
-        )
-        used_paths.add(matched_path)
-        mapped_placeholders.add(placeholder)
-
-    # Naive table fill: if JSON has exactly one list-of-dicts and a table exists,
-    # leave columns empty for LLM; rules only attempt exact header==field name
-    table_fills: list[TableFillPlan] = []
-    tables = _table_summaries(template)
-    list_paths = [
-        k
-        for k, v in data.items()
-        if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)
-    ]
-    if tables and len(list_paths) == 1:
-        array_key = list_paths[0]
-        sample = data[array_key][0]
-        sample_keys = {str(k).lower(): str(k) for k in sample}
-        for tbl in tables:
-            cols: list[TableColumnMap] = []
-            for header in tbl["headers"]:
-                matched = None
-                for variant in generic_key_variants(header):
-                    if variant in sample:
-                        matched = variant
-                        break
-                    if variant.lower() in sample_keys:
-                        matched = sample_keys[variant.lower()]
-                        break
-                if matched:
-                    cols.append(
-                        TableColumnMap(header=header, json_field=matched, confidence=0.65)
-                    )
-            if cols:
-                table_fills.append(
-                    TableFillPlan(
-                        table_index=tbl["table_index"],
-                        array_json_path=array_key,
-                        columns=cols,
-                        rationale="Rule fallback: exact header/field name match only",
-                    )
-                )
-
-    result = MappingResult(
-        mappings=mappings,
-        table_fills=table_fills,
-        unmapped_json_keys=[p for p in flat if p not in used_paths],
-        unmapped_placeholders=[p for p in template.placeholders if p not in mapped_placeholders],
-        notes="Rule fallback only (no LLM). Semantic matching requires mapper provider credentials.",
-        mapper_source="rules",
-        mapper_provider="rules",
-        mapper_model=None,
-    )
-    return enrich_mapping_scores(result, len(template.placeholders) or 1)
-
-
-def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult | None:
+def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult:
     from document_processing_agenticflow.services.llm_factory import get_mapper_llm, is_mapper_available
 
     if not is_mapper_available():
-        return None
+        raise RuntimeError(
+            "Mapper LLM is required. Check MAPPER_PROVIDER credentials "
+            "(for azure_openai: AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT + MAPPER_MODEL)."
+        )
 
     try:
         llm, config = get_mapper_llm(structured_schema=_LLMMappingPayload)
-    except (ImportError, RuntimeError, ValueError):
-        return None
+    except (ImportError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"Failed to build mapper LLM: {exc}") from exc
 
     block_summaries = [
         {
@@ -273,7 +179,7 @@ Return structured output:
 A) mappings — for each scalar placeholder (DATE, ACCOUNT NAME, invoice_number, etc.):
    - json_path: best path in JSON (dot notation)
    - placeholder: exact placeholder key from the template list
-   - value: resolved value from JSON (string/number)
+   - value: resolved value from JSON as a STRING (e.g. "24", "Acme", "2026-07-13")
    - confidence: 0-1
    - rationale: short reason
    If JSON has no suitable value, leave that placeholder in unmapped_placeholders.
@@ -295,33 +201,63 @@ Important:
 
     try:
         result: _LLMMappingPayload = llm.invoke(prompt)  # type: ignore[assignment]
-    except Exception:
-        return None
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Mapper LLM invoke failed ({config.label}): {exc}") from exc
 
-    for mapping in result.mappings:
-        if mapping.value is None and mapping.json_path:
-            mapping.value = _resolve_path(data, mapping.json_path)
-        if mapping.confidence is None:
-            mapping.confidence = 0.7
+    mappings: list[FieldMapping] = []
+    for item in result.mappings:
+        resolved = _resolve_path(data, item.json_path) if item.json_path else None
+        if resolved is None and item.value != "":
+            # keep LLM-provided string when path does not resolve
+            resolved = item.value
+        elif resolved is None:
+            resolved = item.value if item.value != "" else None
+        mappings.append(
+            FieldMapping(
+                json_path=item.json_path,
+                placeholder=item.placeholder,
+                value=resolved,
+                confidence=item.confidence,
+                rationale=item.rationale or None,
+            )
+        )
 
-    # Validate table fill array paths exist
     valid_fills: list[TableFillPlan] = []
     for plan in result.table_fills:
         arr = _resolve_path(data, plan.array_json_path)
         if isinstance(arr, list) and arr and isinstance(arr[0], dict) and plan.columns:
-            valid_fills.append(plan)
+            valid_fills.append(
+                TableFillPlan(
+                    table_index=plan.table_index,
+                    array_json_path=plan.array_json_path,
+                    columns=[
+                        TableColumnMap(
+                            header=c.header,
+                            json_field=c.json_field,
+                            confidence=c.confidence,
+                        )
+                        for c in plan.columns
+                    ],
+                    rationale=plan.rationale or None,
+                )
+            )
+
+    if not mappings and not valid_fills:
+        raise RuntimeError(
+            "Mapper LLM returned no mappings/table_fills. "
+            "Check template placeholders and JSON content."
+        )
 
     payload = MappingResult(
-        mappings=result.mappings,
+        mappings=mappings,
         table_fills=valid_fills,
-        unmapped_json_keys=result.unmapped_json_keys,
-        unmapped_placeholders=result.unmapped_placeholders,
+        unmapped_json_keys=list(result.unmapped_json_keys),
+        unmapped_placeholders=list(result.unmapped_placeholders),
         notes=result.notes or f"LLM #1 analyzed template+JSON ({config.label})",
         mapper_source="llm",
         mapper_provider=config.provider,
         mapper_model=config.model,
     )
-    # Coverage considers placeholders + whether tables were planned
     enriched = enrich_mapping_scores(payload, len(template.placeholders) or 1)
     if valid_fills and not template.placeholders:
         enriched.coverage_score = 1.0
@@ -336,11 +272,5 @@ Important:
 
 
 def map_json_to_template(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult:
-    """
-    Step 2: LLM analyzes template + JSON to decide placeholder and table mappings.
-    Falls back to exact-match rules only when LLM is unavailable.
-    """
-    llm_result = _llm_mapping(template, data)
-    if llm_result is not None and (llm_result.mappings or llm_result.table_fills):
-        return llm_result
-    return _rule_based_mapping(template, data)
+    """Step 2: LLM-only mapping of JSON → placeholders / table fills."""
+    return _llm_mapping(template, data)

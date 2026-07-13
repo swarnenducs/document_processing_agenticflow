@@ -134,7 +134,28 @@ def _cell_text(cell: ET.Element) -> str:
     ).strip()
 
 
-def _make_simple_cell(text: str, template_cell: ET.Element | None = None) -> ET.Element:
+def _strip_bold_from_rpr(rpr: ET.Element) -> ET.Element:
+    """Keep font/size/color from a run style, but force data cells to be non-bold."""
+    cleaned = copy.deepcopy(rpr)
+    for tag in ("b", "bCs"):
+        node = cleaned.find(f"w:{tag}", NS)
+        if node is not None:
+            cleaned.remove(node)
+    return cleaned
+
+
+def _make_simple_cell(
+    text: str,
+    template_cell: ET.Element | None = None,
+    *,
+    strip_bold: bool = True,
+) -> ET.Element:
+    """
+    Build a table cell cloning paragraph/run style from ``template_cell``.
+
+    For data rows, ``strip_bold=True`` (default) removes bold markers so headers
+    can stay bold while body values use the same font without bold.
+    """
     if template_cell is not None:
         cell = copy.deepcopy(template_cell)
         for p in list(cell.findall("w:p", NS)):
@@ -150,7 +171,7 @@ def _make_simple_cell(text: str, template_cell: ET.Element | None = None) -> ET.
             if tpl_r is not None:
                 rpr = tpl_r.find("w:rPr", NS)
                 if rpr is not None:
-                    r.append(copy.deepcopy(rpr))
+                    r.append(_strip_bold_from_rpr(rpr) if strip_bold else copy.deepcopy(rpr))
             t = ET.SubElement(r, _qn("t"))
             t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
             t.text = text
@@ -225,6 +246,13 @@ def _expand_tables_from_plans(
         header_cells = header_row.findall("w:tc", NS)
         headers = [_cell_text(c) for c in header_cells]
 
+        # Prefer an existing body row as the visual template when present;
+        # otherwise clone header style but strip bold for data cells.
+        if len(trs) > 1:
+            style_cells = trs[1].findall("w:tc", NS)
+        else:
+            style_cells = header_cells
+
         col_by_header = {c.header.strip().lower(): c.json_field for c in plan.columns}
         field_per_col: list[str | None] = [
             col_by_header.get(h.strip().lower()) for h in headers
@@ -242,8 +270,11 @@ def _expand_tables_from_plans(
                 new_tr.append(copy.deepcopy(tr_pr))
             for idx, field in enumerate(field_per_col):
                 value = "" if field is None else str(row_data.get(field, ""))
-                tpl_cell = header_cells[idx] if idx < len(header_cells) else None
-                new_tr.append(_make_simple_cell(value, tpl_cell))
+                tpl_cell = style_cells[idx] if idx < len(style_cells) else (
+                    header_cells[idx] if idx < len(header_cells) else None
+                )
+                # Data rows: same font/size/color as template, never bold
+                new_tr.append(_make_simple_cell(value, tpl_cell, strip_bold=True))
             table.append(new_tr)
             inserted += 1
 

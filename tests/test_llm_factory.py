@@ -26,13 +26,13 @@ def test_mapper_config_defaults_to_openai_gpt5(monkeypatch) -> None:
 def test_mapper_accepts_azure_openai(monkeypatch) -> None:
     monkeypatch.setenv("MAPPER_PROVIDER", "azure_openai")
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-deploy")
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://contoso.openai.azure.com/")
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
     monkeypatch.delenv("MAPPER_MODEL", raising=False)
     cfg = mapper_config()
     assert cfg.provider == "azure_openai"
     assert cfg.model == "gpt-4o-deploy"
-    assert cfg.base_url == "https://example.openai.azure.com"
+    assert cfg.base_url == "https://contoso.openai.azure.com"
     assert cfg.api_key == "azure-key"
     assert cfg.api_version  # default or env
 
@@ -68,7 +68,7 @@ def test_validator_can_use_openai(monkeypatch) -> None:
 def test_validator_can_use_azure(monkeypatch) -> None:
     monkeypatch.setenv("VALIDATOR_PROVIDER", "azure")
     monkeypatch.setenv("VALIDATOR_MODEL", "critic-deploy")
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://contoso.openai.azure.com")
     cfg = validator_config()
     assert cfg.provider == "azure_openai"
     assert cfg.model == "critic-deploy"
@@ -107,9 +107,20 @@ def test_is_mapper_available_azure(monkeypatch) -> None:
     monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
     monkeypatch.delenv("MAPPER_BASE_URL", raising=False)
     assert is_mapper_available() is False
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "k")
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-real-key")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://contoso.openai.azure.com")
     assert is_mapper_available() is True
+
+
+def test_azure_placeholder_endpoint_not_available(monkeypatch) -> None:
+    from document_processing_agenticflow.services.llm_factory import is_mapper_available
+
+    monkeypatch.setenv("MAPPER_PROVIDER", "azure_openai")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-real-key")
+    monkeypatch.setenv(
+        "AZURE_OPENAI_ENDPOINT", "https://YOUR_RESOURCE.openai.azure.com/"
+    )
+    assert is_mapper_available() is False
 
 
 def test_is_validator_available_groq(monkeypatch) -> None:
