@@ -1,0 +1,50 @@
+[project]
+name = "document-processing-agenticflow"
+version = "0.1.0"
+description = "LangGraph agentic flow for Word template style extraction, JSON-to-field mapping, and styled document generation"
+readme = "README.md"
+authors = [
+    { name = "swarnenduchatterjee", email = "swarnendu.chatterjee@traydstream.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.4.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-groq>=0.3.0",
+    "langchain-core>=0.3.0",
+    "python-docx>=1.1.0",
+    "lxml>=5.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "typing-extensions>=4.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.12",
+    "httpx>=0.28.0",
+    "gradio>=5.0.0",
+]
+
+[project.scripts]
+doc-agent = "document_processing_agenticflow.cli:main"
+doc-api = "document_processing_agenticflow.api.server:main"
+doc-ui = "document_processing_agenticflow.ui.gradio_app:main"
+doc-app = "document_processing_agenticflow.run_app:main"
+
+[build-system]
+requires = ["uv_build>=0.9.3,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.9.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

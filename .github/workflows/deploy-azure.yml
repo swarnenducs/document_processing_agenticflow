@@ -1,0 +1,145 @@
+# Deploy API (+ optional UI) to Azure Web Apps for Containers via ACR.
+#
+# Required GitHub secrets:
+#   AZURE_CREDENTIALS   — output of: az ad sp create-for-rbac ... --sdk-auth
+#   ACR_LOGIN_SERVER    — e.g. myregistry.azurecr.io
+#   ACR_USERNAME
+#   ACR_PASSWORD
+#
+# Required GitHub variables (Settings → Variables):
+#   AZURE_RESOURCE_GROUP   — e.g. rg-doc-agent
+#   AZURE_API_WEBAPP_NAME  — e.g. doc-api-dev
+# Optional:
+#   AZURE_UI_WEBAPP_NAME   — e.g. doc-ui-dev (omit to skip UI deploy)
+#   IMAGE_NAME             — default: doc-agent
+
+name: Deploy Azure
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      deploy_ui:
+        description: "Also deploy Gradio UI Web App"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-azure-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --group dev
+      - run: uv run pytest -q
+        env:
+          OPENAI_API_KEY: ""
+          GROQ_API_KEY: ""
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ${{ vars.IMAGE_NAME || 'doc-agent' }}
+      ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Image tags
+        id: meta
+        run: |
+          SHA_SHORT="${GITHUB_SHA::7}"
+          echo "tag=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "api_image=${ACR_LOGIN_SERVER}/${IMAGE_NAME}-api:${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "ui_image=${ACR_LOGIN_SERVER}/${IMAGE_NAME}-ui:${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "api_latest=${ACR_LOGIN_SERVER}/${IMAGE_NAME}-api:latest" >> "$GITHUB_OUTPUT"
+          echo "ui_latest=${ACR_LOGIN_SERVER}/${IMAGE_NAME}-ui:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push API image
+        run: |
+          docker build --build-arg APP_TARGET=api \
+            -t "${{ steps.meta.outputs.api_image }}" \
+            -t "${{ steps.meta.outputs.api_latest }}" .
+          docker push "${{ steps.meta.outputs.api_image }}"
+          docker push "${{ steps.meta.outputs.api_latest }}"
+
+      - name: Deploy API Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_API_WEBAPP_NAME }}
+          images: ${{ steps.meta.outputs.api_image }}
+
+      - name: Ensure API port setting
+        run: |
+          az webapp config appsettings set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_API_WEBAPP_NAME }}" \
+            --settings WEBSITES_PORT=8000 API_HOST=0.0.0.0 API_PORT=8000
+
+      - name: Build & push UI image
+        if: ${{ vars.AZURE_UI_WEBAPP_NAME != '' && (github.event_name != 'workflow_dispatch' || inputs.deploy_ui) }}
+        run: |
+          docker build --build-arg APP_TARGET=ui \
+            -t "${{ steps.meta.outputs.ui_image }}" \
+            -t "${{ steps.meta.outputs.ui_latest }}" .
+          docker push "${{ steps.meta.outputs.ui_image }}"
+          docker push "${{ steps.meta.outputs.ui_latest }}"
+
+      - name: Deploy UI Web App
+        if: ${{ vars.AZURE_UI_WEBAPP_NAME != '' && (github.event_name != 'workflow_dispatch' || inputs.deploy_ui) }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_UI_WEBAPP_NAME }}
+          images: ${{ steps.meta.outputs.ui_image }}
+
+      - name: Ensure UI port + API URL
+        if: ${{ vars.AZURE_UI_WEBAPP_NAME != '' && (github.event_name != 'workflow_dispatch' || inputs.deploy_ui) }}
+        run: |
+          API_URL="https://${{ vars.AZURE_API_WEBAPP_NAME }}.azurewebsites.net"
+          az webapp config appsettings set \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --name "${{ vars.AZURE_UI_WEBAPP_NAME }}" \
+            --settings \
+              WEBSITES_PORT=7860 \
+              GRADIO_HOST=0.0.0.0 \
+              GRADIO_PORT=7860 \
+              API_BASE_URL="${API_URL}"
+
+      - name: Smoke check API health
+        run: |
+          URL="https://${{ vars.AZURE_API_WEBAPP_NAME }}.azurewebsites.net/api/v1/health"
+          echo "Waiting for ${URL}"
+          for i in $(seq 1 30); do
+            if curl -fsS "$URL"; then
+              echo ""
+              echo "API healthy"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "API health check failed"
+          exit 1

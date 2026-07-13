@@ -1,0 +1,24 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python / UV
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+.mypy_cache/
+
+# Outputs / OS
+samples/output/*
+!samples/output/.gitkeep
+# Runtime storage only (do not ignore samples/data/)
+/data/
+.DS_Store
+*.tmp
