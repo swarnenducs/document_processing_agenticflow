@@ -265,25 +265,26 @@ If the site fails to start, open **Log stream** in the Azure Portal.
 
 ## 9. Alternative: zip / code deploy (no Docker)
 
-Use this if you prefer classic App Service Python deploy.
+Use this if you prefer classic App Service Python deploy. The repo already includes pinned `requirements.txt` (from `uv.lock`).
 
 ```bash
-uv export --no-dev --output-file requirements.txt
+# regenerate if dependencies change
+uv export --no-dev --no-hashes --output-file requirements.txt
 ```
 
 **API startup command** (App Service → Configuration → General settings):
 
 ```bash
-python -m pip install -r requirements.txt && python -m pip install -e . && python -m uvicorn document_processing_agenticflow.api.main:app --host 0.0.0.0 --port 8000
+python -m pip install -r requirements.txt && python -m uvicorn document_processing_agenticflow.api.main:app --host 0.0.0.0 --port 8000
 ```
 
 **UI startup command:**
 
 ```bash
-python -m pip install -r requirements.txt && python -m pip install -e . && python -m document_processing_agenticflow.ui.gradio_app
+python -m pip install -r requirements.txt && python -m document_processing_agenticflow.ui.gradio_app
 ```
 
-Deploy with publish profile secret `AZURE_API_PUBLISH_PROFILE` and `azure/webapps-deploy@v3` (see commented sketch in older notes / extend `deploy-azure.yml`).
+(`requirements.txt` already includes `-e .` so the local package is installed editable from the repo root.)
 
 ---
 

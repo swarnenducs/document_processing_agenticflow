@@ -216,7 +216,7 @@ def _rule_based_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> Ma
         table_fills=table_fills,
         unmapped_json_keys=[p for p in flat if p not in used_paths],
         unmapped_placeholders=[p for p in template.placeholders if p not in mapped_placeholders],
-        notes="Rule fallback only (no LLM). Semantic matching requires OPENAI_API_KEY.",
+        notes="Rule fallback only (no LLM). Semantic matching requires mapper provider credentials.",
         mapper_source="rules",
         mapper_provider="rules",
         mapper_model=None,

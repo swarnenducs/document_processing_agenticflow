@@ -117,16 +117,19 @@ Produces:
 
 | | **LLM #1 Mapper** | **LLM #2 Validator** |
 |--|-------------------|----------------------|
-| Provider (default) | OpenAI | Groq |
-| Model (default) | `gpt-5` | `openai/gpt-oss-120b` |
-| Job | Semantic map + table plans | Independent critic |
+| Default provider | OpenAI | Groq |
+| Config | `MAPPER_PROVIDER` / `MAPPER_MODEL` | `VALIDATOR_PROVIDER` / `VALIDATOR_MODEL` |
+| Built-ins | `openai`, `azure_openai`, `groq`, `openai_compatible` | same |
+| Injection | `register_llm_provider("name", builder)` | same |
 | Factory | `get_mapper_llm()` | `get_validator_llm()` |
 | Structured output | Mapping payload | Validation payload |
 
-**Why two providers?**  
-The critic should not share the same model bias as the mapper — classic *generator vs critic* / *separation of concerns* answer.
+**Why two roles?**  
+The critic should not share the same model bias as the mapper — classic *generator vs critic*.
 
-**Graceful degradation:** missing keys → rules still produce a scored result (`mapper_source="rules"`, `validator_source="rules"`). Good for CI and local demos.
+**Provider injection:** swap Azure OpenAI / Groq / local Ollama via env, or register a custom LangChain chat model builder without rewriting the pipeline.
+
+**Graceful degradation:** missing credentials → rules still produce a scored result (`mapper_source="rules"`, `validator_source="rules"`). Good for CI and local demos.
 
 **Speech STT** (`speech_to_text.py`) is a separate Whisper path (OpenAI or Groq), not the map/validate pair.
 
@@ -288,7 +291,7 @@ A: Graph for production-ish deterministic jobs; agent for exploratory NL orchest
 A: Authn/z, durable queue, job TTL/cleanup, idempotency, metrics/tracing per node, prompt/version registry, human-in-the-loop on low confidence, multi-tenant storage isolation.
 
 **Q: What are the limitations?**  
-A: BackgroundTasks not distributed; mapper locked to OpenAI in factory; placeholders split across Word runs can be tricky; validation is text-centric not visual; prompts truncate large JSON; voice is not wired into fill flow; no API auth; TTL unused.
+A: BackgroundTasks not distributed; placeholders split across Word runs can be tricky; validation is text-centric not visual; prompts truncate large JSON; voice is not wired into fill flow; no API auth; TTL unused.
 
 **Q: How are tests designed?**  
 A: `pytest` hits extract/map/generate/graph/API with rule fallbacks — CI does not depend on live OpenAI/Groq.

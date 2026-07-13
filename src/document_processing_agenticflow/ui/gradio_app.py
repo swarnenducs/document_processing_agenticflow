@@ -21,6 +21,9 @@ from document_processing_agenticflow.ui.api_client import (
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SAMPLE_TEMPLATE = PROJECT_ROOT / "samples" / "templates" / "invoice_template.docx"
 SAMPLE_JSON = PROJECT_ROOT / "samples" / "data" / "invoice.json"
+# User-provided contract example (from Downloads: Contract Template.docx + dummy products.json)
+CONTRACT_TEMPLATE = PROJECT_ROOT / "samples" / "templates" / "contract_template.docx"
+CONTRACT_JSON = PROJECT_ROOT / "samples" / "data" / "dummy_products.json"
 
 
 def _resolve_gradio_path(value: object | None) -> str | None:
@@ -212,6 +215,24 @@ def load_sample_json_file() -> str | None:
     return None
 
 
+def load_contract_template() -> str | None:
+    if CONTRACT_TEMPLATE.exists():
+        return str(CONTRACT_TEMPLATE)
+    return None
+
+
+def load_contract_json_text() -> str:
+    if CONTRACT_JSON.exists():
+        return CONTRACT_JSON.read_text(encoding="utf-8")
+    return '{"DATE": "2026-07-13", "accountName": "Acme", "products": []}'
+
+
+def load_contract_json_file() -> str | None:
+    if CONTRACT_JSON.exists():
+        return str(CONTRACT_JSON)
+    return None
+
+
 def ui_health() -> str:
     cfg = settings()
     try:
@@ -270,8 +291,11 @@ def build_ui() -> gr.Blocks:
                             placeholder='{"invoice_number": "INV-001", "customer": {"name": "Acme"}}',
                         )
                     with gr.Row():
-                        load_tpl_btn = gr.Button("Load sample template", size="sm")
-                        load_json_btn = gr.Button("Load sample JSON", size="sm")
+                        load_tpl_btn = gr.Button("Load invoice sample", size="sm")
+                        load_json_btn = gr.Button("Load invoice JSON", size="sm")
+                    with gr.Row():
+                        load_contract_tpl_btn = gr.Button("Load contract template", size="sm")
+                        load_contract_json_btn = gr.Button("Load dummy products JSON", size="sm")
                     skip_validation = gr.Checkbox(label="Skip LLM #2 validation", value=False)
                     generate_btn = gr.Button("Generate document", variant="primary")
                 with gr.Column():
@@ -287,6 +311,11 @@ def build_ui() -> gr.Blocks:
                 fn=load_sample_json_text,
                 outputs=[json_input],
             ).then(fn=load_sample_json_file, outputs=[json_file_upload])
+            load_contract_tpl_btn.click(fn=load_contract_template, outputs=[template_upload])
+            load_contract_json_btn.click(
+                fn=load_contract_json_text,
+                outputs=[json_input],
+            ).then(fn=load_contract_json_file, outputs=[json_file_upload])
 
             generate_btn.click(
                 fn=ui_generate_document,

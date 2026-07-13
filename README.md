@@ -5,35 +5,73 @@ LangGraph workspace (managed with **UV**) that turns a Word `.docx` template + J
 **Interview / architecture walkthrough:** see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).  
 **Deploy to Azure Web Apps (GitHub Actions CI/CD):** see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
-## Two separate LLMs
+## Two separate LLMs (provider-injectable)
 
-This pipeline deliberately uses **different providers** for mapping vs validation so the critic does not share the same model bias as the mapper.
+Mapper and validator are **independent roles**. Each can use a different provider via env
+(`MAPPER_PROVIDER` / `VALIDATOR_PROVIDER`), or you can inject a custom builder in code with
+`register_llm_provider(...)`.
 
-### LLM #1 — Mapper (OpenAI)
+Built-in providers: **`openai`**, **`azure_openai`** (alias `azure`), **`groq`**,
+**`openai_compatible`** (Ollama / vLLM / Together / any OpenAI-style base URL).
+
+### LLM #1 — Mapper (default: OpenAI)
 
 | | |
 |---|---|
-| **Role** | Map JSON fields → Word template placeholders |
-| **Provider** | OpenAI |
-| **Model** | `gpt-5` (via `OPENAI_MODEL`) |
-| **Env** | `OPENAI_API_KEY`, `MAPPER_PROVIDER=openai`, `OPENAI_MODEL=gpt-5` |
+| **Role** | Map JSON fields → Word template placeholders + table fills |
+| **Provider** | `MAPPER_PROVIDER` (default `openai`) |
+| **Model** | `MAPPER_MODEL` or `OPENAI_MODEL` / Azure deployment name |
+| **Env** | Provider credentials (see `.env.example`) |
 | **Tool** | `map_json_to_template` |
-| **Output** | Per-field mappings + confidence scores |
+| **Output** | Per-field mappings + `table_fills` + confidence scores |
 
-### LLM #2 — Validator / Critic (Groq)
+### LLM #2 — Validator / Critic (default: Groq)
 
 | | |
 |---|---|
 | **Role** | Independently verify template vs generated doc vs JSON |
-| **Provider** | Groq |
-| **Model** | `openai/gpt-oss-120b` (via `GROQ_VALIDATOR_MODEL`) |
-| **Env** | `GROQ_API_KEY`, `VALIDATOR_PROVIDER=groq`, `GROQ_VALIDATOR_MODEL=openai/gpt-oss-120b` |
+| **Provider** | `VALIDATOR_PROVIDER` (default `groq`) |
+| **Model** | `VALIDATOR_MODEL` or `GROQ_VALIDATOR_MODEL` / Azure deployment |
+| **Env** | Provider credentials (see `.env.example`) |
 | **Tool** | `validate_documents` |
 | **Output** | pass/fail, validation score, issue list |
 
-> Set `VALIDATOR_PROVIDER=openai` + `OPENAI_VALIDATOR_MODEL` to use OpenAI as fallback critic instead of Groq.
+Examples:
 
-Without API keys, both steps fall back to deterministic rules (still scored).
+```env
+# OpenAI mapper + Groq critic (default shape)
+MAPPER_PROVIDER=openai
+MAPPER_MODEL=gpt-5
+OPENAI_API_KEY=sk-...
+VALIDATOR_PROVIDER=groq
+VALIDATOR_MODEL=openai/gpt-oss-120b
+GROQ_API_KEY=gsk-...
+
+# Azure OpenAI for both roles
+MAPPER_PROVIDER=azure_openai
+MAPPER_MODEL=gpt-4o-deploy
+VALIDATOR_PROVIDER=azure_openai
+VALIDATOR_MODEL=gpt-4o-critic
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://YOUR_RESOURCE.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+
+# Local OpenAI-compatible (e.g. Ollama)
+MAPPER_PROVIDER=openai_compatible
+MAPPER_MODEL=llama3.1
+MAPPER_BASE_URL=http://127.0.0.1:11434/v1
+```
+
+Inject a custom provider:
+
+```python
+from document_processing_agenticflow.services.llm_factory import register_llm_provider
+
+register_llm_provider("my_vendor", lambda config, temperature=0: MyChatModel(...))
+# then: MAPPER_PROVIDER=my_vendor
+```
+
+Without credentials for the selected provider, steps fall back to deterministic rules (still scored).
 
 ## Pipeline
 
@@ -57,25 +95,57 @@ uv sync
 cp .env.example .env   # add your OPENAI_API_KEY + GROQ_API_KEY
 ```
 
-### `.env` layout (two LLM blocks)
+For plain `pip` installs (Azure zip deploy, CI without UV), use the exported lock files:
+
+```bash
+pip install -r requirements.txt          # runtime
+pip install -r requirements-dev.txt      # runtime + pytest/ruff
+# regenerate after dependency changes:
+uv export --no-dev --no-hashes --output-file requirements.txt
+uv export --group dev --no-hashes --output-file requirements-dev.txt
+```
+
+Prefer **`uv sync`** locally; `uv.lock` is the source of truth.
+
+### `.env` layout (provider-injectable roles)
 
 ```env
-# LLM #1 — Mapper (OpenAI)
+# LLM #1 — Mapper
+MAPPER_PROVIDER=openai          # openai | azure_openai | groq | openai_compatible
+MAPPER_MODEL=gpt-5
 OPENAI_API_KEY=sk-...
-MAPPER_PROVIDER=openai
-OPENAI_MODEL=gpt-5
 
-# LLM #2 — Validator (Groq)
+# LLM #2 — Validator
 VALIDATOR_PROVIDER=groq
-GROQ_API_KEY=gsk_...
-GROQ_VALIDATOR_MODEL=openai/gpt-oss-120b
+VALIDATOR_MODEL=openai/gpt-oss-120b
+GROQ_API_KEY=gsk-...
+
+# Azure example (optional):
+# MAPPER_PROVIDER=azure_openai
+# MAPPER_MODEL=gpt-4o-deploy
+# AZURE_OPENAI_API_KEY=...
+# AZURE_OPENAI_ENDPOINT=https://YOUR_RESOURCE.openai.azure.com/
+# AZURE_OPENAI_API_VERSION=2024-12-01-preview
 ```
+
+See `.env.example` for the full matrix.
+
+## Sample files
+
+| File | Description |
+|------|-------------|
+| `samples/templates/invoice_template.docx` | Simple invoice demo template |
+| `samples/data/invoice.json` | Invoice JSON |
+| `samples/templates/contract_template.docx` | **Contract Template** example (Word) |
+| `samples/data/dummy_products.json` | **dummy products** JSON (`DATE`, `accountName`, `products[]`) |
+| `samples/data/contract_full.json` | Same content as `dummy_products.json` (alias) |
 
 ## Create sample template & run
 
 ```bash
 uv run python scripts/create_sample_template.py
 
+# Invoice example
 uv run doc-agent \
   --template samples/templates/invoice_template.docx \
   --data samples/data/invoice.json \
@@ -83,6 +153,12 @@ uv run doc-agent \
   --dump-extraction samples/output/extraction.json \
   --dump-mapping samples/output/mapping.json \
   --dump-confidence samples/output/confidence.json
+
+# Contract example (Contract Template + dummy products)
+uv run doc-agent \
+  --template samples/templates/contract_template.docx \
+  --data samples/data/dummy_products.json \
+  --output samples/output/contract_filled.docx
 ```
 
 CLI prints **LLM #1 (mapper)** and **LLM #2 (validator)** separately in the confidence report.
@@ -176,7 +252,7 @@ The pipeline detects placeholder **syntax** (not hardcoded field names):
 2. `table_fills` plans (which JSON array fills which table, and which header maps to which object field)
 
 There is **no hardcoded product/date synonym dictionary** in the happy path.  
-Exact-name rules are used only when `OPENAI_API_KEY` is missing.
+Exact-name rules are used only when the configured **mapper** provider has no credentials.
 
 ## Tests
 
@@ -283,7 +359,9 @@ Open **http://127.0.0.1:7860**
 | **Voice → Text** (2nd) | Record **or upload** audio → transcribe API → show transcript |
 
 Both tabs use the same two-column layout: inputs on the left, results on the right.  
-Sample buttons load `samples/templates/invoice_template.docx` and `samples/data/invoice.json`.
+Sample buttons load:
+- Invoice: `samples/templates/invoice_template.docx` + `samples/data/invoice.json`
+- Contract: `samples/templates/contract_template.docx` + `samples/data/dummy_products.json`
 
 UI env vars:
 
