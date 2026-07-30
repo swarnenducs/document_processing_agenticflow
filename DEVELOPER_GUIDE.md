@@ -214,8 +214,10 @@ Also: health, delete job, audio transcribe + fetch transcript.
 ## 9. Gradio UI
 
 - Tab 1: **Generate Document** — upload template + JSON (or paste), poll job, download, score report.  
-- Tab 2: **Voice → Text** — mic/upload → Whisper via API.  
-- UI talks to FastAPI only (`API_BASE_URL`); does **not** run LangGraph in-process.
+- Tab 2: **Voice → Contract** — LangGraph agent (`voice_graph.py`): parse → fetch legal entity/pricelist → `interrupt()` HITL → generate dummy `.txt`/`.docx`. Unrelated text → “Please ask a relevant service.”  
+- UI talks to FastAPI (`API_BASE_URL`); the API invokes the voice LangGraph agent and resumes via `thread_id`.
+
+Full flow: [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md).
 
 Start everything: `uv run doc-app` or `./run.sh`.
 

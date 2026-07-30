@@ -120,3 +120,70 @@ def test_transcribe_requires_audio(api_client) -> None:
     client, _, _ = api_client
     resp = client.post("/api/v1/audio/transcribe")
     assert resp.status_code == 422
+
+
+def test_voice_contract_saved_to_sqlite(api_client) -> None:
+    client, _, db_path = api_client
+    # Step 1: LangGraph start → interrupt (needs_confirmation + thread_id)
+    resp = client.post(
+        "/api/v1/voice/contract",
+        json={
+            "transcript": (
+                "please create contract with legal entity AVC "
+                "contract reference number CR 1001"
+            )
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "needs_confirmation"
+    assert body["thread_id"]
+    assert body["contract_reference_number"] == "CR-1001"
+    assert body["legal_entity"]["code"] == "AVC"
+
+    # Step 2: resume LangGraph HITL → create + save
+    confirm = client.post(
+        "/api/v1/voice/contract/confirm",
+        json={
+            "legal_entity": "AVC",
+            "contract_reference_number": "CR-1001",
+            "transcript": body["transcript"],
+            "thread_id": body["thread_id"],
+            "user_text": "yes",
+        },
+    )
+    assert confirm.status_code == 200
+    created = confirm.json()
+    assert created["ok"] is True
+    assert created["contract_id"]
+    assert created["contract_text"]
+    assert "Saved to SQLite" in created["message"]
+    assert db_path.exists()
+
+    get_resp = client.get(f"/api/v1/voice/contracts/{created['contract_id']}")
+    assert get_resp.status_code == 200
+    saved = get_resp.json()
+    assert saved["spoken_number"] == "CR-1001"
+
+    txt = client.get(
+        f"/api/v1/voice/contracts/{created['contract_id']}/download",
+        params={"format": "txt"},
+    )
+    assert txt.status_code == 200
+    assert b"SUPPLY CONTRACT" in txt.content
+
+
+def test_voice_contract_irrelevant_not_saved(api_client) -> None:
+    client, _, _ = api_client
+    resp = client.post(
+        "/api/v1/voice/contract",
+        json={"transcript": "Play some music please"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body.get("contract_id") is None
+    assert body["message"] == "Please ask a relevant service."
+
+    listed = client.get("/api/v1/voice/contracts").json()
+    assert listed["count"] == 0

@@ -16,10 +16,17 @@ from document_processing_agenticflow.api.schemas import (
     JobCreateOptions,
     JobStatusResponse,
     TranscriptionResponse,
+    VoiceContractConfirmRequest,
+    VoiceContractRequest,
+    VoiceContractResponse,
 )
 from document_processing_agenticflow.core.settings import settings
 from document_processing_agenticflow.services.pipeline_runner import run_document_job
 from document_processing_agenticflow.services.speech_to_text import transcribe_audio
+from document_processing_agenticflow.services.voice_contract_workflow import (
+    confirm_voice_contract,
+    run_voice_contract_workflow,
+)
 from document_processing_agenticflow.storage.job_store import JobStore
 
 router = APIRouter()
@@ -298,3 +305,210 @@ def get_transcription(transcription_id: str) -> dict[str, Any]:
         return get_store().get_transcription(transcription_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/voice/contract", response_model=VoiceContractResponse)
+def voice_contract_from_text(body: VoiceContractRequest) -> VoiceContractResponse:
+    """
+    Start LangGraph voice-contract agent.
+    Returns needs_confirmation + thread_id for HITL resume, unless auto_create=true.
+    """
+    store = get_store()
+    result = run_voice_contract_workflow(
+        body.transcript,
+        store=store,
+        auto_create=body.auto_create,
+    )
+    payload = result.to_dict()
+    if result.ok and result.status == "completed":
+        saved = _persist_voice_contract(store, result)
+        payload["contract_id"] = saved["contract_id"]
+        payload["contract_file"] = saved.get("contract_file")
+        payload["contract_text_file"] = saved.get("contract_text_file") or result.contract_text_file
+        payload["message"] = (
+            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
+        )
+    return VoiceContractResponse(**payload)
+
+
+@router.post("/voice/contract/confirm", response_model=VoiceContractResponse)
+def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceContractResponse:
+    """Resume LangGraph HITL interrupt (preferred) or finalize by entity/ref."""
+    store = get_store()
+    result = confirm_voice_contract(
+        entity_code_or_name=body.legal_entity,
+        contract_reference_number=body.contract_reference_number,
+        store=store,
+        transcript=body.transcript,
+        thread_id=body.thread_id,
+        user_text=body.user_text or "yes",
+    )
+    payload = result.to_dict()
+    if result.ok and result.status == "completed":
+        # Always normalize draft files into storage + ensure SQLite row exists.
+        saved = _persist_voice_contract(store, result)
+        payload["contract_id"] = saved["contract_id"]
+        payload["contract_file"] = saved.get("contract_file")
+        payload["contract_text_file"] = saved.get("contract_text_file") or result.contract_text_file
+        payload["message"] = (
+            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
+        )
+    return VoiceContractResponse(**payload)
+
+
+@router.post("/voice/contract/from-audio", response_model=VoiceContractResponse)
+async def voice_contract_from_audio(
+    audio: UploadFile = File(..., description="Audio file (mp3, wav, m4a, webm, …)"),
+    language: str | None = Form(default=None),
+    provider: str | None = Form(default=None),
+    auto_create: bool = Form(default=False),
+) -> VoiceContractResponse:
+    """Transcribe audio, then parse create-contract (confirmation by default)."""
+    transcription_id = str(uuid.uuid4())
+    suffix = Path(audio.filename or "audio.wav").suffix.lower()
+    if suffix not in ALLOWED_AUDIO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio type '{suffix}'. Allowed: {sorted(ALLOWED_AUDIO)}",
+        )
+
+    audio_dir = settings().audio_root / transcription_id
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = audio_dir / f"input{suffix}"
+    await _save_upload(audio, audio_path, allowed_suffixes=ALLOWED_AUDIO)
+
+    try:
+        transcription = transcribe_audio(audio_path, language=language, provider=provider)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+
+    store = get_store()
+    store.save_transcription(
+        transcription_id,
+        audio_path,
+        transcription.text,
+        transcription.provider,
+        transcription.model,
+    )
+
+    result = run_voice_contract_workflow(
+        transcription.text,
+        store=store,
+        auto_create=auto_create,
+    )
+    payload = result.to_dict()
+    payload["transcription_id"] = transcription_id
+    payload["provider"] = transcription.provider
+    payload["model"] = transcription.model
+    if result.ok and result.status == "completed":
+        saved = _persist_voice_contract(
+            store,
+            result,
+            transcription_id=transcription_id,
+        )
+        payload["contract_id"] = saved["contract_id"]
+        payload["contract_file"] = saved.get("contract_file")
+        payload["contract_text_file"] = saved.get("contract_text_file") or result.contract_text_file
+        payload["message"] = (
+            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
+        )
+    return VoiceContractResponse(**payload)
+
+
+def _persist_voice_contract(
+    store: Any,
+    result: Any,
+    *,
+    transcription_id: str | None = None,
+) -> dict[str, Any]:
+    import shutil
+
+    contract_id = str(uuid.uuid4())
+    final_docx: str | None = None
+    final_txt: str | None = None
+    dest_dir = settings().storage_base_path / "voice_contracts"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if result.contract_file:
+        src = Path(result.contract_file)
+        dest = dest_dir / f"{contract_id}.docx"
+        if src.exists():
+            shutil.move(str(src), str(dest))
+            final_docx = str(dest)
+    if result.contract_text_file:
+        src_txt = Path(result.contract_text_file)
+        dest_txt = dest_dir / f"{contract_id}.txt"
+        if src_txt.exists():
+            shutil.move(str(src_txt), str(dest_txt))
+            final_txt = str(dest_txt)
+    elif result.contract_text:
+        dest_txt = dest_dir / f"{contract_id}.txt"
+        dest_txt.write_text(result.contract_text, encoding="utf-8")
+        final_txt = str(dest_txt)
+
+    saved = store.save_voice_contract(
+        contract_id=contract_id,
+        spoken_name=result.spoken_name or result.legal_entity_name or "",
+        spoken_number=result.spoken_number or result.contract_reference_number or "",
+        contact=result.contact or result.legal_entity,
+        legal_entity=result.legal_entity,
+        pricelist=result.pricelist,
+        contract_payload=result.contract_payload,
+        contract_file=final_docx or final_txt,
+        transcript=result.transcript,
+        transcription_id=transcription_id,
+    )
+    saved["contract_text_file"] = final_txt
+    return saved
+
+
+@router.get("/voice/contracts/{contract_id}")
+def get_voice_contract(contract_id: str) -> dict[str, Any]:
+    try:
+        return get_store().get_voice_contract(contract_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/voice/contracts/{contract_id}/download")
+def download_voice_contract(contract_id: str, format: str = "docx") -> FileResponse:
+    try:
+        row = get_store().get_voice_contract(contract_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    path = row.get("contract_file")
+    if format.lower() == "txt":
+        # Prefer sibling .txt next to stored file
+        if path:
+            txt_candidate = Path(path).with_suffix(".txt")
+            if txt_candidate.is_file():
+                path = str(txt_candidate)
+        if not path or not str(path).endswith(".txt"):
+            payload = row.get("contract_payload") or {}
+            if payload:
+                from document_processing_agenticflow.services.voice_contract_workflow import (
+                    render_contract_text,
+                )
+
+                tmp = settings().storage_base_path / "voice_contracts" / f"{contract_id}.txt"
+                tmp.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(render_contract_text(payload), encoding="utf-8")
+                path = str(tmp)
+
+    if not path or not Path(path).is_file():
+        raise HTTPException(status_code=404, detail="Contract file not found")
+
+    if str(path).endswith(".txt"):
+        return FileResponse(path, media_type="text/plain", filename=f"contract_{contract_id}.txt")
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"contract_{contract_id}.docx",
+    )
+
+
+@router.get("/voice/contracts")
+def list_voice_contracts(limit: int = 50) -> dict[str, Any]:
+    rows = get_store().list_voice_contracts(limit=limit)
+    return {"count": len(rows), "contracts": rows}

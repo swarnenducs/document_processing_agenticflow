@@ -3,13 +3,16 @@
 LangGraph workspace (managed with **UV**) that turns a Word `.docx` template + JSON data into a new Word document while preserving the original Word XML styles — with **tool-wrapped steps**, **generator confidence scores**, and **two separate LLMs**.
 
 **Interview / architecture walkthrough:** see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).  
+**LangGraph interview prep (state, edges, dynamic models):** see [INTERVIEW_LANGGRAPH.md](INTERVIEW_LANGGRAPH.md).  
+**How voice → contract works (LangGraph agent + HITL):** see [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md).  
 **Deploy to Azure Web Apps (GitHub Actions CI/CD):** see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ## Two separate LLMs (provider-injectable)
 
 Mapper and validator are **independent roles**. Each can use a different provider via env
-(`MAPPER_PROVIDER` / `VALIDATOR_PROVIDER`), or you can inject a custom builder in code with
-`register_llm_provider(...)`.
+(`MAPPER_PROVIDER` / `VALIDATOR_PROVIDER`), compact ids (`MAPPER_MODEL_ID=azure_openai:gpt-5-mini`),
+or you can inject a custom builder in code with `register_llm_provider(...)`.
+Built-in chat models are created with LangChain **`init_chat_model`**.
 
 Built-in providers: **`openai`**, **`azure_openai`** (alias `azure`), **`groq`**,
 **`openai_compatible`** (Ollama / vLLM / Together / any OpenAI-style base URL).
@@ -216,16 +219,21 @@ Report also includes:
 
 ```text
 src/document_processing_agenticflow/
-  graph.py
+  graph.py                 # Word document-fill LangGraph
+  voice_graph.py           # Voice → contract LangGraph (HITL interrupt)
   agent.py                 # orchestrator (LLM #1)
   tools.py
   cli.py
   models/
-  nodes/pipeline.py
+    voice_state.py         # VoiceContractState
+  nodes/
+    pipeline.py
+    voice_contract.py      # parse → fetch → interrupt → generate
   services/
     llm_factory.py         # ← separate mapper vs validator LLM config
     pipeline_runner.py     # API background job runner
     speech_to_text.py      # voice → NL text
+    voice_contract_workflow.py  # helpers + wrappers over voice_graph
     style_extractor.py
     field_mapper.py        # LLM #1
     document_generator.py
@@ -297,6 +305,12 @@ uv run doc-api
 | `DELETE` | `/api/v1/documents/jobs/{job_id}` | Delete job + files |
 | `POST` | `/api/v1/audio/transcribe` | Voice/audio → natural language text |
 | `GET` | `/api/v1/audio/transcriptions/{id}` | Retrieve past transcription |
+| `POST` | `/api/v1/voice/contract` | Start voice→contract LangGraph agent (HITL + `thread_id`) |
+| `POST` | `/api/v1/voice/contract/confirm` | Resume interrupt / confirm create |
+| `POST` | `/api/v1/voice/contract/from-audio` | Transcribe audio, then start agent |
+| `GET` | `/api/v1/voice/contracts` | List saved voice contracts |
+| `GET` | `/api/v1/voice/contracts/{id}` | Fetch one voice contract |
+| `GET` | `/api/v1/voice/contracts/{id}/download` | Download dummy `.txt` / `.docx` |
 
 ### Example: generate document
 
@@ -317,11 +331,27 @@ curl -X POST http://localhost:8000/api/v1/audio/transcribe \
   -F "language=en"
 ```
 
-Speech provider: `SPEECH_PROVIDER=openai` (Whisper) or `groq` (`whisper-large-v3`).
+Speech provider: `SPEECH_PROVIDER=groq` (default), `openai`, or `azure_openai`.
+
+### Example: voice → contract (LangGraph HITL)
+
+```bash
+# Start agent → needs_confirmation + thread_id
+curl -s http://localhost:8000/api/v1/voice/contract \
+  -H 'Content-Type: application/json' \
+  -d '{"transcript":"please create contract with legal entity AVC contract reference number CR 1001"}'
+
+# Resume same thread
+curl -s http://localhost:8000/api/v1/voice/contract/confirm \
+  -H 'Content-Type: application/json' \
+  -d '{"legal_entity":"AVC","contract_reference_number":"CR-1001","thread_id":"<THREAD_ID>","user_text":"yes"}'
+```
+
+Full walkthrough: [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md).
 
 ## Gradio UI
 
-Web UI with **microphone recording** → sends audio to the FastAPI transcribe endpoint.
+Web UI with **microphone recording** (optional) and a **Voice → Contract** chat that runs the LangGraph agent with human confirmation.
 
 ### Run (two terminals)
 
@@ -371,7 +401,8 @@ Open **http://127.0.0.1:7860**
 | Tab | What it does |
 |-----|----------------|
 | **Generate Document** (1st) | **Upload** `.docx` template + **upload** `.json` (or paste JSON) → poll job → download result |
-| **Voice → Text** (2nd) | Record **or upload** audio → transcribe API → show transcript |
+| **Voice → Contract** (2nd) | Voice/text → LangGraph agent → entity/pricelist lookup → HITL confirm → dummy contract |
+
 
 Both tabs use the same two-column layout: inputs on the left, results on the right.  
 Sample buttons load:

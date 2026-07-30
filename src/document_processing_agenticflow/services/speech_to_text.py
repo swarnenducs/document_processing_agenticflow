@@ -241,18 +241,11 @@ def resolve_speech_provider(provider: str | None = None) -> str:
     )
 
 
-def transcribe_audio(
-    audio_path: str | Path,
-    *,
-    language: str | None = None,
-    provider: str | None = None,
+def _call_provider(
+    chosen: str,
+    path: Path,
+    language: str | None,
 ) -> TranscriptionResult:
-    """Convert voice/audio to text. Provider: azure_openai | openai | groq | auto."""
-    path = Path(audio_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Audio file not found: {path}")
-
-    chosen = resolve_speech_provider(provider)
     if chosen == "groq":
         return _transcribe_groq(path, language=language)
     if chosen == "azure_openai":
@@ -260,3 +253,59 @@ def transcribe_audio(
     if chosen == "openai":
         return _transcribe_openai(path, language=language)
     raise ValueError(f"Unsupported speech provider: {chosen}")
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    markers = ("connection", "connect", "timeout", "timed out", "network", "proxy")
+    return any(m in name for m in markers) or any(m in text for m in markers)
+
+
+def _fallback_providers(primary: str) -> list[str]:
+    order = ["groq", "openai", "azure_openai"]
+    rest = [p for p in order if p != primary]
+    ready = {
+        "groq": _groq_ready(),
+        "openai": _openai_ready(),
+        "azure_openai": _azure_ready(),
+    }
+    return [p for p in rest if ready.get(p)]
+
+
+def transcribe_audio(
+    audio_path: str | Path,
+    *,
+    language: str | None = None,
+    provider: str | None = None,
+) -> TranscriptionResult:
+    """Convert voice/audio to text. Provider: azure_openai | openai | groq | auto.
+
+    On connection failures, automatically tries other configured providers.
+    """
+    path = Path(audio_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Audio file not found: {path}")
+
+    chosen = resolve_speech_provider(provider)
+    errors: list[str] = []
+    try:
+        return _call_provider(chosen, path, language)
+    except Exception as primary_exc:  # noqa: BLE001
+        errors.append(f"{chosen}: {primary_exc}")
+        if not _is_connection_error(primary_exc):
+            raise
+
+    for alt in _fallback_providers(chosen):
+        try:
+            return _call_provider(alt, path, language)
+        except Exception as alt_exc:  # noqa: BLE001
+            errors.append(f"{alt}: {alt_exc}")
+            continue
+
+    detail = " | ".join(errors)
+    raise RuntimeError(
+        "Speech transcription connection failed for all available providers. "
+        f"Tried: {detail}. "
+        "Check network access to Groq/OpenAI, or type the instruction in chat instead."
+    )

@@ -62,6 +62,78 @@ def transcribe_audio_file(
     return resp.json()
 
 
+def run_voice_contract_text(transcript: str, *, auto_create: bool = False) -> dict[str, Any]:
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            f"{_base_url()}/api/v1/voice/contract",
+            json={"transcript": transcript, "auto_create": auto_create},
+        )
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
+    return resp.json()
+
+
+def confirm_voice_contract(
+    legal_entity: str,
+    contract_reference_number: str,
+    *,
+    transcript: str | None = None,
+    thread_id: str | None = None,
+    user_text: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "legal_entity": legal_entity,
+        "contract_reference_number": contract_reference_number,
+    }
+    if transcript:
+        payload["transcript"] = transcript
+    if thread_id:
+        payload["thread_id"] = thread_id
+    if user_text:
+        payload["user_text"] = user_text
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(f"{_base_url()}/api/v1/voice/contract/confirm", json=payload)
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
+    return resp.json()
+
+
+def run_voice_contract_audio(
+    audio_path: str | Path,
+    *,
+    language: str | None = None,
+    provider: str | None = None,
+) -> dict[str, Any]:
+    path = Path(audio_path)
+    if not path.exists():
+        raise ApiError(f"Audio file not found: {path}")
+
+    data: dict[str, str] = {}
+    if language:
+        data["language"] = language
+    if provider and provider not in {"default", "auto"}:
+        data["provider"] = provider
+
+    with path.open("rb") as fh:
+        files = {"audio": (path.name, fh, "audio/wav")}
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{_base_url()}/api/v1/voice/contract/from-audio",
+                files=files,
+                data=data,
+            )
+
+    if resp.status_code != 200:
+        detail = resp.text
+        try:
+            detail = resp.json().get("detail", detail)
+        except Exception:  # noqa: BLE001
+            pass
+        raise ApiError(str(detail), resp.status_code)
+
+    return resp.json()
+
+
 def create_document_job(
     template_path: str | Path,
     data: dict[str, Any] | str | Path,

@@ -47,6 +47,57 @@ class TranscriptionResponse(BaseModel):
     language: str | None = None
 
 
+class VoiceContractRequest(BaseModel):
+    """Optional: run workflow on already-transcribed text (no audio)."""
+
+    transcript: str = Field(..., min_length=1, description="Spoken / typed instruction")
+    auto_create: bool = Field(
+        default=False,
+        description="If true, skip human confirmation and create immediately",
+    )
+
+
+class VoiceContractConfirmRequest(BaseModel):
+    legal_entity: str = Field(..., min_length=1, description="Legal entity code or name")
+    contract_reference_number: str = Field(
+        ..., min_length=1, description="Contract reference to confirm, e.g. CR-1001"
+    )
+    transcript: str | None = None
+    thread_id: str | None = Field(
+        default=None,
+        description="LangGraph thread id from needs_confirmation response (HITL resume)",
+    )
+    user_text: str | None = Field(
+        default=None,
+        description="Raw user reply such as yes / CR-1001",
+    )
+
+
+class VoiceContractResponse(BaseModel):
+    ok: bool
+    message: str
+    intent: str | None = None
+    status: str | None = None
+    legal_entity_name: str | None = None
+    contract_reference_number: str | None = None
+    legal_entity: dict[str, Any] | None = None
+    pricelist: dict[str, Any] | None = None
+    candidates: list[dict[str, Any]] | None = None
+    contract_payload: dict[str, Any] | None = None
+    contract_file: str | None = None
+    contract_text_file: str | None = None
+    contract_text: str | None = None
+    spoken_name: str | None = None
+    spoken_number: str | None = None
+    contact: dict[str, Any] | None = None
+    transcript: str | None = None
+    contract_id: str | None = None
+    thread_id: str | None = None
+    transcription_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     storage_base_path: str
