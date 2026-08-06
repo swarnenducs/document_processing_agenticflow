@@ -20,6 +20,9 @@ def format_percent(score: float | None, digits: int = 1) -> str:
 def scores_to_percent_dict(
     *,
     overall: float | None = None,
+    extraction: float | None = None,
+    extraction_placeholder_detection: float | None = None,
+    extraction_structure: float | None = None,
     placeholder_mapping: float | None = None,
     placeholder_coverage: float | None = None,
     table_mapping: float | None = None,
@@ -32,6 +35,9 @@ def scores_to_percent_dict(
     """Build a UI/API-friendly percent report."""
     out: dict[str, Any] = {
         "overall_confidence_pct": as_percent(overall),
+        "extraction_confidence_pct": as_percent(extraction),
+        "extraction_placeholder_detection_pct": as_percent(extraction_placeholder_detection),
+        "extraction_structure_pct": as_percent(extraction_structure),
         "placeholder_mapping_confidence_pct": as_percent(placeholder_mapping),
         "placeholder_coverage_pct": as_percent(placeholder_coverage),
         "table_mapping_confidence_pct": as_percent(table_mapping),

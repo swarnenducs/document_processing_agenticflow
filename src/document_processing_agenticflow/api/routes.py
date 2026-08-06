@@ -127,7 +127,9 @@ async def create_document_job(
     if not data and not data_json:
         raise HTTPException(status_code=400, detail="Provide `data` (form JSON string) or `data_json` file")
 
-    job_id, _job_dir, template_path, data_path, output_path = get_store().create_job_paths()
+    job_id, _job_dir, template_path, data_path, output_path = get_store().create_job_paths(
+        template_filename=template.filename or "template.docx",
+    )
 
     await _save_upload(template, template_path, allowed_suffixes={".docx"})
 
@@ -228,7 +230,7 @@ def download_document(job_id: str) -> FileResponse:
     return FileResponse(
         path=job.output_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=f"generated_{job_id}.docx",
+        filename=Path(job.output_path).name,
     )
 
 

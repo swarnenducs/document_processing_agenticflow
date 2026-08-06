@@ -43,8 +43,20 @@ def _build_replacement_map(mapping: MappingResult) -> dict[str, str]:
         if not item.placeholder:
             continue
         value = "" if item.value is None else str(item.value)
+        key = item.placeholder.strip()
+        replacements[key] = value
         replacements[item.placeholder] = value
-        replacements[item.placeholder.strip()] = value
+        # Bare percent tokens are matched case-insensitively in patterns;
+        # also register canonical upper key used by find_placeholders.
+        if key.upper() in {"XX%", "X%"}:
+            replacements[key.upper()] = value
+            if value and not str(value).endswith("%"):
+                replacements[key.upper()] = f"{value}%"
+                replacements[key] = f"{value}%"
+        # Mirror angle-key XX → also fill bare XX% when only <XX> was mapped.
+        if key.upper() == "XX" and "XX%" not in {k.upper() for k in replacements}:
+            pct = value if str(value).endswith("%") else f"{value}%"
+            replacements["XX%"] = pct
     return replacements
 
 

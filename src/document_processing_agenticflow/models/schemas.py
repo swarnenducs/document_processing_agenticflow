@@ -202,10 +202,51 @@ class ValidationResult(BaseModel):
     )
 
 
+class ExtractionValidationResult(BaseModel):
+    """LLM critic of deterministic Word XML extraction (placeholders / structure)."""
+
+    passed: bool = False
+    extraction_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence that extracted XML/structure is usable for mapping (0-1)",
+    )
+    placeholder_detection_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence that placeholders were detected correctly (0-1)",
+    )
+    structure_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence that paragraphs/tables were parsed correctly (0-1)",
+    )
+    issues: list[ValidationIssue] = Field(default_factory=list)
+    summary: str | None = None
+    detected_placeholders: list[str] = Field(default_factory=list)
+    missed_placeholder_suspects: list[str] = Field(
+        default_factory=list,
+        description="Tokens in text that look like fills but were not extracted",
+    )
+    validator_source: str | None = None
+    validator_provider: str | None = None
+    validator_model: str | None = None
+
+
 class ConfidenceReport(BaseModel):
-    """Aggregated confidence across mapping, generation, and validation."""
+    """Aggregated confidence across extraction, mapping, generation, and validation."""
 
     overall_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    extraction_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="LLM confidence on extracted Word XML / placeholders (0-1)",
+    )
+    extraction_passed: bool | None = None
     mapping_confidence: float = Field(
         default=0.0,
         ge=0.0,
@@ -239,8 +280,9 @@ class ConfidenceReport(BaseModel):
     scores_pct: dict[str, Any] = Field(default_factory=dict)
     weights: dict[str, float] = Field(
         default_factory=lambda: {
-            "mapping": 0.40,
-            "coverage": 0.25,
+            "extraction": 0.10,
+            "mapping": 0.35,
+            "coverage": 0.20,
             "integrity": 0.15,
             "validation": 0.20,
         }

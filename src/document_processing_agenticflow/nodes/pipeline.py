@@ -9,6 +9,7 @@ from document_processing_agenticflow.models.state import DocumentProcessingState
 from document_processing_agenticflow.services.confidence import build_confidence_report
 from document_processing_agenticflow.services.document_generator import generate_styled_document
 from document_processing_agenticflow.services.document_validator import validate_documents
+from document_processing_agenticflow.services.extraction_validator import validate_extraction
 from document_processing_agenticflow.services.field_mapper import map_json_to_template
 from document_processing_agenticflow.services.style_extractor import extract_word_styles
 
@@ -65,6 +66,38 @@ def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingSta
         **state,
         "extracted": extracted,
         "status": "styles_extracted",
+        "errors": errors,
+    }
+
+
+def validate_extraction_node(state: DocumentProcessingState) -> DocumentProcessingState:
+    """LLM critic of extracted Word XML / placeholders (confidence on extraction)."""
+    errors = list(state.get("errors") or [])
+    if state.get("status") == "failed":
+        return state
+
+    if state.get("skip_extraction_validation"):
+        return {**state, "status": "extraction_validation_skipped", "errors": errors}
+
+    extracted = state.get("extracted")
+    if extracted is None:
+        errors.append("extracted template is required before extraction validation")
+        return {**state, "errors": errors, "status": "failed"}
+
+    try:
+        extraction_validation = validate_extraction(extracted)
+    except Exception:  # noqa: BLE001
+        # Soft-fail: deterministic extract already succeeded; continue pipeline.
+        return {
+            **state,
+            "status": "extraction_validation_skipped",
+            "errors": errors,
+        }
+
+    return {
+        **state,
+        "extraction_validation": extraction_validation,
+        "status": "extraction_validated",
         "errors": errors,
     }
 
@@ -135,6 +168,7 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
             state.get("mapping"),
             state.get("generation"),
             None,
+            extraction_validation=state.get("extraction_validation"),
         )
         return {
             **state,
@@ -162,7 +196,12 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
         errors.append(f"Validation failed: {exc}")
         return {**state, "errors": errors, "status": "failed"}
 
-    confidence = build_confidence_report(mapping, generation, validation)
+    confidence = build_confidence_report(
+        mapping,
+        generation,
+        validation,
+        extraction_validation=state.get("extraction_validation"),
+    )
 
     return {
         **state,
@@ -182,6 +221,7 @@ def finalize_node(state: DocumentProcessingState) -> DocumentProcessingState:
             state.get("mapping"),
             state.get("generation"),
             state.get("validation"),
+            extraction_validation=state.get("extraction_validation"),
         )
     return {
         **state,

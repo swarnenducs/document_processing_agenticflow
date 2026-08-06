@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 
 from document_processing_agenticflow.models.schemas import (
     ConfidenceReport,
+    ExtractionValidationResult,
     ExtractedTemplate,
     GenerationResult,
     MappingResult,
@@ -21,6 +22,7 @@ class DocumentProcessingState(TypedDict, total=False):
     output_path: str
     json_data: dict[str, Any]
     extracted: ExtractedTemplate
+    extraction_validation: ExtractionValidationResult
     mapping: MappingResult
     generation: GenerationResult
     validation: ValidationResult
@@ -32,3 +34,4 @@ class DocumentProcessingState(TypedDict, total=False):
     max_retries: int
     validation_threshold: float
     skip_validation: bool
+    skip_extraction_validation: bool

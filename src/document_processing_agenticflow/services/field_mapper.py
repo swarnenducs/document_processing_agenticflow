@@ -127,8 +127,42 @@ def _table_summaries(template: ExtractedTemplate) -> list[dict[str, Any]]:
     return summaries
 
 
+def _placeholder_occurrences(template: ExtractedTemplate) -> list[dict[str, Any]]:
+    """One entry per placeholder hit with surrounding block text for disambiguation."""
+    occurrences: list[dict[str, Any]] = []
+    for b in template.blocks:
+        if not b.placeholder_keys:
+            continue
+        text = (b.text or "").strip()
+        if not text:
+            continue
+        for key in b.placeholder_keys:
+            occurrences.append(
+                {
+                    "placeholder": key,
+                    "block_id": b.block_id,
+                    "block_type": b.block_type,
+                    "context": text[:600],
+                }
+            )
+    return occurrences
+
+
+def _normalize_mapped_value(placeholder: str, value: Any) -> Any:
+    """Ensure bare XX%/X% replacements keep a trailing % when value is numeric."""
+    if value is None:
+        return value
+    key = (placeholder or "").strip().upper()
+    if key in {"XX%", "X%"}:
+        text = str(value).strip()
+        if text and not text.endswith("%"):
+            return f"{text}%"
+    return value
+
+
 def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult:
     from document_processing_agenticflow.services.llm_factory import get_mapper_llm, is_mapper_available
+    from document_processing_agenticflow.services.prompts import build_mapper_chain
 
     if not is_mapper_available():
         raise RuntimeError(
@@ -155,52 +189,19 @@ def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingRe
         if b.text.strip()
     ]
     tables = _table_summaries(template)
-
-    prompt = f"""You are LLM #1 — a document field mapper.
-
-Analyze the Word TEMPLATE structure and the JSON DATA together.
-Decide what values from JSON belong in the document. Do NOT invent business rules
-from outside knowledge — only reason over the template text/headers and the JSON.
-
-TEMPLATE PLACEHOLDERS found (forms like {{{{x}}}}, ${{x}}, «x», <X>):
-{json.dumps(template.placeholders, indent=2)}
-
-TEMPLATE TABLES (headers + whether body rows exist):
-{json.dumps(tables, indent=2)[:6000]}
-
-TEMPLATE CONTENT BLOCKS:
-{json.dumps(block_summaries, indent=2)[:10000]}
-
-JSON DATA:
-{json.dumps(data, indent=2)[:12000]}
-
-Return structured output:
-
-A) mappings — for each scalar placeholder (DATE, ACCOUNT NAME, invoice_number, etc.):
-   - json_path: best path in JSON (dot notation)
-   - placeholder: exact placeholder key from the template list
-   - value: resolved value from JSON as a STRING (e.g. "24", "Acme", "2026-07-13")
-   - confidence: 0-1
-   - rationale: short reason
-   If JSON has no suitable value, leave that placeholder in unmapped_placeholders.
-
-B) table_fills — when a table should be filled from a JSON array of objects:
-   - table_index: which table
-   - array_json_path: path to the array (e.g. "products")
-   - columns: list of {{header, json_field, confidence}} mapping EACH header to a field
-     on objects inside that array (semantic match OK, e.g. "Product Code" → "productCode")
-   - rationale
-
-C) unmapped_json_keys / unmapped_placeholders / notes
-
-Important:
-- You decide semantic matches by reading headers and JSON keys — no fixed dictionary.
-- If the table has only a header row, still create a table_fills plan so rows can be generated.
-- Prefer leaving uncertain fields unmapped rather than guessing poorly (confidence < 0.5).
-"""
+    occurrences = _placeholder_occurrences(template)
+    chain = build_mapper_chain(llm)
 
     try:
-        result: _LLMMappingPayload = llm.invoke(prompt)  # type: ignore[assignment]
+        result: _LLMMappingPayload = chain.invoke(
+            {
+                "placeholders_json": json.dumps(template.placeholders, indent=2),
+                "occurrences_json": json.dumps(occurrences, indent=2)[:8000],
+                "tables_json": json.dumps(tables, indent=2)[:6000],
+                "blocks_json": json.dumps(block_summaries, indent=2)[:10000],
+                "data_json": json.dumps(data, indent=2)[:12000],
+            }
+        )  # type: ignore[assignment]
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Mapper LLM invoke failed ({config.label}): {exc}") from exc
 
@@ -212,6 +213,7 @@ Important:
             resolved = item.value
         elif resolved is None:
             resolved = item.value if item.value != "" else None
+        resolved = _normalize_mapped_value(item.placeholder, resolved)
         mappings.append(
             FieldMapping(
                 json_path=item.json_path,

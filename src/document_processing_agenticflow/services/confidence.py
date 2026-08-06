@@ -1,9 +1,10 @@
-"""Aggregate confidence scores across mapping, generation, and validation."""
+"""Aggregate confidence scores across extraction, mapping, generation, and validation."""
 
 from __future__ import annotations
 
 from document_processing_agenticflow.models.schemas import (
     ConfidenceReport,
+    ExtractionValidationResult,
     GenerationResult,
     MappingResult,
     ValidationResult,
@@ -11,8 +12,9 @@ from document_processing_agenticflow.models.schemas import (
 from document_processing_agenticflow.services.scoring import scores_to_percent_dict
 
 DEFAULT_WEIGHTS = {
-    "mapping": 0.40,
-    "coverage": 0.25,
+    "extraction": 0.10,
+    "mapping": 0.35,
+    "coverage": 0.20,
     "integrity": 0.15,
     "validation": 0.20,
 }
@@ -32,6 +34,8 @@ def build_confidence_report(
     generation: GenerationResult | None,
     validation: ValidationResult | None,
     weights: dict[str, float] | None = None,
+    *,
+    extraction_validation: ExtractionValidationResult | None = None,
 ) -> ConfidenceReport:
     """
     Combine component scores into an overall generator confidence (0-1),
@@ -51,22 +55,33 @@ def build_confidence_report(
     integrity = generation.integrity_score if generation else 0.0
     gen_conf = generation.generation_confidence if generation else 0.0
     validation_score = validation.validation_score if validation else None
+    extraction_score = (
+        extraction_validation.extraction_confidence if extraction_validation else None
+    )
 
-    active = {
+    active: dict[str, float] = {
         "mapping": mapping_confidence,
         "coverage": coverage_score,
         "integrity": integrity,
     }
-    active_weights = {
+    active_weights: dict[str, float] = {
         "mapping": w["mapping"],
         "coverage": w["coverage"],
         "integrity": w["integrity"],
     }
 
+    if extraction_score is not None:
+        active["extraction"] = extraction_score
+        active_weights["extraction"] = w.get("extraction", 0.10)
+
     if validation_score is not None:
         active["validation"] = validation_score
         active_weights["validation"] = w["validation"]
-    else:
+
+    # If some optional scores missing, renormalize remaining weights
+    expected_keys = set(w)
+    missing = expected_keys - set(active_weights)
+    if missing:
         total = sum(active_weights.values()) or 1.0
         scale = (sum(w.values()) or 1.0) / total
         active_weights = {k: v * scale for k, v in active_weights.items()}
@@ -102,6 +117,20 @@ def build_confidence_report(
                 )
 
     notes_parts: list[str] = []
+    if extraction_validation:
+        if extraction_validation.validator_provider and extraction_validation.validator_model:
+            notes_parts.append(
+                "extraction_validator="
+                f"{extraction_validation.validator_provider}/"
+                f"{extraction_validation.validator_model}"
+            )
+        if not extraction_validation.passed:
+            notes_parts.append("extraction_validation_failed")
+        if extraction_validation.missed_placeholder_suspects:
+            notes_parts.append(
+                "missed_placeholders="
+                + ",".join(extraction_validation.missed_placeholder_suspects[:8])
+            )
     if mapping:
         if mapping.mapper_provider and mapping.mapper_model:
             notes_parts.append(f"mapper={mapping.mapper_provider}/{mapping.mapper_model}")
@@ -128,9 +157,19 @@ def build_confidence_report(
         validator_llm = f"{validation.validator_provider}/{validation.validator_model}"
     elif validation and validation.validator_source:
         validator_llm = validation.validator_source
+    elif (
+        extraction_validation
+        and extraction_validation.validator_provider
+        and extraction_validation.validator_model
+    ):
+        validator_llm = (
+            f"{extraction_validation.validator_provider}/"
+            f"{extraction_validation.validator_model}"
+        )
 
     scores_pct = scores_to_percent_dict(
         overall=overall,
+        extraction=extraction_score if extraction_score is not None else 0.0,
         placeholder_mapping=mapping.mapping_confidence if mapping else 0.0,
         placeholder_coverage=coverage_score,
         table_mapping=table_conf,
@@ -139,10 +178,20 @@ def build_confidence_report(
         validation=validation_score if validation_score is not None else 0.0,
         per_placeholder=per_field,
         per_table_column=per_table_column,
+        extraction_placeholder_detection=(
+            extraction_validation.placeholder_detection_confidence
+            if extraction_validation
+            else None
+        ),
+        extraction_structure=(
+            extraction_validation.structure_confidence if extraction_validation else None
+        ),
     )
 
     return ConfidenceReport(
         overall_confidence=round(overall, 4),
+        extraction_confidence=round(extraction_score if extraction_score is not None else 0.0, 4),
+        extraction_passed=extraction_validation.passed if extraction_validation else None,
         mapping_confidence=round(mapping_confidence, 4),
         coverage_score=round(coverage_score, 4),
         table_mapping_confidence=round(table_conf, 4),

@@ -356,7 +356,12 @@ def ui_generate_document(
         err = status.get("error_message") or "Unknown failure"
         return f"Job `{job_id}` failed.\n\n{err}", None
 
-    tmp = Path(tempfile.gettempdir()) / f"gradio_{job_id}.docx"
+    out_name = Path(status.get("output_path") or "").name
+    if not out_name.endswith(".docx"):
+        from document_processing_agenticflow.services.naming import build_contract_output_filename
+
+        out_name = build_contract_output_filename(job_id, template_path.name)
+    tmp = Path(tempfile.gettempdir()) / out_name
     try:
         download_job_output(job_id, tmp)
     except ApiError as exc:

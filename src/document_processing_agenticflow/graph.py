@@ -1,4 +1,4 @@
-"""LangGraph workflow: extract → map → generate → validate (+ optional retry)."""
+"""LangGraph workflow: extract → extraction-validate → map → generate → validate."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from document_processing_agenticflow.nodes.pipeline import (
     load_data_node,
     map_fields_node,
     validate_document_node,
+    validate_extraction_node,
 )
 
 
@@ -57,6 +58,7 @@ def build_graph():
 
     graph.add_node("load_data", load_data_node)
     graph.add_node("extract_styles", extract_styles_node)
+    graph.add_node("validate_extraction", validate_extraction_node)
     graph.add_node("map_fields", map_fields_node)
     graph.add_node("generate_document", generate_document_node)
     graph.add_node("validate_document", validate_document_node)
@@ -71,6 +73,11 @@ def build_graph():
     )
     graph.add_conditional_edges(
         "extract_styles",
+        _should_continue,
+        {"continue": "validate_extraction", "stop": END},
+    )
+    graph.add_conditional_edges(
+        "validate_extraction",
         _should_continue,
         {"continue": "map_fields", "stop": END},
     )

@@ -171,14 +171,27 @@ class JobStore:
                 if col not in existing:
                     conn.execute(f"ALTER TABLE voice_contracts ADD COLUMN {col} {typ}")
 
-    def create_job_paths(self, job_id: str | None = None) -> tuple[str, Path, Path, Path, Path]:
-        """Return (job_id, job_dir, template_path, data_path, output_path)."""
+    def create_job_paths(
+        self,
+        job_id: str | None = None,
+        *,
+        template_filename: str | None = None,
+    ) -> tuple[str, Path, Path, Path, Path]:
+        """Return (job_id, job_dir, template_path, data_path, output_path).
+
+        Output file is named ``{job_id_last_block}_{template_stem}.docx``.
+        """
+        from document_processing_agenticflow.services.naming import build_contract_output_filename
+
         jid = job_id or str(uuid.uuid4())
         job_dir = self.cfg.job_dir(jid)
         job_dir.mkdir(parents=True, exist_ok=True)
         template_path = job_dir / "template.docx"
         data_path = job_dir / "data.json"
-        output_path = job_dir / "output.docx"
+        output_name = build_contract_output_filename(
+            jid, template_filename or "template.docx"
+        )
+        output_path = job_dir / output_name
         return jid, job_dir, template_path, data_path, output_path
 
     def insert_job(

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pathlib import Path
+
 from document_processing_agenticflow.graph import build_graph
 from document_processing_agenticflow.storage.job_store import JobStore
 
@@ -24,13 +26,17 @@ def run_document_job(
 
     try:
         graph = build_graph()
+        from document_processing_agenticflow.services.naming import build_contract_output_filename
+
+        fallback_name = build_contract_output_filename(
+            job_id, Path(job.template_path or "template.docx").name
+        )
         result = graph.invoke(
             {
                 "template_path": job.template_path,
                 "data_path": job.data_path,
-                "output_path": job.output_path or str(
-                    job_store.cfg.job_dir(job_id) / "output.docx"
-                ),
+                "output_path": job.output_path
+                or str(job_store.cfg.job_dir(job_id) / fallback_name),
                 "errors": [],
                 "status": "started",
                 "retry_count": 0,

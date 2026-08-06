@@ -17,6 +17,7 @@ def _print_confidence(result: dict) -> None:
     mapping = result.get("mapping")
     generation = result.get("generation")
     validation = result.get("validation")
+    extraction_validation = result.get("extraction_validation")
 
     print("\nScores (all in %)")
     if confidence:
@@ -26,6 +27,16 @@ def _print_confidence(result: dict) -> None:
         if confidence.validator_llm:
             print(f"  LLM #2 (validator)              : {confidence.validator_llm}")
         print(f"  Overall confidence              : {pct.get('overall_confidence_pct', confidence.overall_confidence * 100):.1f}%")
+        print(f"  Extraction XML confidence       : {pct.get('extraction_confidence_pct', confidence.extraction_confidence * 100):.1f}%")
+        if confidence.extraction_passed is not None:
+            print(f"  Extraction validation passed    : {confidence.extraction_passed}")
+        if pct.get("extraction_placeholder_detection_pct") is not None:
+            print(
+                f"  Extraction placeholder detect.  : "
+                f"{pct.get('extraction_placeholder_detection_pct', 0):.1f}%"
+            )
+        if pct.get("extraction_structure_pct") is not None:
+            print(f"  Extraction structure            : {pct.get('extraction_structure_pct', 0):.1f}%")
         print(f"  Placeholder mapping (LLM #1)    : {pct.get('placeholder_mapping_confidence_pct', confidence.mapping_confidence * 100):.1f}%")
         print(f"  Placeholder coverage            : {pct.get('placeholder_coverage_pct', confidence.coverage_score * 100):.1f}%")
         print(f"  Table mapping (LLM #1)          : {pct.get('table_mapping_confidence_pct', confidence.table_mapping_confidence * 100):.1f}%")
@@ -63,6 +74,25 @@ def _print_confidence(result: dict) -> None:
             print(f"  Placeholder coverage: {mapping.coverage_score * 100:.1f}%")
         if generation:
             print(f"  Generation confidence: {generation.generation_confidence * 100:.1f}%")
+
+    if extraction_validation:
+        print("\nExtraction XML validation (LLM critic)")
+        print(f"  passed             : {extraction_validation.passed}")
+        print(f"  extraction conf.   : {extraction_validation.extraction_confidence * 100:.1f}%")
+        print(
+            f"  placeholder detect.: "
+            f"{extraction_validation.placeholder_detection_confidence * 100:.1f}%"
+        )
+        print(f"  structure conf.    : {extraction_validation.structure_confidence * 100:.1f}%")
+        if extraction_validation.summary:
+            print(f"  summary            : {extraction_validation.summary}")
+        if extraction_validation.missed_placeholder_suspects:
+            print(f"  missed suspects    : {extraction_validation.missed_placeholder_suspects}")
+        if extraction_validation.issues:
+            print("  issues:")
+            for issue in extraction_validation.issues:
+                field = f" [{issue.field}]" if issue.field else ""
+                print(f"    - ({issue.severity}){field} {issue.message}")
 
     if validation:
         print("\nValidation detail (LLM #2)")
@@ -115,7 +145,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-validation",
         action="store_true",
-        help="Skip the validator step (still computes mapping/generation confidence)",
+        help="Skip the document validator step (still computes mapping/generation confidence)",
+    )
+    parser.add_argument(
+        "--skip-extraction-validation",
+        action="store_true",
+        help="Skip the LLM critic on extracted Word XML / placeholders",
     )
     parser.add_argument(
         "--max-retries",
@@ -148,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             "max_retries": args.max_retries,
             "validation_threshold": args.validation_threshold,
             "skip_validation": args.skip_validation,
+            "skip_extraction_validation": args.skip_extraction_validation,
         }
     )
 
@@ -175,6 +211,11 @@ def main(argv: list[str] | None = None) -> int:
         dump_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "confidence": result["confidence"].model_dump() if result.get("confidence") else None,
+            "extraction_validation": (
+                result["extraction_validation"].model_dump()
+                if result.get("extraction_validation")
+                else None
+            ),
             "validation": result["validation"].model_dump() if result.get("validation") else None,
             "generation": {
                 "generation_confidence": result["generation"].generation_confidence,

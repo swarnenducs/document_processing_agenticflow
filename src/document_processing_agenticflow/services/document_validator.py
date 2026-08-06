@@ -53,6 +53,36 @@ def _find_leftovers(text: str) -> list[str]:
     return found
 
 
+def _key_value_snippets(generated_text: str, mapping: MappingResult, *, limit: int = 4000) -> str:
+    """Pull short windows around mapped values so truncation does not hide fills."""
+    snippets: list[str] = []
+    seen: set[str] = set()
+    for item in mapping.mappings:
+        value = "" if item.value is None else str(item.value).strip()
+        if not value or value in seen:
+            continue
+        idx = generated_text.find(value)
+        if idx < 0:
+            snippets.append(f"[MISSING mapped value for {item.placeholder!r}: {value!r}]")
+            seen.add(value)
+            continue
+        start = max(0, idx - 80)
+        end = min(len(generated_text), idx + len(value) + 120)
+        window = generated_text[start:end].replace("\n", " ")
+        snippets.append(f"- {item.placeholder}={value!r}: …{window}…")
+        seen.add(value)
+        if sum(len(s) for s in snippets) >= limit:
+            break
+    # Always include known contract sections when present
+    for marker in ("SOLE COMMITMENT", "ADMINISTRATIVE FEE", "Committed Level", "EXHIBIT A"):
+        idx = generated_text.find(marker)
+        if idx < 0:
+            continue
+        window = generated_text[idx : idx + 280].replace("\n", " ")
+        snippets.append(f"- section {marker}: …{window}…")
+    return "\n".join(snippets)[:limit] if snippets else "(no snippets)"
+
+
 class _LLMValidationIssue(BaseModel):
     severity: str = Field(default="medium", description="high | medium | low")
     field: str = Field(default="", description="Placeholder or field name if known")
@@ -85,6 +115,8 @@ def _llm_validation(
             "(e.g. GROQ_API_KEY or Azure OpenAI settings)."
         )
 
+    from document_processing_agenticflow.services.prompts import build_validator_chain
+
     try:
         llm, config = get_validator_llm(structured_schema=_LLMValidationPayload)
     except (ImportError, RuntimeError, ValueError) as exc:
@@ -103,39 +135,19 @@ def _llm_validation(
         for m in mapping.mappings
     ]
 
-    prompt = f"""You are a strict document QA critic (LLM #2 — {config.label}). Compare:
-1) the Word TEMPLATE text/placeholders
-2) the GENERATED document text
-3) the source JSON data
-4) the field mappings used
-
-Decide if the generated document correctly reflects the JSON while preserving template structure.
-
-TEMPLATE TEXT:
-{template_text[:8000]}
-
-GENERATED TEXT:
-{generated_text[:8000]}
-
-JSON DATA:
-{json.dumps(json_data, indent=2)[:8000]}
-
-MAPPINGS:
-{json.dumps(mapping_summary, indent=2)[:8000]}
-
-UNMAPPED PLACEHOLDERS: {json.dumps(mapping.unmapped_placeholders)}
-DETECTED LEFTOVER PLACEHOLDER TOKENS IN OUTPUT: {json.dumps(leftovers)}
-
-Rules for scoring (validation_score 0-1):
-- 1.0 = all mapped values present, no leftover placeholders, structure intact
-- Deduct heavily for wrong/missing values or leftover {{{{placeholders}}}}
-- Deduct moderately for unmapped placeholders or style/structure concerns
-- Set passed=true only if there are no high-severity issues and score >= 0.7
-- List concrete issues with severity high|medium|low
-"""
-
+    chain = build_validator_chain(llm)
     try:
-        result: _LLMValidationPayload = llm.invoke(prompt)  # type: ignore[assignment]
+        result: _LLMValidationPayload = chain.invoke(
+            {
+                "template_text": template_text[:8000],
+                "generated_text": generated_text[:8000],
+                "key_snippets": _key_value_snippets(generated_text, mapping),
+                "data_json": json.dumps(json_data, indent=2)[:8000],
+                "mappings_json": json.dumps(mapping_summary, indent=2)[:8000],
+                "unmapped_placeholders_json": json.dumps(mapping.unmapped_placeholders),
+                "leftovers_json": json.dumps(leftovers),
+            }
+        )  # type: ignore[assignment]
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Validator LLM invoke failed ({config.label}): {exc}") from exc
 
