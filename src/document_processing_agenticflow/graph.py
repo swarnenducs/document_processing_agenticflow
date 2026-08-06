@@ -106,5 +106,63 @@ def build_graph():
     return graph.compile()
 
 
+def invoke_document_graph(
+    state: DocumentProcessingState | dict,
+    *,
+    config: dict | None = None,
+    mapper_model_id: str | None = None,
+    validator_model_id: str | None = None,
+):
+    """
+    Run the compiled LangGraph with optional ``init_chat_model`` provider switches.
+
+    Example::
+
+        invoke_document_graph(
+            state,
+            mapper_model_id="openai:gpt-4o-mini",
+            validator_model_id="anthropic:claude-sonnet-4-20250514",
+        )
+
+        # or LangGraph-style configurable:
+        invoke_document_graph(state, config={"configurable": {
+            "mapper_model_id": "groq:openai/gpt-oss-120b",
+        }})
+    """
+    from document_processing_agenticflow.services.llm_factory import (
+        bind_model_overrides_from_config,
+        reset_role_model_overrides,
+        set_role_model_overrides,
+    )
+
+    payload = dict(state)
+    if mapper_model_id:
+        payload["mapper_model_id"] = mapper_model_id
+    if validator_model_id:
+        payload["validator_model_id"] = validator_model_id
+
+    run_config = dict(config or {})
+    configurable = dict(run_config.get("configurable") or {})
+    if mapper_model_id:
+        configurable["mapper_model_id"] = mapper_model_id
+    if validator_model_id:
+        configurable["validator_model_id"] = validator_model_id
+    if configurable:
+        run_config["configurable"] = configurable
+
+    tokens = bind_model_overrides_from_config(run_config)
+    # Also bind explicit kwargs even when config was empty
+    if mapper_model_id or validator_model_id:
+        reset_role_model_overrides(tokens)
+        tokens = set_role_model_overrides(
+            mapper_model_id=mapper_model_id or configurable.get("mapper_model_id"),
+            validator_model_id=validator_model_id or configurable.get("validator_model_id"),
+        )
+    try:
+        return build_graph().invoke(payload, config=run_config or None)
+    finally:
+        reset_role_model_overrides(tokens)
+
+
 # Module-level compiled graph for LangGraph Studio / `langgraph dev`
 app = build_graph()

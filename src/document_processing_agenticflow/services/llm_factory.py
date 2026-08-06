@@ -1,4 +1,4 @@
-"""Central factory for injectable LLMs used in the pipeline.
+"""Central factory for injectable LLMs — all chat models via LangChain ``init_chat_model``.
 
 Roles
 -----
@@ -6,62 +6,43 @@ Roles
 - **validator** (LLM #2): independent critic
 - **agent**: optional tool-calling orchestrator (defaults to mapper provider)
 
-Model construction
-------------------
-Built-in providers are created via LangChain ``init_chat_model`` so provider +
-model stay dynamic (``provider:model`` strings or role env vars). Custom
-providers still use ``register_llm_provider(...)``.
-
-Built-in providers
-------------------
-- ``openai`` — OpenAI Chat Completions
-- ``azure_openai`` (alias ``azure``) — Azure OpenAI deployments / Foundry
-- ``groq`` — Groq
-- ``openai_compatible`` (alias ``compatible``) — any OpenAI-compatible
-  HTTP API (Ollama, Together, vLLM, etc.) via ``base_url`` + API key
-
-Inject a custom provider at runtime::
-
-    from document_processing_agenticflow.services.llm_factory import register_llm_provider
-
-    def build_my_llm(config, temperature=0):
-        ...
-        return chat_model
-
-    register_llm_provider("my_provider", build_my_llm)
-    # then set MAPPER_PROVIDER=my_provider
-
-Environment (per role)
-----------------------
-Compact form (preferred for interviews / demos)::
+Switch any provider / model
+---------------------------
+Preferred (LangChain ``provider:model`` string → ``init_chat_model``)::
 
     MAPPER_MODEL_ID=azure_openai:gpt-5-mini
     VALIDATOR_MODEL_ID=groq:openai/gpt-oss-120b
+    # Any init_chat_model provider works, e.g.:
+    # MAPPER_MODEL_ID=anthropic:claude-sonnet-4-20250514
+    # MAPPER_MODEL_ID=openai:gpt-4o
+    # MAPPER_MODEL_ID=google_genai:gemini-2.0-flash
 
-Or split vars (still supported)::
+Or split vars still supported::
 
-======= ========================= ==========================================
-Role    Primary vars              Fallbacks
-======= ========================= ==========================================
-mapper  MAPPER_PROVIDER           default ``openai``
-        MAPPER_MODEL              OPENAI_MODEL / AZURE_OPENAI_DEPLOYMENT / …
-        MAPPER_MODEL_ID           ``provider:model`` overrides both above
-        MAPPER_API_KEY            provider default key
-        MAPPER_BASE_URL           OPENAI_BASE_URL / AZURE_OPENAI_ENDPOINT
-        MAPPER_API_VERSION        AZURE_OPENAI_API_VERSION (Azure)
-validator VALIDATOR_PROVIDER      default ``groq``
-          VALIDATOR_MODEL         GROQ_VALIDATOR_MODEL / OPENAI_VALIDATOR_MODEL
-          VALIDATOR_MODEL_ID      ``provider:model``
-          VALIDATOR_API_KEY       …
-          VALIDATOR_BASE_URL      …
-          VALIDATOR_API_VERSION   …
-======= ========================= ==========================================
+    MAPPER_PROVIDER=azure_openai
+    MAPPER_MODEL=gpt-5-mini
+
+Runtime override (code / LangGraph configurable)::
+
+    get_mapper_llm(model_id="openai:gpt-4o-mini")
+    init_role_chat_model("validator", model_id="anthropic:claude-sonnet-4-20250514")
+
+    # LangGraph invoke:
+    graph.invoke(state, config={"configurable": {
+        "mapper_model_id": "openai:gpt-4o-mini",
+        "validator_model_id": "groq:openai/gpt-oss-120b",
+    }})
+
+Custom / exotic SDKs::
+
+    register_llm_provider("my_vendor", build_fn)
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -72,13 +53,20 @@ LLMProviderBuilder = Callable[["LLMRoleConfig", float], Any]
 
 _PROVIDER_REGISTRY: dict[str, LLMProviderBuilder] = {}
 
+# Optional per-role runtime overrides (provider:model) — set by LangGraph config / callers
+_mapper_model_id_override: ContextVar[str | None] = ContextVar("mapper_model_id", default=None)
+_validator_model_id_override: ContextVar[str | None] = ContextVar(
+    "validator_model_id", default=None
+)
+_agent_model_id_override: ContextVar[str | None] = ContextVar("agent_model_id", default=None)
+
 
 @dataclass(frozen=True)
 class LLMRoleConfig:
     """Resolved provider/model settings for one LLM role."""
 
     role: str  # mapper | validator | agent
-    provider: str  # openai | azure_openai | groq | openai_compatible | custom
+    provider: str  # openai | azure_openai | groq | anthropic | … | custom
     model: str
     label: str  # human-readable, e.g. "azure_openai/gpt-4o"
     api_key: str | None = None
@@ -102,8 +90,25 @@ def unregister_llm_provider(name: str) -> None:
 
 
 def list_llm_providers() -> list[str]:
-    """Return built-in + registered provider names."""
-    built_in = {"openai", "azure_openai", "azure", "groq", "openai_compatible", "compatible"}
+    """Return documented + registered provider names (init_chat_model accepts more)."""
+    built_in = {
+        "openai",
+        "azure_openai",
+        "azure",
+        "groq",
+        "openai_compatible",
+        "compatible",
+        "anthropic",
+        "google_genai",
+        "google_vertexai",
+        "mistralai",
+        "fireworks",
+        "together",
+        "cohere",
+        "bedrock",
+        "huggingface",
+        "ollama",
+    }
     return sorted(built_in | set(_PROVIDER_REGISTRY))
 
 
@@ -145,7 +150,10 @@ def _normalize_provider(provider: str) -> str:
         "azure-openai": "azure_openai",
         "compatible": "openai_compatible",
         "openai-compatible": "openai_compatible",
-        "ollama": "openai_compatible",
+        "google": "google_genai",
+        "gemini": "google_genai",
+        "vertex": "google_vertexai",
+        "claude": "anthropic",
     }
     return aliases.get(p, p)
 
@@ -161,6 +169,10 @@ def _default_model(role: str, provider: str) -> str:
         return "openai/gpt-oss-120b"
     if provider == "azure_openai":
         return _env("AZURE_OPENAI_DEPLOYMENT") or _env("OPENAI_MODEL") or "gpt-4o"
+    if provider == "anthropic":
+        return "claude-sonnet-4-20250514"
+    if provider in {"google_genai", "google_vertexai"}:
+        return "gemini-2.0-flash"
     return "gpt-5"
 
 
@@ -222,13 +234,23 @@ def _resolve_api_key(role: str, provider: str) -> str | None:
     if provider == "openai":
         return _env("OPENAI_API_KEY")
     if provider == "azure_openai":
-        # Do not fall back to OPENAI_API_KEY — that masks missing Azure config
-        # and causes silent rule fallback when the Azure call fails.
         return _env("AZURE_OPENAI_API_KEY")
     if provider == "groq":
         return _env("GROQ_API_KEY")
     if provider == "openai_compatible":
         return _env("OPENAI_API_KEY") or _env("COMPATIBLE_API_KEY")
+    if provider == "anthropic":
+        return _env("ANTHROPIC_API_KEY")
+    if provider in {"google_genai", "google_vertexai"}:
+        return _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY")
+    if provider == "mistralai":
+        return _env("MISTRAL_API_KEY")
+    if provider == "fireworks":
+        return _env("FIREWORKS_API_KEY")
+    if provider == "together":
+        return _env("TOGETHER_API_KEY")
+    if provider == "cohere":
+        return _env("COHERE_API_KEY")
     return None
 
 
@@ -249,6 +271,8 @@ def _resolve_base_url(role: str, provider: str) -> str | None:
         candidates = [_env("OPENAI_BASE_URL"), _env("COMPATIBLE_BASE_URL")]
     elif provider == "groq":
         candidates = [_env("GROQ_BASE_URL")]
+    elif provider == "ollama":
+        candidates = [_env("OLLAMA_BASE_URL"), "http://127.0.0.1:11434"]
     else:
         candidates = []
 
@@ -282,7 +306,8 @@ def _parse_model_id(model_id: str) -> tuple[str, str]:
     if ":" not in raw:
         raise ValueError(
             f"MODEL_ID must look like 'provider:model', got {model_id!r}. "
-            "Example: azure_openai:gpt-5-mini or groq:openai/gpt-oss-120b"
+            "Example: azure_openai:gpt-5-mini or groq:openai/gpt-oss-120b "
+            "or anthropic:claude-sonnet-4-20250514"
         )
     provider_raw, _, model = raw.partition(":")
     provider = _normalize_provider(provider_raw)
@@ -292,21 +317,82 @@ def _parse_model_id(model_id: str) -> tuple[str, str]:
     return provider, model
 
 
-def resolve_role_config(role: str, *, model_override: str | None = None) -> LLMRoleConfig:
-    """Resolve env → typed config for a role (mapper | validator | agent)."""
+def _context_model_id(role: str) -> str | None:
+    if role == "mapper":
+        return _mapper_model_id_override.get()
+    if role == "validator":
+        return _validator_model_id_override.get()
+    if role == "agent":
+        return _agent_model_id_override.get()
+    return None
+
+
+def set_role_model_overrides(
+    *,
+    mapper_model_id: str | None = None,
+    validator_model_id: str | None = None,
+    agent_model_id: str | None = None,
+) -> tuple[Token, Token, Token]:
+    """Bind runtime ``provider:model`` overrides (e.g. from LangGraph configurable)."""
+    return (
+        _mapper_model_id_override.set(mapper_model_id),
+        _validator_model_id_override.set(validator_model_id),
+        _agent_model_id_override.set(agent_model_id),
+    )
+
+
+def reset_role_model_overrides(tokens: tuple[Token, Token, Token]) -> None:
+    _mapper_model_id_override.reset(tokens[0])
+    _validator_model_id_override.reset(tokens[1])
+    _agent_model_id_override.reset(tokens[2])
+
+
+def bind_model_overrides_from_config(config: dict[str, Any] | None) -> tuple[Token, Token, Token]:
+    """Extract LangGraph ``configurable`` model ids and bind them."""
+    configurable: dict[str, Any] = {}
+    if isinstance(config, dict):
+        configurable = config.get("configurable") or {}
+        if not isinstance(configurable, dict):
+            configurable = {}
+    return set_role_model_overrides(
+        mapper_model_id=configurable.get("mapper_model_id")
+        or configurable.get("mapper_model"),
+        validator_model_id=configurable.get("validator_model_id")
+        or configurable.get("validator_model"),
+        agent_model_id=configurable.get("agent_model_id")
+        or configurable.get("agent_model"),
+    )
+
+
+def resolve_role_config(
+    role: str,
+    *,
+    model_override: str | None = None,
+    model_id: str | None = None,
+) -> LLMRoleConfig:
+    """Resolve env → typed config for a role (mapper | validator | agent).
+
+    Precedence for provider/model:
+    1. Explicit ``model_id`` arg (``provider:model``)
+    2. ContextVar override (LangGraph configurable)
+    3. ``{ROLE}_MODEL_ID`` env
+    4. Split ``{ROLE}_PROVIDER`` / ``{ROLE}_MODEL`` (+ legacy fallbacks)
+    """
     role = role.strip().lower()
     if role not in {"mapper", "validator", "agent"}:
         raise ValueError(f"Unknown LLM role: {role}")
 
     prefix = _role_prefix(role)
 
-    # Compact ``provider:model`` wins over split PROVIDER/MODEL when set.
-    model_id = _env(f"{prefix}_MODEL_ID")
-    if not model_id and role == "agent":
-        model_id = _env("MAPPER_MODEL_ID")
+    effective_model_id = (
+        (model_id or "").strip()
+        or (_context_model_id(role) or "").strip()
+        or _env(f"{prefix}_MODEL_ID")
+        or (_env("MAPPER_MODEL_ID") if role == "agent" else None)
+    )
 
-    if model_id:
-        provider, model_from_id = _parse_model_id(model_id)
+    if effective_model_id:
+        provider, model_from_id = _parse_model_id(effective_model_id)
         model = model_override or model_from_id
     else:
         if role == "agent":
@@ -335,19 +421,16 @@ def resolve_role_config(role: str, *, model_override: str | None = None) -> LLMR
     )
 
 
-def mapper_config() -> LLMRoleConfig:
-    """Resolved config for LLM #1 (mapper)."""
-    return resolve_role_config("mapper")
+def mapper_config(*, model_id: str | None = None) -> LLMRoleConfig:
+    return resolve_role_config("mapper", model_id=model_id)
 
 
-def validator_config() -> LLMRoleConfig:
-    """Resolved config for LLM #2 (validator / critic)."""
-    return resolve_role_config("validator")
+def validator_config(*, model_id: str | None = None) -> LLMRoleConfig:
+    return resolve_role_config("validator", model_id=model_id)
 
 
-def agent_config(*, model_name: str | None = None) -> LLMRoleConfig:
-    """Resolved config for the optional agent orchestrator."""
-    return resolve_role_config("agent", model_override=model_name)
+def agent_config(*, model_name: str | None = None, model_id: str | None = None) -> LLMRoleConfig:
+    return resolve_role_config("agent", model_override=model_name, model_id=model_id)
 
 
 def config_model_id(config: LLMRoleConfig) -> str:
@@ -356,7 +439,7 @@ def config_model_id(config: LLMRoleConfig) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Builders — built-ins go through init_chat_model
+# Builders — ALL built-ins go through LangChain init_chat_model
 # ---------------------------------------------------------------------------
 
 
@@ -374,7 +457,7 @@ def _normalize_azure_endpoint(endpoint: str) -> tuple[str, str]:
     Return (style, base_url).
 
     - foundry_v1: Azure AI Foundry / ``*.services.ai.azure.com/.../openai/v1``
-      → OpenAI-compatible ChatOpenAI via init_chat_model(model_provider='openai')
+      → OpenAI-compatible path via init_chat_model(model_provider='openai')
     - classic: ``*.openai.azure.com`` → azure_openai provider
     """
     url = endpoint.strip().rstrip("/")
@@ -389,41 +472,36 @@ def _normalize_azure_endpoint(endpoint: str) -> tuple[str, str]:
     return "classic", url
 
 
-def _init_chat_model(**kwargs: Any) -> Any:
-    """Lazy import wrapper so unit tests can import the factory without LangChain load cost."""
+def _init_chat_model(*args: Any, **kwargs: Any) -> Any:
+    """Lazy import — every chat LLM in this project goes through this helper."""
     from langchain.chat_models import init_chat_model
 
-    return init_chat_model(**kwargs)
+    return init_chat_model(*args, **kwargs)
 
 
 def _build_via_init_chat_model(config: LLMRoleConfig, temperature: float = 0) -> Any:
-    """Construct a built-in chat model using LangChain ``init_chat_model``."""
+    """Construct a chat model using LangChain ``init_chat_model`` only."""
     provider = _normalize_provider(config.provider)
+    model_id = config_model_id(config)
+    temp = temperature
 
+    # --- openai ---
     if provider == "openai":
         api_key = _require_key(config, hint="OPENAI_API_KEY")
-        kwargs: dict[str, Any] = {
-            "model": config.model,
-            "model_provider": "openai",
-            "api_key": api_key,
-            "temperature": temperature,
-        }
+        kwargs: dict[str, Any] = {"api_key": api_key, "temperature": temp}
         if config.base_url:
             kwargs["base_url"] = config.base_url
-        return _init_chat_model(**kwargs)
+        return _init_chat_model(model_id, **kwargs)
 
+    # --- groq ---
     if provider == "groq":
         api_key = _require_key(config, hint="GROQ_API_KEY")
-        kwargs = {
-            "model": config.model,
-            "model_provider": "groq",
-            "api_key": api_key,
-            "temperature": temperature,
-        }
+        kwargs = {"api_key": api_key, "temperature": temp}
         if config.base_url:
             kwargs["base_url"] = config.base_url
-        return _init_chat_model(**kwargs)
+        return _init_chat_model(model_id, **kwargs)
 
+    # --- azure openai / foundry ---
     if provider == "azure_openai":
         api_key = _require_key(config, hint="AZURE_OPENAI_API_KEY")
         endpoint = config.base_url or _env("AZURE_OPENAI_ENDPOINT")
@@ -434,48 +512,56 @@ def _build_via_init_chat_model(config: LLMRoleConfig, temperature: float = 0) ->
             )
         style, base = _normalize_azure_endpoint(endpoint)
 
-        # Foundry OpenAI v1 route is OpenAI-compatible, not classic AzureChatOpenAI.
+        # Foundry OpenAI v1 is OpenAI-compatible (not classic azure_openai kwargs).
         if style == "foundry_v1":
-            kwargs = {
-                "model": config.model,
-                "model_provider": "openai",
-                "api_key": api_key,
-                "base_url": base,
-            }
-            if temperature not in (None, 0, 0.0):
-                kwargs["temperature"] = temperature
-            return _init_chat_model(**kwargs)
+            kwargs = {"api_key": api_key, "base_url": base}
+            if temp not in (None, 0, 0.0):
+                kwargs["temperature"] = temp
+            return _init_chat_model(f"openai:{config.model}", **kwargs)
 
-        return _init_chat_model(
-            model=config.model,
-            model_provider="azure_openai",
-            api_key=api_key,
-            azure_endpoint=base,
-            api_version=config.api_version or "2024-12-01-preview",
-            temperature=temperature,
-        )
+        kwargs = {
+            "api_key": api_key,
+            "azure_endpoint": base,
+            "api_version": config.api_version or "2024-12-01-preview",
+            "temperature": temp,
+        }
+        return _init_chat_model(model_id, **kwargs)
 
-    if provider == "openai_compatible":
-        if not config.base_url:
+    # --- openai-compatible / ollama ---
+    if provider in {"openai_compatible", "ollama"}:
+        base = config.base_url
+        if provider == "ollama" and not base:
+            base = "http://127.0.0.1:11434"
+        if not base:
             raise RuntimeError(
-                "openai_compatible provider requires a base URL "
-                "(MAPPER_BASE_URL / VALIDATOR_BASE_URL / OPENAI_BASE_URL / COMPATIBLE_BASE_URL)."
+                "openai_compatible / ollama requires a base URL "
+                "(MAPPER_BASE_URL / OPENAI_BASE_URL / COMPATIBLE_BASE_URL / OLLAMA_BASE_URL)."
             )
         api_key = config.api_key or _env("OPENAI_API_KEY") or _env("COMPATIBLE_API_KEY") or "EMPTY"
+        # Route through openai provider of init_chat_model + custom base_url
         return _init_chat_model(
-            model=config.model,
-            model_provider="openai",
+            f"openai:{config.model}",
             api_key=api_key,
-            base_url=config.base_url,
-            temperature=temperature,
+            base_url=base,
+            temperature=temp,
         )
 
-    known = ", ".join(list_llm_providers())
-    raise ValueError(
-        f"Unsupported LLM provider for {config.role}: {config.provider!r}. "
-        f"Known providers: {known}. "
-        "Use register_llm_provider(...) to inject another."
-    )
+    # --- any other init_chat_model provider (anthropic, google_genai, mistralai, …) ---
+    kwargs = {"temperature": temp}
+    if config.api_key:
+        kwargs["api_key"] = config.api_key
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    try:
+        return _init_chat_model(model_id, **kwargs)
+    except Exception as exc:
+        known = ", ".join(list_llm_providers())
+        raise ValueError(
+            f"Failed to init_chat_model({model_id!r}) for role={config.role}. "
+            f"Install the matching langchain integration package if needed. "
+            f"Known/documented providers: {known}. "
+            f"Or use register_llm_provider(...). Underlying error: {exc}"
+        ) from exc
 
 
 def _build_llm(config: LLMRoleConfig, temperature: float | None = None) -> Any:
@@ -494,24 +580,75 @@ def _with_optional_structured(llm: Any, structured_schema: type[T] | None) -> An
     return llm.with_structured_output(structured_schema)
 
 
-def get_mapper_llm(*, structured_schema: type[T] | None = None) -> tuple[Any, LLMRoleConfig]:
-    """LLM #1 — mapping. Any registered/built-in provider via MAPPER_PROVIDER / MODEL_ID."""
-    config = resolve_role_config("mapper")
-    llm = _with_optional_structured(_build_llm(config), structured_schema)
+def init_role_chat_model(
+    role: str,
+    *,
+    model_id: str | None = None,
+    model_override: str | None = None,
+    temperature: float | None = None,
+    structured_schema: type[T] | None = None,
+) -> tuple[Any, LLMRoleConfig]:
+    """Public entry: build any role's chat model via ``init_chat_model``."""
+    config = resolve_role_config(role, model_override=model_override, model_id=model_id)
+    llm = _with_optional_structured(_build_llm(config, temperature), structured_schema)
     return llm, config
 
 
-def get_validator_llm(*, structured_schema: type[T] | None = None) -> tuple[Any, LLMRoleConfig]:
-    """LLM #2 — critic. Any registered/built-in provider via VALIDATOR_PROVIDER / MODEL_ID."""
-    config = resolve_role_config("validator")
-    llm = _with_optional_structured(_build_llm(config), structured_schema)
-    return llm, config
+def get_mapper_llm(
+    *,
+    model_id: str | None = None,
+    structured_schema: type[T] | None = None,
+) -> tuple[Any, LLMRoleConfig]:
+    """LLM #1 — mapping. Switch with ``MAPPER_MODEL_ID`` or ``model_id='provider:model'``."""
+    return init_role_chat_model(
+        "mapper", model_id=model_id, structured_schema=structured_schema
+    )
 
 
-def get_agent_llm(model_name: str | None = None) -> tuple[Any, LLMRoleConfig]:
+def get_validator_llm(
+    *,
+    model_id: str | None = None,
+    structured_schema: type[T] | None = None,
+) -> tuple[Any, LLMRoleConfig]:
+    """LLM #2 — critic. Switch with ``VALIDATOR_MODEL_ID`` or ``model_id='provider:model'``."""
+    return init_role_chat_model(
+        "validator", model_id=model_id, structured_schema=structured_schema
+    )
+
+
+def get_agent_llm(
+    model_name: str | None = None,
+    *,
+    model_id: str | None = None,
+) -> tuple[Any, LLMRoleConfig]:
     """Orchestrator agent LLM (defaults to mapper provider/settings)."""
-    config = resolve_role_config("agent", model_override=model_name)
-    return _build_llm(config), config
+    return init_role_chat_model(
+        "agent", model_id=model_id, model_override=model_name
+    )
+
+
+def build_configurable_chat_model(
+    *,
+    default_model_id: str | None = None,
+    temperature: float = 0,
+) -> Any:
+    """Return an ``init_chat_model`` instance with configurable provider/model fields.
+
+    Switch at invoke time via LangGraph / Runnable config::
+
+        model = build_configurable_chat_model(default_model_id="openai:gpt-4o-mini")
+        model.invoke(messages, config={"configurable": {
+            "model": "claude-sonnet-4-20250514",
+            "model_provider": "anthropic",
+        }})
+    """
+    kwargs: dict[str, Any] = {
+        "temperature": temperature,
+        "configurable_fields": ("model", "model_provider"),
+    }
+    if default_model_id:
+        return _init_chat_model(default_model_id, **kwargs)
+    return _init_chat_model(**kwargs)
 
 
 def provider_credentials_available(config: LLMRoleConfig) -> bool:
@@ -519,8 +656,6 @@ def provider_credentials_available(config: LLMRoleConfig) -> bool:
     provider = _normalize_provider(config.provider)
 
     if provider in _PROVIDER_REGISTRY:
-        # Custom providers: treat role API key or any non-empty model as enough;
-        # builder may still raise at call time.
         return True
 
     if provider == "openai":
@@ -531,9 +666,22 @@ def provider_credentials_available(config: LLMRoleConfig) -> bool:
         return bool(key) and not _is_placeholder_value(key) and not _is_placeholder_value(endpoint)
     if provider == "groq":
         return bool(config.api_key or _env("GROQ_API_KEY"))
-    if provider == "openai_compatible":
-        return bool(config.base_url or _env("OPENAI_BASE_URL") or _env("COMPATIBLE_BASE_URL"))
-    return False
+    if provider in {"openai_compatible", "ollama"}:
+        return bool(
+            config.base_url
+            or _env("OPENAI_BASE_URL")
+            or _env("COMPATIBLE_BASE_URL")
+            or _env("OLLAMA_BASE_URL")
+            or provider == "ollama"
+        )
+    if provider == "anthropic":
+        return bool(config.api_key or _env("ANTHROPIC_API_KEY"))
+    if provider in {"google_genai", "google_vertexai"}:
+        return bool(config.api_key or _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY"))
+    if provider == "mistralai":
+        return bool(config.api_key or _env("MISTRAL_API_KEY"))
+    # Unknown init_chat_model providers: allow attempt (package may use ADC / local auth)
+    return True
 
 
 def is_mapper_available() -> bool:

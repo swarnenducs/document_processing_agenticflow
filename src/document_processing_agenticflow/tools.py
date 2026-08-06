@@ -27,6 +27,7 @@ from document_processing_agenticflow.services.document_generator import generate
 from document_processing_agenticflow.services.document_validator import validate_documents
 from document_processing_agenticflow.services.field_mapper import map_json_to_template
 from document_processing_agenticflow.services.style_extractor import extract_word_styles
+from document_processing_agenticflow.services.trace_log import traced_tool
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,7 @@ class ConfidenceArgs(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+@traced_tool("load_json_data")
 def load_json_data(data_path: str) -> dict[str, Any]:
     """Load JSON data that will be mapped onto the Word template."""
     path = Path(data_path)
@@ -89,6 +91,7 @@ def load_json_data(data_path: str) -> dict[str, Any]:
     return {"ok": True, "data_path": str(path.resolve()), "keys": list(payload.keys()), "data": payload}
 
 
+@traced_tool("extract_word_styles")
 def extract_word_styles_tool(template_path: str) -> dict[str, Any]:
     """Step 1 — extract Word XML styles, content blocks, and placeholders from a .docx template."""
     extracted = extract_word_styles(template_path)
@@ -107,6 +110,7 @@ def extract_word_styles_tool(template_path: str) -> dict[str, Any]:
     }
 
 
+@traced_tool("map_json_to_template")
 def map_json_to_template_tool(template_path: str, data_path: str, extraction_json_path: str | None = None) -> dict[str, Any]:
     """Step 2 — map JSON fields onto template placeholders (LLM #1 or rules) with confidence scores."""
     del extraction_json_path  # reserved for future cache reuse
@@ -125,6 +129,7 @@ def map_json_to_template_tool(template_path: str, data_path: str, extraction_jso
     }
 
 
+@traced_tool("generate_styled_document")
 def generate_styled_document_tool(
     template_path: str,
     data_path: str,
@@ -148,6 +153,7 @@ def generate_styled_document_tool(
     }
 
 
+@traced_tool("validate_documents")
 def validate_documents_tool(
     template_path: str,
     generated_path: str,
@@ -170,6 +176,7 @@ def validate_documents_tool(
     }
 
 
+@traced_tool("compute_confidence_report")
 def compute_confidence_report_tool(
     mapping_json: str,
     generation_json: str,

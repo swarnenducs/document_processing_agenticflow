@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from document_processing_agenticflow.graph import build_graph
+from document_processing_agenticflow.graph import invoke_document_graph
 
 
 def _print_confidence(result: dict) -> None:
@@ -169,10 +169,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Exit non-zero if validation did not pass",
     )
+    parser.add_argument(
+        "--mapper-model-id",
+        default=None,
+        help="Override mapper via LangChain init_chat_model id, e.g. openai:gpt-4o-mini",
+    )
+    parser.add_argument(
+        "--validator-model-id",
+        default=None,
+        help="Override validator via LangChain init_chat_model id, e.g. groq:openai/gpt-oss-120b",
+    )
     args = parser.parse_args(argv)
 
-    graph = build_graph()
-    result = graph.invoke(
+    result = invoke_document_graph(
         {
             "template_path": str(Path(args.template).resolve()),
             "data_path": str(Path(args.data).resolve()),
@@ -184,7 +193,9 @@ def main(argv: list[str] | None = None) -> int:
             "validation_threshold": args.validation_threshold,
             "skip_validation": args.skip_validation,
             "skip_extraction_validation": args.skip_extraction_validation,
-        }
+        },
+        mapper_model_id=args.mapper_model_id,
+        validator_model_id=args.validator_model_id,
     )
 
     if args.dump_extraction and result.get("extracted"):

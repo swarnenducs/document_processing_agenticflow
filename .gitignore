@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+exact_env.env
 
 # Python / UV
 .venv/

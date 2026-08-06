@@ -16,6 +16,7 @@ from document_processing_agenticflow.models.schemas import (
     TableFillPlan,
 )
 from document_processing_agenticflow.services.confidence import enrich_mapping_scores
+from document_processing_agenticflow.services.trace_log import traced_invoke
 
 
 class _LLMFieldMapping(BaseModel):
@@ -160,18 +161,26 @@ def _normalize_mapped_value(placeholder: str, value: Any) -> Any:
     return value
 
 
-def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult:
+def _llm_mapping(
+    template: ExtractedTemplate,
+    data: dict[str, Any],
+    *,
+    model_id: str | None = None,
+) -> MappingResult:
     from document_processing_agenticflow.services.llm_factory import get_mapper_llm, is_mapper_available
     from document_processing_agenticflow.services.prompts import build_mapper_chain
 
-    if not is_mapper_available():
+    if not is_mapper_available() and not model_id:
         raise RuntimeError(
             "Mapper LLM is required. Check MAPPER_PROVIDER credentials "
             "(for azure_openai: AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT + MAPPER_MODEL)."
         )
 
     try:
-        llm, config = get_mapper_llm(structured_schema=_LLMMappingPayload)
+        llm, config = get_mapper_llm(
+            model_id=model_id,
+            structured_schema=_LLMMappingPayload,
+        )
     except (ImportError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Failed to build mapper LLM: {exc}") from exc
 
@@ -193,14 +202,18 @@ def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingRe
     chain = build_mapper_chain(llm)
 
     try:
-        result: _LLMMappingPayload = chain.invoke(
+        result: _LLMMappingPayload = traced_invoke(
+            chain,
             {
                 "placeholders_json": json.dumps(template.placeholders, indent=2),
                 "occurrences_json": json.dumps(occurrences, indent=2)[:8000],
                 "tables_json": json.dumps(tables, indent=2)[:6000],
                 "blocks_json": json.dumps(block_summaries, indent=2)[:10000],
                 "data_json": json.dumps(data, indent=2)[:12000],
-            }
+            },
+            role="mapper",
+            provider=config.provider,
+            model=config.model,
         )  # type: ignore[assignment]
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Mapper LLM invoke failed ({config.label}): {exc}") from exc
@@ -273,6 +286,11 @@ def _llm_mapping(template: ExtractedTemplate, data: dict[str, Any]) -> MappingRe
     return enriched
 
 
-def map_json_to_template(template: ExtractedTemplate, data: dict[str, Any]) -> MappingResult:
-    """Step 2: LLM-only mapping of JSON → placeholders / table fills."""
-    return _llm_mapping(template, data)
+def map_json_to_template(
+    template: ExtractedTemplate,
+    data: dict[str, Any],
+    *,
+    model_id: str | None = None,
+) -> MappingResult:
+    """Step 2: LLM-only mapping of JSON → placeholders / table fills (init_chat_model)."""
+    return _llm_mapping(template, data, model_id=model_id)

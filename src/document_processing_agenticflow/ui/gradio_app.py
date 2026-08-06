@@ -15,19 +15,14 @@ from document_processing_agenticflow.ui.api_client import (
     confirm_voice_contract,
     create_document_job,
     download_job_output,
+    get_trace_by_xid,
+    list_document_jobs,
     run_voice_contract_audio,
     run_voice_contract_text,
     wait_for_job,
 )
 
 # Allow: python -m document_processing_agenticflow.ui.gradio_app
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SAMPLE_TEMPLATE = PROJECT_ROOT / "samples" / "templates" / "invoice_template.docx"
-SAMPLE_JSON = PROJECT_ROOT / "samples" / "data" / "invoice.json"
-# User-provided contract example (from Downloads: Contract Template.docx + dummy products.json)
-CONTRACT_TEMPLATE = PROJECT_ROOT / "samples" / "templates" / "contract_template.docx"
-CONTRACT_JSON = PROJECT_ROOT / "samples" / "data" / "dummy_products.json"
-CONTACTS_JSON = PROJECT_ROOT / "samples" / "data" / "contacts.json"
 
 
 def _resolve_gradio_path(value: object | None) -> str | None:
@@ -313,31 +308,40 @@ def ui_generate_document(
     json_text: str,
     skip_validation: bool,
 ) -> tuple[str, str | None]:
+    def _err(msg: str) -> tuple[str, None]:
+        safe = (
+            str(msg)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>")
+        )
+        return f'<div style="color:#FFC4C4;line-height:1.45">{safe}</div>', None
+
     try:
         health = check_health()
         if not health.get("mapper_available"):
-            return (
-                "**Mapper LLM is NOT available** — document generation requires LLM #1 "
+            return _err(
+                "Mapper LLM is NOT available — document generation requires LLM #1 "
                 "(rules fallback is disabled).\n\n"
-                f"Configured: `{health.get('mapper_provider')}/{health.get('mapper_model')}`\n\n"
-                "Fix credentials in `.env`, restart the API, then **Refresh API status**.",
-                None,
+                f"Configured: {health.get('mapper_provider')}/{health.get('mapper_model')}\n\n"
+                "Fix credentials in .env, restart the API, then Refresh API status."
             )
     except ApiError as exc:
-        return f"Cannot reach API: {exc}", None
+        return _err(f"Cannot reach API: {exc}")
 
     template_path = _resolve_gradio_path(template_file)
     if not template_path:
-        return "Upload a Word `.docx` template.", None
+        return _err("Upload a Word .docx template.")
     if not template_path.lower().endswith(".docx"):
-        return "Template must be a `.docx` file.", None
+        return _err("Template must be a .docx file.")
 
     try:
         data = _resolve_json_payload(json_file, json_text)
     except json.JSONDecodeError as exc:
-        return f"Invalid JSON: {exc}", None
+        return _err(f"Invalid JSON: {exc}")
     except ValueError as exc:
-        return str(exc), None
+        return _err(str(exc))
 
     try:
         accepted = create_document_job(
@@ -348,13 +352,13 @@ def ui_generate_document(
         job_id = accepted["job_id"]
         status = wait_for_job(job_id)
     except ApiError as exc:
-        return f"API error: {exc}", None
+        return _err(f"API error: {exc}")
     except Exception as exc:  # noqa: BLE001
-        return f"Error: {exc}", None
+        return _err(f"Error: {exc}")
 
     if status.get("status") != "completed":
         err = status.get("error_message") or "Unknown failure"
-        return f"Job `{job_id}` failed.\n\n{err}", None
+        return _err(f"Job {job_id} failed.\n\n{err}")
 
     out_name = Path(status.get("output_path") or "").name
     if not out_name.endswith(".docx"):
@@ -365,7 +369,7 @@ def ui_generate_document(
     try:
         download_job_output(job_id, tmp)
     except ApiError as exc:
-        return f"Generated but download failed: {exc}", None
+        return _err(f"Generated but download failed: {exc}")
 
     conf = status.get("confidence") or {}
     pct = status.get("scores_pct") or conf.get("scores_pct") or {}
@@ -381,91 +385,195 @@ def ui_generate_document(
             return "n/a"
         return f"{float(val):.1f}%"
 
-    report = (
-        f"**Job ID:** `{job_id}`  \n"
-        f"**Status:** completed  \n\n"
-        f"### LLMs\n"
-        f"- **LLM #1 (mapper):** `{status.get('mapper_llm') or conf.get('mapper_llm')}`  \n"
-        f"- **LLM #2 (validator):** `{status.get('validator_llm') or conf.get('validator_llm')}`  \n\n"
-        f"### Scores (all in %)\n"
-        f"| Metric | Score |\n|---|---|\n"
-        f"| **Overall confidence** | **{_p('overall_confidence_pct', 'overall_confidence')}** |\n"
-        f"| Placeholder mapping (LLM #1) | {_p('placeholder_mapping_confidence_pct', 'mapping_confidence')} |\n"
-        f"| Placeholder coverage | {_p('placeholder_coverage_pct', 'coverage_score')} |\n"
-        f"| Table mapping (LLM #1) | {_p('table_mapping_confidence_pct', 'table_mapping_confidence')} |\n"
-        f"| Generation integrity | {_p('generation_integrity_pct', 'generation_integrity')} |\n"
-        f"| **Document validation (LLM #2)** | **{_p('validation_score_pct', 'validation_score')}** |\n"
-    )
+    def _esc(value: object) -> str:
+        return (
+            str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    def _table(title: str, headers: list[str], rows: list[list[str]]) -> str:
+        head = "".join(
+            f'<th style="padding:0.4rem 0.55rem;text-align:left;border-bottom:1px solid #3a3a3a">'
+            f"{_esc(h)}</th>"
+            for h in headers
+        )
+        body_rows = []
+        for i, row in enumerate(rows):
+            border = "border-bottom:1px solid #2a2a2a" if i < len(rows) - 1 else ""
+            cells = "".join(
+                f'<td style="padding:0.4rem 0.55rem;vertical-align:top;{border}">{c}</td>'
+                for c in row
+            )
+            body_rows.append(f"<tr>{cells}</tr>")
+        return f"""
+<section style="margin:0 0 1rem 0">
+  <h4 style="margin:0 0 0.4rem 0">{_esc(title)}</h4>
+  <table style="width:100%;border-collapse:collapse;font-size:0.92rem">
+    <thead><tr>{head}</tr></thead>
+    <tbody>{''.join(body_rows)}</tbody>
+  </table>
+</section>
+"""
+
+    mapper_llm = _esc(status.get("mapper_llm") or conf.get("mapper_llm") or "")
+    validator_llm = _esc(status.get("validator_llm") or conf.get("validator_llm") or "")
+    mapper_ok = bool(mapper_llm and mapper_llm != "—")
+    validator_ok = bool(validator_llm and validator_llm != "—")
+
+    def _avail(ok: bool) -> str:
+        color = "#9EF0B8" if ok else "#FF9A9A"
+        label = "available" if ok else "NOT available"
+        return (
+            f'<span style="display:inline-flex;align-items:center;gap:0.4rem">'
+            f'<span style="width:0.55rem;height:0.55rem;border-radius:50%;'
+            f"background:{color};display:inline-block\"></span>"
+            f"<span style=\"color:{color}\">{label}</span></span>"
+        )
+
+    sections = [
+        _table(
+            "Job",
+            ["Field", "Value"],
+            [
+                ["Job ID", f"<code>{_esc(job_id)}</code>"],
+                ["xid", f"<code>{_esc(status.get('xid') or '')}</code>"],
+                ["Status", "<strong>completed</strong>"],
+            ],
+        ),
+        _table(
+            "LLMs",
+            ["Role", "Status"],
+            [
+                ["LLM #1 (mapper)", _avail(mapper_ok)],
+                ["LLM #2 (validator)", _avail(validator_ok)],
+            ],
+        ),
+        _table(
+            "Scores (all in %)",
+            ["Metric", "Score"],
+            [
+                [
+                    "<strong>Overall confidence</strong>",
+                    f"<strong>{_p('overall_confidence_pct', 'overall_confidence')}</strong>",
+                ],
+                [
+                    "Placeholder mapping (LLM #1)",
+                    _p("placeholder_mapping_confidence_pct", "mapping_confidence"),
+                ],
+                [
+                    "Placeholder coverage",
+                    _p("placeholder_coverage_pct", "coverage_score"),
+                ],
+                [
+                    "Table mapping (LLM #1)",
+                    _p("table_mapping_confidence_pct", "table_mapping_confidence"),
+                ],
+                [
+                    "Generation integrity",
+                    _p("generation_integrity_pct", "generation_integrity"),
+                ],
+                [
+                    "<strong>Document validation (LLM #2)</strong>",
+                    f"<strong>{_p('validation_score_pct', 'validation_score')}</strong>",
+                ],
+            ],
+        ),
+    ]
 
     if validation:
-        report += (
-            f"\n### Validation detail (LLM #2)\n"
-            f"- **Passed:** `{validation.get('passed')}`  \n"
-            f"- **Score:** `{_p('validation_score_pct', 'validation_score')}`  \n"
-            f"- **Summary:** {validation.get('summary') or '—'}  \n"
+        sections.append(
+            _table(
+                "Validation detail (LLM #2)",
+                ["Field", "Value"],
+                [
+                    ["Passed", f"<code>{_esc(validation.get('passed'))}</code>"],
+                    [
+                        "Score",
+                        f"<code>{_p('validation_score_pct', 'validation_score')}</code>",
+                    ],
+                    ["Summary", _esc(validation.get("summary") or "—")],
+                ],
+            )
         )
         issues = validation.get("issues") or []
         if issues:
-            report += "\n**Issues:**\n"
-            for issue in issues[:10]:
-                field = issue.get("field") or ""
-                report += f"- ({issue.get('severity')}) {field}: {issue.get('message')}\n"
+            issue_rows = [
+                [
+                    _esc(issue.get("severity") or "—"),
+                    f"<code>{_esc(issue.get('field') or '')}</code>",
+                    _esc(issue.get("message") or ""),
+                ]
+                for issue in issues[:10]
+            ]
+            sections.append(
+                _table(
+                    "Validation issues (LLM #2)",
+                    ["Severity", "Field", "Message"],
+                    issue_rows,
+                )
+            )
 
     per_ph = pct.get("per_placeholder") or []
     if per_ph:
-        report += "\n### Placeholder mapping confidence (LLM #1)\n"
-        for item in per_ph[:12]:
-            report += (
-                f"- `{item.get('placeholder')}` → `{item.get('json_path')}`: "
-                f"**{item.get('confidence_pct', 0):.1f}%**\n"
+        ph_rows = [
+            [
+                f"<code>{_esc(item.get('placeholder'))}</code>",
+                f"<code>{_esc(item.get('json_path'))}</code>",
+                f"<strong>{float(item.get('confidence_pct', 0)):.1f}%</strong>",
+            ]
+            for item in per_ph[:20]
+        ]
+        sections.append(
+            _table(
+                "Placeholder mapping confidence (LLM #1)",
+                ["Placeholder", "JSON path", "Confidence"],
+                ph_rows,
             )
+        )
 
     per_col = pct.get("per_table_column") or []
     if per_col:
-        report += "\n### Table column mapping confidence (LLM #1)\n"
-        for item in per_col[:12]:
-            report += (
-                f"- `{item.get('header')}` → `{item.get('json_field')}`: "
-                f"**{item.get('confidence_pct', 0):.1f}%**\n"
+        col_rows = [
+            [
+                f"<code>{_esc(item.get('header'))}</code>",
+                f"<code>{_esc(item.get('json_field'))}</code>",
+                f"<strong>{float(item.get('confidence_pct', 0)):.1f}%</strong>",
+            ]
+            for item in per_col[:20]
+        ]
+        sections.append(
+            _table(
+                "Table column mapping confidence (LLM #1)",
+                ["Header", "JSON field", "Confidence"],
+                col_rows,
             )
+        )
 
+    from document_processing_agenticflow.core.settings import settings as _settings
+
+    db_path = _settings().sqlite_database_path
+    sections.append(
+        _table(
+            "Persistence",
+            ["Field", "Value"],
+            [
+                ["Stored in SQLite", "<strong>yes</strong>"],
+                ["xid", f"<code>{_esc(status.get('xid') or '')}</code>"],
+                ["Database", f"<code>{_esc(db_path)}</code>"],
+                ["Tables", "<code>document_jobs</code>, <code>call_logs</code>"],
+            ],
+        )
+    )
+
+    report = (
+        '<div style="font-size:0.95rem;line-height:1.4">'
+        + "".join(sections)
+        + "</div>"
+    )
     return report, str(tmp)
-
-
-def load_sample_template() -> str | None:
-    if SAMPLE_TEMPLATE.exists():
-        return str(SAMPLE_TEMPLATE)
-    return None
-
-
-def load_sample_json_text() -> str:
-    if SAMPLE_JSON.exists():
-        return SAMPLE_JSON.read_text(encoding="utf-8")
-    return '{"invoice_number": "INV-001", "customer": {"name": "Acme"}}'
-
-
-def load_sample_json_file() -> str | None:
-    if SAMPLE_JSON.exists():
-        return str(SAMPLE_JSON)
-    return None
-
-
-def load_contract_template() -> str | None:
-    if CONTRACT_TEMPLATE.exists():
-        return str(CONTRACT_TEMPLATE)
-    return None
-
-
-def load_contract_json_text() -> str:
-    if CONTRACT_JSON.exists():
-        return CONTRACT_JSON.read_text(encoding="utf-8")
-    return '{"DATE": "2026-07-13", "accountName": "Acme", "products": []}'
-
-
-def load_contract_json_file() -> str | None:
-    if CONTRACT_JSON.exists():
-        return str(CONTRACT_JSON)
-    return None
 
 
 def ui_health() -> str:
@@ -474,40 +582,265 @@ def ui_health() -> str:
         health = check_health()
     except Exception as exc:  # noqa: BLE001 — API down / network
         return (
-            f"**API unreachable** at `{cfg.api_base_url}`\n\n"
-            f"Start the backend:\n\n"
-            f"```bash\npython run_both.py\n```\n\n"
-            f"Error: {exc}"
+            f"<p><strong>API unreachable</strong> at <code>{cfg.api_base_url}</code></p>"
+            f"<p>Start the backend:</p>"
+            f"<pre>python run_both.py</pre>"
+            f"<p>Error: {exc}</p>"
         )
 
-    def _badge(ok: bool) -> str:
-        return "✅ available" if ok else "❌ NOT available"
+    def _signal(ok: bool) -> str:
+        if ok:
+            return (
+                '<span style="display:inline-flex;align-items:center;gap:0.4rem">'
+                '<span style="width:0.65rem;height:0.65rem;border-radius:50%;'
+                "background:#9EF0B8;box-shadow:0 0 8px #9EF0B888;"
+                'display:inline-block"></span>'
+                '<span style="color:#B8F5D0">available</span></span>'
+            )
+        return (
+            '<span style="display:inline-flex;align-items:center;gap:0.4rem">'
+            '<span style="width:0.65rem;height:0.65rem;border-radius:50%;'
+            "background:#FF9A9A;box-shadow:0 0 8px #FF9A9A66;"
+            'display:inline-block"></span>'
+            '<span style="color:#FFC4C4">NOT available</span></span>'
+        )
 
     mapper_ok = bool(health.get("mapper_available"))
     validator_ok = bool(health.get("validator_available"))
     speech_ok = bool(health.get("speech_available"))
+    doc_mcp_ok = bool(health.get("document_mcp_available"))
+    voice_mcp_ok = bool(health.get("voice_mcp_available"))
 
-    lines = [
-        f"**API:** `{cfg.api_base_url}` · status `{health.get('status', 'ok')}`",
-        "",
-        "### LLM status (required — no rule-based fallback)",
-        f"- **LLM #1 Mapper:** {_badge(mapper_ok)} — "
-        f"`{health.get('mapper_provider')}/{health.get('mapper_model')}`",
-        f"- **LLM #2 Validator:** {_badge(validator_ok)} — "
-        f"`{health.get('validator_provider')}/{health.get('validator_model')}`",
-        f"- **Speech:** {_badge(speech_ok)} — `{health.get('speech_provider')}`",
-        "",
-        f"- Storage: `{health.get('storage_base_path')}`",
-    ]
+    warn = ""
     if not mapper_ok:
-        lines.extend(
-            [
-                "",
-                "> **Document generate is blocked until mapper LLM is available.** "
-                "Set Azure credentials in `.env` and restart the API.",
-            ]
+        warn = (
+            "<p style='color:#FFD0A8'><strong>Document generate is blocked until "
+            "mapper LLM is available.</strong> Check credentials in "
+            "<code>.env</code> and restart the API.</p>"
         )
-    return "\n".join(lines)
+
+    return f"""
+<div style="font-size:0.95rem;line-height:1.45">
+  <p><strong>API:</strong> <code>{cfg.api_base_url}</code>
+     · status <code>{health.get('status', 'ok')}</code></p>
+
+  <table style="width:100%;border-collapse:collapse;margin:0.4rem 0 0.9rem 0">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid #3a3a3a">
+        <th style="padding:0.35rem 0.6rem">Service</th>
+        <th style="padding:0.35rem 0.6rem">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #2a2a2a">
+        <td style="padding:0.45rem 0.6rem"><strong>Speech</strong></td>
+        <td style="padding:0.45rem 0.6rem">{_signal(speech_ok)}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #2a2a2a">
+        <td style="padding:0.45rem 0.6rem"><strong>LLM #1 Mapper</strong></td>
+        <td style="padding:0.45rem 0.6rem">{_signal(mapper_ok)}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #2a2a2a">
+        <td style="padding:0.45rem 0.6rem"><strong>LLM #2 Validator</strong></td>
+        <td style="padding:0.45rem 0.6rem">{_signal(validator_ok)}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #2a2a2a">
+        <td style="padding:0.45rem 0.6rem"><strong>document_process_mcp</strong></td>
+        <td style="padding:0.45rem 0.6rem">{_signal(doc_mcp_ok)}</td>
+      </tr>
+      <tr>
+        <td style="padding:0.45rem 0.6rem"><strong>voice_process_mcp</strong></td>
+        <td style="padding:0.45rem 0.6rem">{_signal(voice_mcp_ok)}</td>
+      </tr>
+    </tbody>
+  </table>
+  {warn}
+</div>
+"""
+
+
+def _html_esc(value: object) -> str:
+    return (
+        str(value if value is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _pretty_json(value: object, *, limit: int = 4000) -> str:
+    if value is None:
+        return "—"
+    try:
+        text = json.dumps(value, indent=2, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001
+        text = str(value)
+    if len(text) > limit:
+        return text[: limit - 20] + f"\n...<truncated:{len(text)}>"
+    return text
+
+
+def ui_recent_jobs_for_trace(limit: float | int = 15) -> str:
+    """Show recent jobs with xid so the user can copy one into the lookup box."""
+    try:
+        payload = list_document_jobs(limit=int(limit))
+        jobs = payload.get("jobs") or []
+    except Exception:
+        try:
+            from document_processing_agenticflow.storage.job_store import JobStore
+
+            jobs = JobStore().list_document_jobs(limit=int(limit))
+        except Exception as exc:  # noqa: BLE001
+            return f'<div style="color:#FFC4C4">Failed to list jobs: {_html_esc(exc)}</div>'
+
+    if not jobs:
+        return "<p>No document jobs in SQLite yet. Generate a document first.</p>"
+
+    rows = []
+    for job in jobs:
+        xid = job.get("xid") or ""
+        rows.append(
+            "<tr>"
+            f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(job.get('job_id'))}</code></td>"
+            f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(xid)}</code></td>"
+            f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('status'))}</td>"
+            f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('created_at'))}</td>"
+            "</tr>"
+        )
+    return f"""
+<div style="font-size:0.92rem">
+  <h4 style="margin:0 0 0.4rem 0">Recent jobs (copy xid)</h4>
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid #3a3a3a">
+        <th style="padding:0.35rem 0.5rem">Job ID</th>
+        <th style="padding:0.35rem 0.5rem">xid</th>
+        <th style="padding:0.35rem 0.5rem">Status</th>
+        <th style="padding:0.35rem 0.5rem">Created</th>
+      </tr>
+    </thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table>
+</div>
+"""
+
+
+def ui_lookup_trace(xid: str) -> str:
+    """Render HTTP / tool / LLM call logs for one xid as segregated tables."""
+    corr = (xid or "").strip()
+    if not corr:
+        return '<div style="color:#FFC4C4">Enter an xid to look up logs.</div>'
+
+    try:
+        payload = get_trace_by_xid(corr)
+    except Exception:
+        try:
+            from document_processing_agenticflow.storage.job_store import JobStore
+
+            payload = JobStore().get_trace_by_xid(corr)
+        except Exception as exc:  # noqa: BLE001
+            return f'<div style="color:#FFC4C4">Trace lookup failed: {_html_esc(exc)}</div>'
+
+    jobs = payload.get("jobs") or []
+    logs = payload.get("logs") or []
+
+    job_rows = []
+    for job in jobs:
+        job_rows.append(
+            "<tr>"
+            f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(job.get('job_id'))}</code></td>"
+            f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('status'))}</td>"
+            f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('completed_at') or job.get('created_at'))}</td>"
+            "</tr>"
+        )
+    if not job_rows:
+        job_rows.append(
+            "<tr><td colspan='3' style='padding:0.4rem 0.5rem;opacity:0.75'>"
+            "No document jobs linked to this xid.</td></tr>"
+        )
+
+    log_rows = []
+    for i, log in enumerate(logs):
+        status = str(log.get("status") or "")
+        status_color = "#9EF0B8" if status == "ok" else "#FF9A9A"
+        req = _pretty_json(log.get("request"), limit=2500)
+        resp = _pretty_json(log.get("response"), limit=2500)
+        err = log.get("error_message") or ""
+        latency = log.get("latency_ms")
+        latency_s = f"{float(latency):.0f} ms" if isinstance(latency, (int, float)) else "—"
+        border = "border-bottom:1px solid #2a2a2a" if i < len(logs) - 1 else ""
+        log_rows.append(
+            f"""
+<tr>
+  <td style="padding:0.4rem 0.5rem;vertical-align:top;{border}">
+    <code>{_html_esc(log.get('kind'))}</code>
+  </td>
+  <td style="padding:0.4rem 0.5rem;vertical-align:top;{border}">
+    <strong>{_html_esc(log.get('name'))}</strong>
+  </td>
+  <td style="padding:0.4rem 0.5rem;vertical-align:top;{border}">
+    <span style="color:{status_color}">{_html_esc(status)}</span>
+  </td>
+  <td style="padding:0.4rem 0.5rem;vertical-align:top;{border}">{_html_esc(latency_s)}</td>
+  <td style="padding:0.4rem 0.5rem;vertical-align:top;{border}">
+    {_html_esc(log.get('created_at'))}
+  </td>
+</tr>
+<tr>
+  <td colspan="5" style="padding:0 0.5rem 0.75rem 0.5rem;{border}">
+    <details>
+      <summary style="cursor:pointer;opacity:0.85">Request / response</summary>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-top:0.4rem">
+        <pre style="white-space:pre-wrap;background:#1a1a1a;padding:0.5rem;border-radius:4px;font-size:0.8rem">{_html_esc(req)}</pre>
+        <pre style="white-space:pre-wrap;background:#1a1a1a;padding:0.5rem;border-radius:4px;font-size:0.8rem">{_html_esc(resp)}</pre>
+      </div>
+      {"<p style='color:#FFC4C4'><strong>Error:</strong> " + _html_esc(err) + "</p>" if err else ""}
+    </details>
+  </td>
+</tr>
+"""
+        )
+    if not logs:
+        log_rows.append(
+            "<tr><td colspan='5' style='padding:0.5rem;opacity:0.75'>"
+            "No call logs for this xid yet.</td></tr>"
+        )
+
+    return f"""
+<div style="font-size:0.93rem;line-height:1.4">
+  <h3 style="margin:0 0 0.5rem 0">Trace for xid <code>{_html_esc(corr)}</code></h3>
+  <p style="opacity:0.8;margin:0 0 0.8rem 0">
+    {int(payload.get('job_count') or 0)} job(s) · {int(payload.get('log_count') or 0)} log(s)
+  </p>
+
+  <h4 style="margin:0.6rem 0 0.35rem 0">Linked jobs</h4>
+  <table style="width:100%;border-collapse:collapse;margin-bottom:1rem">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid #3a3a3a">
+        <th style="padding:0.35rem 0.5rem">Job ID</th>
+        <th style="padding:0.35rem 0.5rem">Status</th>
+        <th style="padding:0.35rem 0.5rem">Time</th>
+      </tr>
+    </thead>
+    <tbody>{''.join(job_rows)}</tbody>
+  </table>
+
+  <h4 style="margin:0.6rem 0 0.35rem 0">Call logs (HTTP / tools / LLM / speech / MCP)</h4>
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid #3a3a3a">
+        <th style="padding:0.35rem 0.5rem">Kind</th>
+        <th style="padding:0.35rem 0.5rem">Name</th>
+        <th style="padding:0.35rem 0.5rem">Status</th>
+        <th style="padding:0.35rem 0.5rem">Latency</th>
+        <th style="padding:0.35rem 0.5rem">Created</th>
+      </tr>
+    </thead>
+    <tbody>{''.join(log_rows)}</tbody>
+  </table>
+</div>
+"""
 
 
 def build_ui() -> gr.Blocks:
@@ -516,11 +849,11 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Document Processing Agentic Flow") as demo:
         gr.Markdown(
             "# Document Processing Agentic Flow\n"
-            "Upload template + JSON → generate Word doc · Record or upload audio → text"
+            "Upload template + JSON to generate Word doc · Record or upload audio to text"
         )
 
         with gr.Row():
-            health_box = gr.Markdown(value=ui_health())
+            health_box = gr.HTML(value=ui_health())
 
         # ------------------------------------------------------------------ Document (1st)
         with gr.Tab("Generate Document"):
@@ -548,32 +881,15 @@ def build_ui() -> gr.Blocks:
                             lines=12,
                             placeholder='{"invoice_number": "INV-001", "customer": {"name": "Acme"}}',
                         )
-                    with gr.Row():
-                        load_tpl_btn = gr.Button("Load invoice sample", size="sm")
-                        load_json_btn = gr.Button("Load invoice JSON", size="sm")
-                    with gr.Row():
-                        load_contract_tpl_btn = gr.Button("Load contract template", size="sm")
-                        load_contract_json_btn = gr.Button("Load dummy products JSON", size="sm")
                     skip_validation = gr.Checkbox(label="Skip LLM #2 validation", value=False)
                     generate_btn = gr.Button("Generate document", variant="primary")
                 with gr.Column():
-                    job_report = gr.Markdown(label="Job result")
+                    job_report = gr.HTML(label="Job result")
                     output_file = gr.File(
                         label="Download generated .docx",
                         type="filepath",
                         interactive=False,
                     )
-
-            load_tpl_btn.click(fn=load_sample_template, outputs=[template_upload])
-            load_json_btn.click(
-                fn=load_sample_json_text,
-                outputs=[json_input],
-            ).then(fn=load_sample_json_file, outputs=[json_file_upload])
-            load_contract_tpl_btn.click(fn=load_contract_template, outputs=[template_upload])
-            load_contract_json_btn.click(
-                fn=load_contract_json_text,
-                outputs=[json_input],
-            ).then(fn=load_contract_json_file, outputs=[json_file_upload])
 
             generate_btn.click(
                 fn=ui_generate_document,
@@ -582,7 +898,7 @@ def build_ui() -> gr.Blocks:
             )
 
         # ------------------------------------------------------------------ Voice chat (2nd)
-        with gr.Tab("Voice → Contract"):
+        with gr.Tab("Voice to Contract"):
             gr.Markdown(
                 "### Contract assistant (chat)\n"
                 "Ask to create a contract. The bot finds the legal entity + matching "
@@ -680,6 +996,34 @@ def build_ui() -> gr.Blocks:
                     contract_docx_file,
                     transcript_note,
                 ],
+            )
+
+        # ------------------------------------------------------------------ Trace logs by xid
+        with gr.Tab("Trace Logs (xid)"):
+            gr.Markdown(
+                "Look up **HTTP / tool / LLM / speech / MCP** call logs by correlation "
+                "`xid` (`X-Request-ID`). Paste an xid from a job result, or pick one "
+                "from recent jobs below."
+            )
+            with gr.Row():
+                xid_input = gr.Textbox(
+                    label="xid",
+                    placeholder="paste xid (e.g. from Job result Persistence table)",
+                    scale=4,
+                )
+                lookup_btn = gr.Button("Lookup logs", variant="primary", scale=1)
+            with gr.Row():
+                refresh_jobs_btn = gr.Button("Refresh recent jobs", size="sm")
+            recent_jobs_box = gr.HTML(value=ui_recent_jobs_for_trace())
+            trace_box = gr.HTML(
+                value="<p style='opacity:0.75'>Enter an xid and click Lookup logs.</p>"
+            )
+
+            lookup_btn.click(fn=ui_lookup_trace, inputs=[xid_input], outputs=[trace_box])
+            xid_input.submit(fn=ui_lookup_trace, inputs=[xid_input], outputs=[trace_box])
+            refresh_jobs_btn.click(
+                fn=ui_recent_jobs_for_trace,
+                outputs=[recent_jobs_box],
             )
 
         refresh_health = gr.Button("Refresh API status")

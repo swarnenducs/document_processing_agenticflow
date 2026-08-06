@@ -67,6 +67,10 @@ def test_health(api_client) -> None:
     assert body["status"] in {"ok", "degraded"}
     assert "mapper_available" in body
     assert "validator_available" in body
+    assert "document_mcp_available" in body
+    assert "voice_mcp_available" in body
+    assert isinstance(body["document_mcp_available"], bool)
+    assert isinstance(body["voice_mcp_available"], bool)
     assert storage.as_posix() in body["storage_base_path"]
     assert db_path.as_posix() in body["sqlite_database_path"]
 
