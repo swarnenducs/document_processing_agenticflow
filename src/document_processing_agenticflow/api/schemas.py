@@ -15,6 +15,7 @@ class JobCreateOptions(BaseModel):
 
 class JobAcceptedResponse(BaseModel):
     job_id: str
+    xid: str | None = None
     status: Literal["pending", "processing"] = "pending"
     message: str = "Job accepted. Poll status or download when completed."
     status_url: str
@@ -23,6 +24,7 @@ class JobAcceptedResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     job_id: str
+    xid: str | None = None
     status: str
     template_path: str | None = None
     output_path: str | None = None
@@ -31,12 +33,28 @@ class JobStatusResponse(BaseModel):
     validator_llm: str | None = None
     confidence: dict[str, Any] | None = None
     validation: dict[str, Any] | None = None
+    extraction_validation: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
     # All scores in % for UI clients
     scores_pct: dict[str, Any] | None = None
     created_at: str | None = None
     updated_at: str | None = None
     completed_at: str | None = None
     download_url: str | None = None
+    sqlite_persisted: bool = True
+
+
+class JobListResponse(BaseModel):
+    count: int
+    jobs: list[JobStatusResponse]
+
+
+class TraceByXidResponse(BaseModel):
+    xid: str
+    job_count: int
+    log_count: int
+    jobs: list[dict[str, Any]]
+    logs: list[dict[str, Any]]
 
 
 class TranscriptionResponse(BaseModel):
@@ -111,3 +129,6 @@ class HealthResponse(BaseModel):
     validator_model: str | None = None
     validator_available: bool = False
     speech_available: bool = False
+    # Separate FastMCP servers (HTTP)
+    document_mcp_available: bool = False
+    voice_mcp_available: bool = False

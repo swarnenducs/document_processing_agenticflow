@@ -145,10 +145,10 @@
       "idn_relationship": "Owned",
       "class_of_trade": "Hospital",
       "baseline_utilization": "12000 Units",
-      "convatec_customer_number": "CUST10001",
+      "abcec_customer_number": "CUST10001",
       "gpo_membership_id": "GPO20001",
       "entity_code": "MCH001",
-      "convatec_dollar_spend": 450000,
+      "abctec_dollar_spend": 450000,
       "total_category_spend": 500000
     },
     {
@@ -161,10 +161,10 @@
       "idn_relationship": "Managed",
       "class_of_trade": "Hospital",
       "baseline_utilization": "8000 Units",
-      "convatec_customer_number": "CUST10002",
+      "abcec_customer_number": "CUST10002",
       "gpo_membership_id": "GPO20002",
       "entity_code": "RMC001",
-      "convatec_dollar_spend": 275000,
+      "abctec_dollar_spend": 275000,
       "total_category_spend": 300000
     }
   ],

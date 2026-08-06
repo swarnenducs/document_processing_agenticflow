@@ -85,7 +85,10 @@ def validate_extraction_node(state: DocumentProcessingState) -> DocumentProcessi
         return {**state, "errors": errors, "status": "failed"}
 
     try:
-        extraction_validation = validate_extraction(extracted)
+        extraction_validation = validate_extraction(
+            extracted,
+            model_id=state.get("validator_model_id"),
+        )
     except Exception:  # noqa: BLE001
         # Soft-fail: deterministic extract already succeeded; continue pipeline.
         return {
@@ -115,7 +118,11 @@ def map_fields_node(state: DocumentProcessingState) -> DocumentProcessingState:
         return {**state, "errors": errors, "status": "failed"}
 
     try:
-        mapping = map_json_to_template(extracted, json_data)
+        mapping = map_json_to_template(
+            extracted,
+            json_data,
+            model_id=state.get("mapper_model_id"),
+        )
     except Exception as exc:  # noqa: BLE001
         errors.append(f"Field mapping failed: {exc}")
         return {**state, "errors": errors, "status": "failed"}
@@ -191,6 +198,7 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
             generation.output_path,
             json_data,
             mapping,
+            model_id=state.get("validator_model_id"),
         )
     except Exception as exc:  # noqa: BLE001
         errors.append(f"Validation failed: {exc}")

@@ -14,12 +14,15 @@ from document_processing_agenticflow.api.schemas import (
     HealthResponse,
     JobAcceptedResponse,
     JobCreateOptions,
+    JobListResponse,
     JobStatusResponse,
+    TraceByXidResponse,
     TranscriptionResponse,
     VoiceContractConfirmRequest,
     VoiceContractRequest,
     VoiceContractResponse,
 )
+from document_processing_agenticflow.core.request_context import require_xid
 from document_processing_agenticflow.core.settings import settings
 from document_processing_agenticflow.services.pipeline_runner import run_document_job
 from document_processing_agenticflow.services.speech_to_text import transcribe_audio
@@ -65,6 +68,10 @@ async def _save_upload(upload: UploadFile, dest: Path, allowed_suffixes: set[str
 
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    import os
+
+    import httpx
+
     from document_processing_agenticflow.services.llm_factory import (
         is_mapper_available,
         is_validator_available,
@@ -84,6 +91,20 @@ def health() -> HealthResponse:
     except Exception:  # noqa: BLE001
         speech_ok = False
 
+    def _mcp_available(url: str) -> bool:
+        """True if FastMCP HTTP endpoint accepts connections (any non-5xx)."""
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.get(url.rstrip("/"))
+            return resp.status_code < 500
+        except Exception:  # noqa: BLE001
+            return False
+
+    doc_mcp_url = os.getenv("DOCUMENT_MCP_URL", "http://127.0.0.1:8001/mcp")
+    voice_mcp_url = os.getenv("VOICE_MCP_URL", "http://127.0.0.1:8002/mcp")
+    doc_mcp_ok = _mcp_available(doc_mcp_url)
+    voice_mcp_ok = _mcp_available(voice_mcp_url)
+
     return HealthResponse(
         storage_base_path=str(cfg.storage_base_path),
         sqlite_database_path=str(cfg.sqlite_database_path),
@@ -95,6 +116,8 @@ def health() -> HealthResponse:
         validator_model=validator.model,
         validator_available=validator_ok,
         speech_available=speech_ok,
+        document_mcp_available=doc_mcp_ok,
+        voice_mcp_available=voice_mcp_ok,
         status="ok" if mapper_ok else "degraded",
     )
 
@@ -153,7 +176,7 @@ async def create_document_job(
             raise HTTPException(status_code=400, detail="JSON root must be an object")
         data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    get_store().insert_job(job_id, template_path, data_path, output_path)
+    get_store().insert_job(job_id, template_path, data_path, output_path, xid=require_xid())
 
     options = JobCreateOptions(
         skip_validation=skip_validation,
@@ -161,6 +184,7 @@ async def create_document_job(
         validation_threshold=validation_threshold,
     )
 
+    corr = require_xid()
     background_tasks.add_task(
         run_document_job,
         job_id,
@@ -168,15 +192,58 @@ async def create_document_job(
         max_retries=options.max_retries,
         validation_threshold=options.validation_threshold,
         store=get_store(),
+        xid=corr,
     )
 
     base = f"/api/v1"
     return JobAcceptedResponse(
         job_id=job_id,
+        xid=corr,
         status="pending",
         status_url=f"{base}/documents/jobs/{job_id}",
         download_url=f"{base}/documents/jobs/{job_id}/download",
     )
+
+
+@router.get("/documents/jobs", response_model=JobListResponse)
+def list_document_jobs(limit: int = 50) -> JobListResponse:
+    """List recent document jobs persisted in SQLite (newest first)."""
+    rows = get_store().list_document_jobs(limit=limit)
+    jobs: list[JobStatusResponse] = []
+    for row in rows:
+        confidence = row.get("confidence")
+        scores_pct = None
+        if isinstance(confidence, dict):
+            scores_pct = confidence.get("scores_pct")
+        if scores_pct is None and isinstance(row.get("result"), dict):
+            scores_pct = row["result"].get("scores_pct")
+        download_url = None
+        out = row.get("output_path")
+        if row.get("status") == "completed" and out and Path(str(out)).exists():
+            download_url = f"/api/v1/documents/jobs/{row['job_id']}/download"
+        jobs.append(
+            JobStatusResponse(
+                job_id=row["job_id"],
+                xid=row.get("xid"),
+                status=row["status"],
+                template_path=row.get("template_path"),
+                output_path=row.get("output_path"),
+                error_message=row.get("error_message"),
+                mapper_llm=row.get("mapper_llm"),
+                validator_llm=row.get("validator_llm"),
+                confidence=confidence,
+                validation=row.get("validation"),
+                extraction_validation=row.get("extraction_validation"),
+                result=row.get("result"),
+                scores_pct=scores_pct,
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at"),
+                completed_at=row.get("completed_at"),
+                download_url=download_url,
+                sqlite_persisted=True,
+            )
+        )
+    return JobListResponse(count=len(jobs), jobs=jobs)
 
 
 @router.get("/documents/jobs/{job_id}", response_model=JobStatusResponse)
@@ -192,13 +259,22 @@ def get_document_job(job_id: str) -> JobStatusResponse:
 
     confidence = json.loads(job.confidence_json) if job.confidence_json else None
     validation = json.loads(job.validation_json) if job.validation_json else None
+    extraction = (
+        json.loads(job.extraction_validation_json)
+        if job.extraction_validation_json
+        else None
+    )
+    result = json.loads(job.result_json) if job.result_json else None
 
     scores_pct = None
     if confidence and isinstance(confidence, dict):
         scores_pct = confidence.get("scores_pct")
+    if scores_pct is None and isinstance(result, dict):
+        scores_pct = result.get("scores_pct")
 
     return JobStatusResponse(
         job_id=job.id,
+        xid=job.xid,
         status=job.status,
         template_path=job.template_path,
         output_path=job.output_path,
@@ -207,12 +283,22 @@ def get_document_job(job_id: str) -> JobStatusResponse:
         validator_llm=job.validator_llm,
         confidence=confidence,
         validation=validation,
+        extraction_validation=extraction,
+        result=result,
         scores_pct=scores_pct,
         created_at=job.created_at,
         updated_at=job.updated_at,
         completed_at=job.completed_at,
         download_url=download_url,
+        sqlite_persisted=True,
     )
+
+
+@router.get("/traces/{xid}", response_model=TraceByXidResponse)
+def get_trace_by_xid(xid: str) -> TraceByXidResponse:
+    """Fetch all HTTP/tool/LLM call logs + jobs for one correlation xid."""
+    payload = get_store().get_trace_by_xid(xid.strip())
+    return TraceByXidResponse(**payload)
 
 
 @router.get("/documents/jobs/{job_id}/download")

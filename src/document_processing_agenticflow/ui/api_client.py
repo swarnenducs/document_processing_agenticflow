@@ -199,3 +199,25 @@ def download_job_output(job_id: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(resp.content)
     return dest
+
+
+def get_trace_by_xid(xid: str) -> dict[str, Any]:
+    corr = (xid or "").strip()
+    if not corr:
+        raise ApiError("xid is required")
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(f"{_base_url()}/api/v1/traces/{corr}")
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
+    return resp.json()
+
+
+def list_document_jobs(limit: int = 20) -> dict[str, Any]:
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(
+            f"{_base_url()}/api/v1/documents/jobs",
+            params={"limit": max(1, min(int(limit), 100))},
+        )
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
+    return resp.json()

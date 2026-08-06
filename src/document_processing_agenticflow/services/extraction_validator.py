@@ -13,6 +13,7 @@ from document_processing_agenticflow.models.schemas import (
     ExtractedTemplate,
     ValidationIssue,
 )
+from document_processing_agenticflow.services.trace_log import traced_invoke
 
 
 class _LLMExtractionIssue(BaseModel):
@@ -58,9 +59,13 @@ def _table_summaries(template: ExtractedTemplate) -> list[dict[str, Any]]:
     return summaries
 
 
-def validate_extraction(template: ExtractedTemplate) -> ExtractionValidationResult:
+def validate_extraction(
+    template: ExtractedTemplate,
+    *,
+    model_id: str | None = None,
+) -> ExtractionValidationResult:
     """
-    LLM critic of XML extraction quality.
+    LLM critic of XML extraction quality (validator role via init_chat_model).
     Soft-skips (returns passed=True, confidence=None-ish) only via caller when unavailable;
     this function requires a live validator LLM.
     """
@@ -72,12 +77,15 @@ def validate_extraction(template: ExtractedTemplate) -> ExtractionValidationResu
         build_extraction_validator_chain,
     )
 
-    if not is_validator_available():
+    if not is_validator_available() and not model_id:
         raise RuntimeError(
             "Extraction validator LLM is required. Check VALIDATOR_PROVIDER credentials."
         )
 
-    llm, config = get_validator_llm(structured_schema=_LLMExtractionPayload)
+    llm, config = get_validator_llm(
+        model_id=model_id,
+        structured_schema=_LLMExtractionPayload,
+    )
     block_summaries = [
         {
             "block_id": b.block_id,
@@ -90,13 +98,17 @@ def validate_extraction(template: ExtractedTemplate) -> ExtractionValidationResu
         if (b.text or "").strip()
     ]
     chain = build_extraction_validator_chain(llm)
-    result: _LLMExtractionPayload = chain.invoke(
+    result: _LLMExtractionPayload = traced_invoke(
+        chain,
         {
             "template_path": template.template_path,
             "placeholders_json": json.dumps(template.placeholders, indent=2),
             "blocks_json": json.dumps(block_summaries, indent=2)[:12000],
             "tables_json": json.dumps(_table_summaries(template), indent=2)[:4000],
-        }
+        },
+        role="extraction_validator",
+        provider=config.provider,
+        model=config.model,
     )  # type: ignore[assignment]
 
     issues = [

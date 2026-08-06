@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """
-Start FastAPI + Gradio together (cross-platform alternative to run.bat / run.sh).
+Start ALL services: FastAPI + Gradio + document_process_mcp + voice_process_mcp.
+
+MCP servers run in **HTTP** mode by default so FastAPI can call them at:
+  - document_process_mcp → http://127.0.0.1:8001/mcp
+  - voice_process_mcp    → http://127.0.0.1:8002/mcp
 
 Usage (from project root):
   python run_both.py
   python run_both.py --api-only
-  python run_both.py --ui-only
+  python run_both.py --mcp-only                 # both MCP servers over HTTP
+  python run_both.py --mcp-only --mcp-http      # explicit HTTP (same as default)
+  python run_both.py --mcp-transport http       # explicit HTTP transport
+  python run_both.py --no-mcp
   py -3 run_both.py          # Windows launcher
+
+Env (optional): DOCUMENT_MCP_PORT, VOICE_MCP_PORT, DOCUMENT_MCP_URL, VOICE_MCP_URL,
+MCP_TRANSPORT=http
 
 Uses the project ``.venv`` automatically when present (so it works after
 ``uv sync`` or ``pip install -r requirements.txt`` even if ``uv`` is not on PATH).

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from document_processing_agenticflow.core.settings import settings
+from document_processing_agenticflow.services.trace_log import log_event
 
 
 @dataclass
@@ -289,21 +291,86 @@ def transcribe_audio(
 
     chosen = resolve_speech_provider(provider)
     errors: list[str] = []
+    started = time.perf_counter()
     try:
-        return _call_provider(chosen, path, language)
+        result = _call_provider(chosen, path, language)
+        log_event(
+            kind="speech",
+            name="transcribe_audio",
+            request_payload={
+                "audio_path": str(path),
+                "language": language,
+                "provider": chosen,
+            },
+            response_payload={
+                "text": result.text,
+                "provider": result.provider,
+                "model": result.model,
+                "language": result.language,
+            },
+            status="ok",
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+            provider=result.provider,
+            model=result.model,
+        )
+        return result
     except Exception as primary_exc:  # noqa: BLE001
         errors.append(f"{chosen}: {primary_exc}")
         if not _is_connection_error(primary_exc):
+            log_event(
+                kind="speech",
+                name="transcribe_audio",
+                request_payload={
+                    "audio_path": str(path),
+                    "language": language,
+                    "provider": chosen,
+                },
+                status="error",
+                error=str(primary_exc),
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                provider=chosen,
+            )
             raise
 
     for alt in _fallback_providers(chosen):
         try:
-            return _call_provider(alt, path, language)
+            result = _call_provider(alt, path, language)
+            log_event(
+                kind="speech",
+                name="transcribe_audio",
+                request_payload={
+                    "audio_path": str(path),
+                    "language": language,
+                    "provider": chosen,
+                    "fallback": alt,
+                },
+                response_payload={
+                    "text": result.text,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "language": result.language,
+                },
+                status="ok",
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                provider=result.provider,
+                model=result.model,
+                meta={"errors_before_fallback": errors},
+            )
+            return result
         except Exception as alt_exc:  # noqa: BLE001
             errors.append(f"{alt}: {alt_exc}")
             continue
 
     detail = " | ".join(errors)
+    log_event(
+        kind="speech",
+        name="transcribe_audio",
+        request_payload={"audio_path": str(path), "language": language, "provider": chosen},
+        status="error",
+        error=detail,
+        latency_ms=(time.perf_counter() - started) * 1000.0,
+        provider=chosen,
+    )
     raise RuntimeError(
         "Speech transcription connection failed for all available providers. "
         f"Tried: {detail}. "

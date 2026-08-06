@@ -17,6 +17,7 @@ from document_processing_agenticflow.models.schemas import (
     ValidationResult,
 )
 from document_processing_agenticflow.services.placeholders import PLACEHOLDER_REGEXES as LEFTOVER_PATTERNS
+from document_processing_agenticflow.services.trace_log import traced_invoke
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -103,13 +104,15 @@ def _llm_validation(
     generated_path: str | Path,
     json_data: dict[str, Any],
     mapping: MappingResult,
+    *,
+    model_id: str | None = None,
 ) -> ValidationResult:
     from document_processing_agenticflow.services.llm_factory import (
         get_validator_llm,
         is_validator_available,
     )
 
-    if not is_validator_available():
+    if not is_validator_available() and not model_id:
         raise RuntimeError(
             "Validator LLM is required. Check VALIDATOR_PROVIDER credentials "
             "(e.g. GROQ_API_KEY or Azure OpenAI settings)."
@@ -118,7 +121,10 @@ def _llm_validation(
     from document_processing_agenticflow.services.prompts import build_validator_chain
 
     try:
-        llm, config = get_validator_llm(structured_schema=_LLMValidationPayload)
+        llm, config = get_validator_llm(
+            model_id=model_id,
+            structured_schema=_LLMValidationPayload,
+        )
     except (ImportError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Failed to build validator LLM: {exc}") from exc
 
@@ -137,7 +143,8 @@ def _llm_validation(
 
     chain = build_validator_chain(llm)
     try:
-        result: _LLMValidationPayload = chain.invoke(
+        result: _LLMValidationPayload = traced_invoke(
+            chain,
             {
                 "template_text": template_text[:8000],
                 "generated_text": generated_text[:8000],
@@ -146,7 +153,10 @@ def _llm_validation(
                 "mappings_json": json.dumps(mapping_summary, indent=2)[:8000],
                 "unmapped_placeholders_json": json.dumps(mapping.unmapped_placeholders),
                 "leftovers_json": json.dumps(leftovers),
-            }
+            },
+            role="validator",
+            provider=config.provider,
+            model=config.model,
         )  # type: ignore[assignment]
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Validator LLM invoke failed ({config.label}): {exc}") from exc
@@ -178,6 +188,10 @@ def validate_documents(
     generated_path: str | Path,
     json_data: dict[str, Any],
     mapping: MappingResult,
+    *,
+    model_id: str | None = None,
 ) -> ValidationResult:
-    """Step 4: LLM-only validation of template vs generated document vs JSON."""
-    return _llm_validation(template, generated_path, json_data, mapping)
+    """Step 4: LLM-only validation via init_chat_model (switchable provider/model)."""
+    return _llm_validation(
+        template, generated_path, json_data, mapping, model_id=model_id
+    )

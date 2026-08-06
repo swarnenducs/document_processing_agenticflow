@@ -34,6 +34,9 @@ class JobRecord:
     created_at: str
     updated_at: str
     completed_at: str | None
+    extraction_validation_json: str | None = None
+    result_json: str | None = None
+    xid: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -48,11 +51,16 @@ class JobRecord:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
+            "xid": self.xid,
         }
         if self.confidence_json:
             out["confidence"] = json.loads(self.confidence_json)
         if self.validation_json:
             out["validation"] = json.loads(self.validation_json)
+        if self.extraction_validation_json:
+            out["extraction_validation"] = json.loads(self.extraction_validation_json)
+        if self.result_json:
+            out["result"] = json.loads(self.result_json)
         return out
 
 
@@ -171,6 +179,49 @@ class JobStore:
                 if col not in existing:
                     conn.execute(f"ALTER TABLE voice_contracts ADD COLUMN {col} {typ}")
 
+            # Persist full document job report details (scores, extraction, summary snapshot)
+            job_cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(document_jobs)").fetchall()
+            }
+            for col, typ in (
+                ("extraction_validation_json", "TEXT"),
+                ("result_json", "TEXT"),
+                ("xid", "TEXT"),
+            ):
+                if col not in job_cols:
+                    conn.execute(f"ALTER TABLE document_jobs ADD COLUMN {col} {typ}")
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS call_logs (
+                    id TEXT PRIMARY KEY,
+                    xid TEXT NOT NULL,
+                    job_id TEXT,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    provider TEXT,
+                    model TEXT,
+                    request_json TEXT,
+                    response_json TEXT,
+                    error_message TEXT,
+                    latency_ms REAL,
+                    meta_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_call_logs_xid ON call_logs(xid)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_call_logs_job_id ON call_logs(job_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_document_jobs_xid ON document_jobs(xid)"
+            )
+
     def create_job_paths(
         self,
         job_id: str | None = None,
@@ -200,6 +251,8 @@ class JobStore:
         template_path: Path,
         data_path: Path,
         output_path: Path,
+        *,
+        xid: str | None = None,
     ) -> JobRecord:
         now = _now_iso()
         with self._conn() as conn:
@@ -208,8 +261,8 @@ class JobStore:
                 INSERT INTO document_jobs (
                     id, status, template_path, data_path, output_path,
                     error_message, confidence_json, validation_json,
-                    mapper_llm, validator_llm, created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL)
+                    mapper_llm, validator_llm, created_at, updated_at, completed_at, xid
+                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
                 """,
                 (
                     job_id,
@@ -219,6 +272,7 @@ class JobStore:
                     str(output_path),
                     now,
                     now,
+                    xid,
                 ),
             )
         return self.get_job(job_id)
@@ -241,6 +295,8 @@ class JobStore:
         *,
         confidence: dict[str, Any] | None = None,
         validation: dict[str, Any] | None = None,
+        extraction_validation: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
         mapper_llm: str | None = None,
         validator_llm: str | None = None,
         error: str | None = None,
@@ -257,6 +313,8 @@ class JobStore:
                     error_message = ?,
                     confidence_json = ?,
                     validation_json = ?,
+                    extraction_validation_json = ?,
+                    result_json = ?,
                     mapper_llm = ?,
                     validator_llm = ?
                 WHERE id = ?
@@ -268,6 +326,8 @@ class JobStore:
                     error,
                     json.dumps(confidence) if confidence else None,
                     json.dumps(validation) if validation else None,
+                    json.dumps(extraction_validation) if extraction_validation else None,
+                    json.dumps(result) if result else None,
                     mapper_llm,
                     validator_llm,
                     job_id,
@@ -281,7 +341,131 @@ class JobStore:
             ).fetchone()
         if row is None:
             raise KeyError(f"Job not found: {job_id}")
-        return JobRecord(**dict(row))
+        data = dict(row)
+        # Older DBs may lack newer columns until migration; keep JobRecord happy.
+        data.setdefault("extraction_validation_json", None)
+        data.setdefault("result_json", None)
+        data.setdefault("xid", None)
+        return JobRecord(**data)
+
+    def list_document_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent document jobs (newest first) with parsed JSON details."""
+        limit = max(1, min(int(limit), 200))
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM document_jobs
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data.setdefault("extraction_validation_json", None)
+            data.setdefault("result_json", None)
+            data.setdefault("xid", None)
+            out.append(JobRecord(**data).to_dict())
+        return out
+
+    def insert_call_log(
+        self,
+        *,
+        xid: str,
+        kind: str,
+        name: str,
+        status: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        request_json: str | None = None,
+        response_json: str | None = None,
+        error_message: str | None = None,
+        latency_ms: float | None = None,
+        meta_json: str | None = None,
+        log_id: str | None = None,
+    ) -> str:
+        lid = log_id or str(uuid.uuid4())
+        now = _now_iso()
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO call_logs (
+                    id, xid, job_id, kind, name, status, provider, model,
+                    request_json, response_json, error_message, latency_ms,
+                    meta_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    lid,
+                    xid,
+                    job_id,
+                    kind,
+                    name,
+                    status,
+                    provider,
+                    model,
+                    request_json,
+                    response_json,
+                    error_message,
+                    latency_ms,
+                    meta_json,
+                    now,
+                ),
+            )
+        return lid
+
+    def list_call_logs_by_xid(self, xid: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM call_logs
+                WHERE xid = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (xid, limit),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            for key in ("request_json", "response_json", "meta_json"):
+                raw = data.get(key)
+                if raw:
+                    try:
+                        data[key.replace("_json", "")] = json.loads(raw)
+                    except json.JSONDecodeError:
+                        data[key.replace("_json", "")] = raw
+                else:
+                    data[key.replace("_json", "")] = None
+            data["log_id"] = data.pop("id")
+            out.append(data)
+        return out
+
+    def get_trace_by_xid(self, xid: str) -> dict[str, Any]:
+        """Aggregate jobs + call logs for one correlation id."""
+        with self._conn() as conn:
+            job_rows = conn.execute(
+                "SELECT * FROM document_jobs WHERE xid = ? ORDER BY created_at DESC",
+                (xid,),
+            ).fetchall()
+        jobs: list[dict[str, Any]] = []
+        for row in job_rows:
+            data = dict(row)
+            data.setdefault("extraction_validation_json", None)
+            data.setdefault("result_json", None)
+            data.setdefault("xid", None)
+            jobs.append(JobRecord(**data).to_dict())
+        logs = self.list_call_logs_by_xid(xid)
+        return {
+            "xid": xid,
+            "job_count": len(jobs),
+            "log_count": len(logs),
+            "jobs": jobs,
+            "logs": logs,
+        }
 
     def delete_job(self, job_id: str) -> None:
         with self._conn() as conn:

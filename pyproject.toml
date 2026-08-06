@@ -24,6 +24,7 @@ dependencies = [
     "httpx>=0.28.0",
     "gradio>=5.0.0",
     "pyyaml>=6.0.0",
+    "fastmcp>=3.4.6",
 ]
 
 [project.scripts]
@@ -31,6 +32,10 @@ doc-agent = "document_processing_agenticflow.cli:main"
 doc-api = "document_processing_agenticflow.api.server:main"
 doc-ui = "document_processing_agenticflow.ui.gradio_app:main"
 doc-app = "document_processing_agenticflow.run_app:main"
+doc-mcp-document = "document_processing_agenticflow.mcp.document_process_mcp:main"
+doc-mcp-voice = "document_processing_agenticflow.mcp.voice_process_mcp:main"
+document-process-mcp = "document_processing_agenticflow.mcp.document_process_mcp:main"
+voice-process-mcp = "document_processing_agenticflow.mcp.voice_process_mcp:main"
 
 [build-system]
 requires = ["uv_build>=0.9.3,<0.10.0"]

@@ -35,3 +35,6 @@ class DocumentProcessingState(TypedDict, total=False):
     validation_threshold: float
     skip_validation: bool
     skip_extraction_validation: bool
+    # Optional LangChain init_chat_model overrides (provider:model)
+    mapper_model_id: str
+    validator_model_id: str
