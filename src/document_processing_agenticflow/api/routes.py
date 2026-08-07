@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from document_processing_agenticflow.api.schemas import (
@@ -24,13 +26,14 @@ from document_processing_agenticflow.api.schemas import (
 )
 from document_processing_agenticflow.core.request_context import require_xid
 from document_processing_agenticflow.core.settings import settings
+from document_processing_agenticflow.services.job_events import get_job_event_hub, publish_job_stage
 from document_processing_agenticflow.services.pipeline_runner import run_document_job
 from document_processing_agenticflow.services.speech_to_text import transcribe_audio
 from document_processing_agenticflow.services.voice_contract_workflow import (
     confirm_voice_contract,
     run_voice_contract_workflow,
 )
-from document_processing_agenticflow.storage.job_store import JobStore
+from document_processing_agenticflow.storage.job_store import JobRecord, JobStore
 
 router = APIRouter()
 _store: JobStore | None = None
@@ -145,7 +148,8 @@ async def create_document_job(
     """
     Upload a Word template + JSON data model → async LangGraph job.
 
-    Returns job_id immediately; poll GET /documents/jobs/{job_id} then download.
+    Returns job_id immediately. Prefer long-poll:
+    ``GET /documents/jobs/{job_id}?wait=true`` then download when completed.
     """
     if not data and not data_json:
         raise HTTPException(status_code=400, detail="Provide `data` (form JSON string) or `data_json` file")
@@ -185,6 +189,7 @@ async def create_document_job(
     )
 
     corr = require_xid()
+    publish_job_stage(job_id, "accepted", xid=corr)
     background_tasks.add_task(
         run_document_job,
         job_id,
@@ -202,6 +207,7 @@ async def create_document_job(
         status="pending",
         status_url=f"{base}/documents/jobs/{job_id}",
         download_url=f"{base}/documents/jobs/{job_id}/download",
+        ws_url=f"{base}/documents/jobs/{job_id}/ws",
     )
 
 
@@ -246,16 +252,10 @@ def list_document_jobs(limit: int = 50) -> JobListResponse:
     return JobListResponse(count=len(jobs), jobs=jobs)
 
 
-@router.get("/documents/jobs/{job_id}", response_model=JobStatusResponse)
-def get_document_job(job_id: str) -> JobStatusResponse:
-    try:
-        job = get_store().get_job(job_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
+def _job_status_response(job: JobRecord) -> JobStatusResponse:
     download_url = None
     if job.status == "completed" and job.output_path and Path(job.output_path).exists():
-        download_url = f"/api/v1/documents/jobs/{job_id}/download"
+        download_url = f"/api/v1/documents/jobs/{job.id}/download"
 
     confidence = json.loads(job.confidence_json) if job.confidence_json else None
     validation = json.loads(job.validation_json) if job.validation_json else None
@@ -292,6 +292,108 @@ def get_document_job(job_id: str) -> JobStatusResponse:
         download_url=download_url,
         sqlite_persisted=True,
     )
+
+
+@router.get("/documents/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_document_job(
+    job_id: str,
+    wait: bool = Query(
+        default=False,
+        description="Long-poll: hold until status is completed/failed (or timeout).",
+    ),
+    timeout: float = Query(
+        default=180.0,
+        ge=1.0,
+        le=600.0,
+        description="Max seconds to wait when wait=true.",
+    ),
+) -> JobStatusResponse:
+    """Return job status. With ``wait=true``, block until terminal status (no client polling)."""
+    store = get_store()
+    try:
+        job = store.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if not wait or job.status in {"completed", "failed"}:
+        return _job_status_response(job)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.5)
+        try:
+            job = store.get_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if job.status in {"completed", "failed"}:
+            return _job_status_response(job)
+
+    return _job_status_response(job)
+
+
+@router.websocket("/documents/jobs/{job_id}/ws")
+async def document_job_progress_ws(websocket: WebSocket, job_id: str) -> None:
+    """Push live pipeline stages (extraction done, mapped, validated, …). No Redis/Kafka."""
+    await websocket.accept()
+    store = get_store()
+    try:
+        job = store.get_job(job_id)
+    except KeyError:
+        await websocket.send_json(
+            {
+                "job_id": job_id,
+                "stage": "failed",
+                "message": "Job not found",
+                "progress": 1.0,
+                "terminal": True,
+                "error": f"Job not found: {job_id}",
+            }
+        )
+        await websocket.close(code=4404)
+        return
+
+    # Already finished — one terminal event (no duplicate history/snapshot).
+    if job.status in {"completed", "failed"}:
+        await websocket.send_json(
+            {
+                "job_id": job.id,
+                "stage": job.status,
+                "message": "Job completed" if job.status == "completed" else "Job failed",
+                "progress": 1.0,
+                "xid": job.xid,
+                "terminal": True,
+                "error": job.error_message,
+            }
+        )
+        await websocket.close()
+        return
+
+    hub = get_job_event_hub()
+    try:
+        seen: set[str] = set()
+        async for event in hub.subscribe(job_id):
+            stage = str(event.get("stage") or "")
+            # Deduplicate consecutive / repeated stage names from history+live races.
+            if stage and stage in seen and not event.get("terminal"):
+                continue
+            if stage:
+                seen.add(stage)
+            await websocket.send_json(event)
+            if event.get("terminal") or stage in {"completed", "failed"}:
+                break
+    except WebSocketDisconnect:
+        return
+    except Exception:  # noqa: BLE001
+        try:
+            await websocket.close(code=1011)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
+    try:
+        await websocket.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.get("/traces/{xid}", response_model=TraceByXidResponse)

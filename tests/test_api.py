@@ -104,6 +104,30 @@ def test_document_job_fails_without_mapper_llm(api_client, tmp_path: Path) -> No
     assert last_body.get("error_message")
 
 
+def test_document_job_long_poll_wait(api_client, tmp_path: Path) -> None:
+    """wait=true holds one request until the job reaches a terminal status."""
+    client, _, _ = api_client
+    docx_bytes = _sample_docx_bytes(tmp_path)
+    data = _sample_json()
+
+    resp = client.post(
+        "/api/v1/documents/jobs",
+        files={"template": ("template.docx", docx_bytes, "application/octet-stream")},
+        data={"data": json.dumps(data), "skip_validation": "true"},
+    )
+    assert resp.status_code == 202
+    job_id = resp.json()["job_id"]
+
+    r = client.get(
+        f"/api/v1/documents/jobs/{job_id}",
+        params={"wait": "true", "timeout": 30},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "failed"
+    assert body.get("error_message")
+
+
 def test_job_store_paths(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "custom_storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "custom.db"))

@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from document_processing_agenticflow.core.request_context import bind_xid, get_xid
-from document_processing_agenticflow.graph import invoke_document_graph
+from document_processing_agenticflow.graph import stream_document_graph
+from document_processing_agenticflow.services.job_events import publish_job_stage
 from document_processing_agenticflow.storage.job_store import JobStore
 
 
@@ -44,7 +45,9 @@ def _run_document_job_bound(
     max_retries: int,
     validation_threshold: float,
 ) -> dict[str, Any]:
+    xid = get_xid()
     job_store.update_status(job_id, "processing")
+    publish_job_stage(job_id, "processing", xid=xid)
 
     try:
         from document_processing_agenticflow.services.naming import build_contract_output_filename
@@ -52,7 +55,9 @@ def _run_document_job_bound(
         fallback_name = build_contract_output_filename(
             job_id, Path(job.template_path or "template.docx").name
         )
-        result = invoke_document_graph(
+        result: dict[str, Any] | None = None
+        last_stage: str | None = None
+        for snapshot in stream_document_graph(
             {
                 "template_path": job.template_path,
                 "data_path": job.data_path,
@@ -65,9 +70,23 @@ def _run_document_job_bound(
                 "validation_threshold": validation_threshold,
                 "skip_validation": skip_validation,
             }
-        )
+        ):
+            result = snapshot
+            stage = str(snapshot.get("status") or "")
+            if stage and stage != last_stage:
+                errors = snapshot.get("errors") or []
+                publish_job_stage(
+                    job_id,
+                    stage,
+                    xid=xid,
+                    error="; ".join(errors) if stage == "failed" and errors else None,
+                )
+                last_stage = stage
+        if result is None:
+            raise RuntimeError("Document graph produced no state")
     except Exception as exc:  # noqa: BLE001
         job_store.complete_job(job_id, error=str(exc))
+        publish_job_stage(job_id, "failed", xid=xid, error=str(exc))
         raise
 
     errors = result.get("errors") or []
@@ -75,7 +94,9 @@ def _run_document_job_bound(
     if status != "completed" or errors:
         msg = "; ".join(errors) if errors else f"Pipeline ended with status={status}"
         job_store.complete_job(job_id, error=msg)
-        return {"job_id": job_id, "status": "failed", "errors": errors, "xid": get_xid()}
+        if last_stage != "failed":
+            publish_job_stage(job_id, "failed", xid=xid, error=msg)
+        return {"job_id": job_id, "status": "failed", "errors": errors, "xid": xid}
 
     confidence = result.get("confidence")
     validation = result.get("validation")
@@ -93,7 +114,7 @@ def _run_document_job_bound(
 
     result_snapshot = {
         "job_id": job_id,
-        "xid": get_xid(),
+        "xid": xid,
         "status": "completed",
         "output_path": job.output_path,
         "mapper_llm": mapper_llm,
@@ -113,5 +134,7 @@ def _run_document_job_bound(
         mapper_llm=mapper_llm,
         validator_llm=validator_llm,
     )
+    if last_stage != "completed":
+        publish_job_stage(job_id, "completed", xid=xid)
 
     return result_snapshot

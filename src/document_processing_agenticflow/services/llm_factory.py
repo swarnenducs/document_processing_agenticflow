@@ -220,38 +220,49 @@ def _resolve_model(role: str, provider: str) -> str:
     return _resolve_model("mapper", provider)
 
 
+# Default env var names for init_chat_model providers (role-scoped KEY wins first).
+_PROVIDER_API_KEY_ENV: dict[str, tuple[str, ...]] = {
+    "openai": ("OPENAI_API_KEY",),
+    "azure_openai": ("AZURE_OPENAI_API_KEY",),
+    "groq": ("GROQ_API_KEY",),
+    "openai_compatible": ("OPENAI_API_KEY", "COMPATIBLE_API_KEY"),
+    "ollama": ("OPENAI_API_KEY", "COMPATIBLE_API_KEY"),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "google_genai": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "google_vertexai": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "mistralai": ("MISTRAL_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "together": ("TOGETHER_API_KEY",),
+    "cohere": ("COHERE_API_KEY",),
+}
+
+_PROVIDER_BASE_URL_ENV: dict[str, tuple[str, ...]] = {
+    "openai": ("OPENAI_BASE_URL",),
+    "azure_openai": ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"),
+    "openai_compatible": ("OPENAI_BASE_URL", "COMPATIBLE_BASE_URL"),
+    "groq": ("GROQ_BASE_URL",),
+    "ollama": ("OLLAMA_BASE_URL",),
+}
+
+
+def _first_env(*keys: str) -> str | None:
+    for key in keys:
+        value = _env(key)
+        if value and not _is_placeholder_value(value):
+            return value
+    return None
+
+
 def _resolve_api_key(role: str, provider: str) -> str | None:
     prefix = _role_prefix(role)
     role_key = _env(f"{prefix}_API_KEY")
     if role_key:
         return role_key
-
     if role == "agent":
         mapper_key = _env("MAPPER_API_KEY")
         if mapper_key:
             return mapper_key
-
-    if provider == "openai":
-        return _env("OPENAI_API_KEY")
-    if provider == "azure_openai":
-        return _env("AZURE_OPENAI_API_KEY")
-    if provider == "groq":
-        return _env("GROQ_API_KEY")
-    if provider == "openai_compatible":
-        return _env("OPENAI_API_KEY") or _env("COMPATIBLE_API_KEY")
-    if provider == "anthropic":
-        return _env("ANTHROPIC_API_KEY")
-    if provider in {"google_genai", "google_vertexai"}:
-        return _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY")
-    if provider == "mistralai":
-        return _env("MISTRAL_API_KEY")
-    if provider == "fireworks":
-        return _env("FIREWORKS_API_KEY")
-    if provider == "together":
-        return _env("TOGETHER_API_KEY")
-    if provider == "cohere":
-        return _env("COHERE_API_KEY")
-    return None
+    return _first_env(*_PROVIDER_API_KEY_ENV.get(provider, ()))
 
 
 def _resolve_base_url(role: str, provider: str) -> str | None:
@@ -260,25 +271,33 @@ def _resolve_base_url(role: str, provider: str) -> str | None:
     if not role_url and role == "agent":
         role_url = _env("MAPPER_BASE_URL")
 
-    candidates: list[str | None]
+    candidates: list[str | None] = []
     if role_url:
-        candidates = [role_url]
-    elif provider == "openai":
-        candidates = [_env("OPENAI_BASE_URL")]
-    elif provider == "azure_openai":
-        candidates = [_env("AZURE_OPENAI_ENDPOINT"), _env("AZURE_OPENAI_BASE_URL")]
-    elif provider == "openai_compatible":
-        candidates = [_env("OPENAI_BASE_URL"), _env("COMPATIBLE_BASE_URL")]
-    elif provider == "groq":
-        candidates = [_env("GROQ_BASE_URL")]
-    elif provider == "ollama":
-        candidates = [_env("OLLAMA_BASE_URL"), "http://127.0.0.1:11434"]
-    else:
-        candidates = []
+        candidates.append(role_url)
+    candidates.extend(_env(k) for k in _PROVIDER_BASE_URL_ENV.get(provider, ()))
+    if provider == "ollama":
+        candidates.append("http://127.0.0.1:11434")
 
     for raw in candidates:
         if raw and not _is_placeholder_value(raw):
             return raw.rstrip("/")
+    return None
+
+
+def _resolve_max_tokens(role: str) -> int | None:
+    """Optional completion cap via ``{ROLE}_MAX_TOKENS`` or ``LLM_MAX_TOKENS``.
+
+    Validator defaults to 1024 so TPM-limited hosts (e.g. Groq free tier) do not
+    reserve huge completion budgets (HTTP 413).
+    """
+    raw = _env(f"{_role_prefix(role)}_MAX_TOKENS") or _env("LLM_MAX_TOKENS")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    if role == "validator":
+        return 1024
     return None
 
 
@@ -439,26 +458,16 @@ def config_model_id(config: LLMRoleConfig) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Builders — ALL built-ins go through LangChain init_chat_model
+# Builders — ALL built-ins go through LangChain ``init_chat_model``
 # ---------------------------------------------------------------------------
 
 
-def _require_key(config: LLMRoleConfig, *, hint: str) -> str:
-    if config.api_key:
-        return config.api_key
-    raise RuntimeError(
-        f"{config.role} LLM ({config.provider}) needs an API key. Set "
-        f"{config.role.upper()}_API_KEY or {hint}."
-    )
-
-
 def _normalize_azure_endpoint(endpoint: str) -> tuple[str, str]:
-    """
-    Return (style, base_url).
+    """Return (style, base_url).
 
     - foundry_v1: Azure AI Foundry / ``*.services.ai.azure.com/.../openai/v1``
-      → OpenAI-compatible path via init_chat_model(model_provider='openai')
-    - classic: ``*.openai.azure.com`` → azure_openai provider
+      → OpenAI-compatible ``init_chat_model("openai:…")``
+    - classic: ``*.openai.azure.com`` → ``azure_openai`` provider
     """
     url = endpoint.strip().rstrip("/")
     for suffix in ("/responses", "/chat/completions", "/completions"):
@@ -479,79 +488,86 @@ def _init_chat_model(*args: Any, **kwargs: Any) -> Any:
     return init_chat_model(*args, **kwargs)
 
 
-def _build_via_init_chat_model(config: LLMRoleConfig, temperature: float = 0) -> Any:
-    """Construct a chat model using LangChain ``init_chat_model`` only."""
+def _common_init_kwargs(config: LLMRoleConfig, temperature: float) -> dict[str, Any]:
+    """Shared kwargs for any ``init_chat_model`` provider."""
+    kwargs: dict[str, Any] = {"temperature": temperature}
+    if config.api_key:
+        kwargs["api_key"] = config.api_key
+    if config.base_url:
+        kwargs["base_url"] = config.base_url
+    max_tokens = _resolve_max_tokens(config.role)
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    return kwargs
+
+
+def _resolve_init_target(
+    config: LLMRoleConfig, temperature: float
+) -> tuple[str, dict[str, Any]]:
+    """Map role config → ``(provider:model, kwargs)`` for ``init_chat_model``.
+
+    Most providers (openai, groq, anthropic, google_genai, …) pass through as-is.
+    Only remaps that LangChain cannot express via ``provider:model`` alone:
+    Azure Foundry v1 and generic OpenAI-compatible / Ollama endpoints.
+    """
     provider = _normalize_provider(config.provider)
-    model_id = config_model_id(config)
-    temp = temperature
+    kwargs = _common_init_kwargs(config, temperature)
 
-    # --- openai ---
-    if provider == "openai":
-        api_key = _require_key(config, hint="OPENAI_API_KEY")
-        kwargs: dict[str, Any] = {"api_key": api_key, "temperature": temp}
-        if config.base_url:
-            kwargs["base_url"] = config.base_url
-        return _init_chat_model(model_id, **kwargs)
-
-    # --- groq ---
-    if provider == "groq":
-        api_key = _require_key(config, hint="GROQ_API_KEY")
-        kwargs = {"api_key": api_key, "temperature": temp}
-        if config.base_url:
-            kwargs["base_url"] = config.base_url
-        return _init_chat_model(model_id, **kwargs)
-
-    # --- azure openai / foundry ---
     if provider == "azure_openai":
-        api_key = _require_key(config, hint="AZURE_OPENAI_API_KEY")
         endpoint = config.base_url or _env("AZURE_OPENAI_ENDPOINT")
         if not endpoint or _is_placeholder_value(endpoint):
             raise RuntimeError(
                 "Azure OpenAI requires a real AZURE_OPENAI_ENDPOINT "
                 "(or MAPPER_BASE_URL / VALIDATOR_BASE_URL)."
             )
+        if not config.api_key:
+            raise RuntimeError(
+                f"{config.role} LLM (azure_openai) needs an API key. "
+                f"Set {config.role.upper()}_API_KEY or AZURE_OPENAI_API_KEY."
+            )
         style, base = _normalize_azure_endpoint(endpoint)
-
-        # Foundry OpenAI v1 is OpenAI-compatible (not classic azure_openai kwargs).
         if style == "foundry_v1":
-            kwargs = {"api_key": api_key, "base_url": base}
-            if temp not in (None, 0, 0.0):
-                kwargs["temperature"] = temp
-            return _init_chat_model(f"openai:{config.model}", **kwargs)
+            # Foundry OpenAI v1 speaks the OpenAI wire format.
+            foundry_kwargs = {"api_key": config.api_key, "base_url": base}
+            if temperature not in (None, 0, 0.0):
+                foundry_kwargs["temperature"] = temperature
+            max_tokens = kwargs.get("max_tokens")
+            if max_tokens is not None:
+                foundry_kwargs["max_tokens"] = max_tokens
+            return f"openai:{config.model}", foundry_kwargs
 
-        kwargs = {
-            "api_key": api_key,
+        return config_model_id(config), {
+            "api_key": config.api_key,
             "azure_endpoint": base,
             "api_version": config.api_version or "2024-12-01-preview",
-            "temperature": temp,
+            "temperature": temperature,
+            **({"max_tokens": kwargs["max_tokens"]} if "max_tokens" in kwargs else {}),
         }
-        return _init_chat_model(model_id, **kwargs)
 
-    # --- openai-compatible / ollama ---
     if provider in {"openai_compatible", "ollama"}:
-        base = config.base_url
-        if provider == "ollama" and not base:
-            base = "http://127.0.0.1:11434"
+        base = config.base_url or (
+            "http://127.0.0.1:11434" if provider == "ollama" else None
+        )
         if not base:
             raise RuntimeError(
                 "openai_compatible / ollama requires a base URL "
                 "(MAPPER_BASE_URL / OPENAI_BASE_URL / COMPATIBLE_BASE_URL / OLLAMA_BASE_URL)."
             )
-        api_key = config.api_key or _env("OPENAI_API_KEY") or _env("COMPATIBLE_API_KEY") or "EMPTY"
-        # Route through openai provider of init_chat_model + custom base_url
-        return _init_chat_model(
-            f"openai:{config.model}",
-            api_key=api_key,
-            base_url=base,
-            temperature=temp,
-        )
+        return f"openai:{config.model}", {
+            **kwargs,
+            "api_key": config.api_key
+            or _first_env("OPENAI_API_KEY", "COMPATIBLE_API_KEY")
+            or "EMPTY",
+            "base_url": base,
+        }
 
-    # --- any other init_chat_model provider (anthropic, google_genai, mistralai, …) ---
-    kwargs = {"temperature": temp}
-    if config.api_key:
-        kwargs["api_key"] = config.api_key
-    if config.base_url:
-        kwargs["base_url"] = config.base_url
+    # Generic path — openai, groq, anthropic, google_genai, mistralai, …
+    return config_model_id(config), kwargs
+
+
+def _build_via_init_chat_model(config: LLMRoleConfig, temperature: float = 0) -> Any:
+    """Construct a chat model using LangChain ``init_chat_model`` only."""
+    model_id, kwargs = _resolve_init_target(config, temperature)
     try:
         return _init_chat_model(model_id, **kwargs)
     except Exception as exc:
@@ -658,29 +674,24 @@ def provider_credentials_available(config: LLMRoleConfig) -> bool:
     if provider in _PROVIDER_REGISTRY:
         return True
 
-    if provider == "openai":
-        return bool(config.api_key or _env("OPENAI_API_KEY"))
     if provider == "azure_openai":
-        key = config.api_key or _env("AZURE_OPENAI_API_KEY")
-        endpoint = config.base_url or _env("AZURE_OPENAI_ENDPOINT")
-        return bool(key) and not _is_placeholder_value(key) and not _is_placeholder_value(endpoint)
-    if provider == "groq":
-        return bool(config.api_key or _env("GROQ_API_KEY"))
+        key = config.api_key or _first_env(*_PROVIDER_API_KEY_ENV["azure_openai"])
+        endpoint = config.base_url or _first_env(*_PROVIDER_BASE_URL_ENV["azure_openai"])
+        return bool(key) and bool(endpoint)
+
     if provider in {"openai_compatible", "ollama"}:
         return bool(
             config.base_url
-            or _env("OPENAI_BASE_URL")
-            or _env("COMPATIBLE_BASE_URL")
-            or _env("OLLAMA_BASE_URL")
+            or _first_env(*_PROVIDER_BASE_URL_ENV.get(provider, ()))
             or provider == "ollama"
         )
-    if provider == "anthropic":
-        return bool(config.api_key or _env("ANTHROPIC_API_KEY"))
-    if provider in {"google_genai", "google_vertexai"}:
-        return bool(config.api_key or _env("GOOGLE_API_KEY") or _env("GEMINI_API_KEY"))
-    if provider == "mistralai":
-        return bool(config.api_key or _env("MISTRAL_API_KEY"))
-    # Unknown init_chat_model providers: allow attempt (package may use ADC / local auth)
+
+    # Generic providers: require an API key when we know the env name(s).
+    key_envs = _PROVIDER_API_KEY_ENV.get(provider)
+    if key_envs:
+        return bool(config.api_key or _first_env(*key_envs))
+
+    # Unknown init_chat_model providers may use ADC / local auth.
     return True
 
 
