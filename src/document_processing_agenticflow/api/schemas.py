@@ -17,9 +17,13 @@ class JobAcceptedResponse(BaseModel):
     job_id: str
     xid: str | None = None
     status: Literal["pending", "processing"] = "pending"
-    message: str = "Job accepted. Poll status or download when completed."
+    message: str = (
+        "Job accepted. Prefer WebSocket ws_url for live stages, "
+        "or long-poll GET status_url?wait=true, then download."
+    )
     status_url: str
     download_url: str
+    ws_url: str | None = None
 
 
 class JobStatusResponse(BaseModel):

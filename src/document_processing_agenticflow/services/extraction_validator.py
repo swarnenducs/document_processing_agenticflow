@@ -86,25 +86,47 @@ def validate_extraction(
         model_id=model_id,
         structured_schema=_LLMExtractionPayload,
     )
-    block_summaries = [
-        {
-            "block_id": b.block_id,
-            "block_type": b.block_type,
-            "text": b.text[:400],
-            "placeholder_keys": b.placeholder_keys,
-            "table_index": b.table_index,
-        }
+    def _clip(text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 24)] + f"\n...<truncated:{len(text)}>"
+
+    def _dumps_compact(obj: Any, limit: int) -> str:
+        return _clip(json.dumps(obj, separators=(",", ":"), default=str), limit)
+
+    # Prefer blocks that carry placeholders; keep payload small for Groq TPM.
+    prioritized = [
+        b
         for b in template.blocks
         if (b.text or "").strip()
+        and (b.placeholder_keys or "<" in b.text or "XX%" in b.text or "X%" in b.text)
+    ]
+    if len(prioritized) < 12:
+        extras = [
+            b
+            for b in template.blocks
+            if (b.text or "").strip() and b not in prioritized
+        ]
+        prioritized.extend(extras[: max(0, 12 - len(prioritized))])
+
+    block_summaries = [
+        {
+            "id": b.block_id,
+            "t": b.block_type,
+            "text": b.text[:180],
+            "ph": b.placeholder_keys,
+            "ti": b.table_index,
+        }
+        for b in prioritized
     ]
     chain = build_extraction_validator_chain(llm)
     result: _LLMExtractionPayload = traced_invoke(
         chain,
         {
             "template_path": template.template_path,
-            "placeholders_json": json.dumps(template.placeholders, indent=2),
-            "blocks_json": json.dumps(block_summaries, indent=2)[:12000],
-            "tables_json": json.dumps(_table_summaries(template), indent=2)[:4000],
+            "placeholders_json": _dumps_compact(template.placeholders, 1500),
+            "blocks_json": _dumps_compact(block_summaries, 3000),
+            "tables_json": _dumps_compact(_table_summaries(template), 1200),
         },
         role="extraction_validator",
         provider=config.provider,

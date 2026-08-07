@@ -302,75 +302,201 @@ def _resolve_json_payload(json_file: object | None, json_text: str) -> dict | Pa
     return payload
 
 
-def ui_generate_document(
-    template_file: object | None,
-    json_file: object | None,
-    json_text: str,
-    skip_validation: bool,
-) -> tuple[str, str | None]:
-    def _err(msg: str) -> tuple[str, None]:
-        safe = (
-            str(msg)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\n", "<br>")
+def _html_esc(value: object) -> str:
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+_SPINNER_CSS = """
+<style>
+@keyframes docflow-spin { to { transform: rotate(360deg); } }
+@keyframes docflow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.docflow-loader {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 0 0 0.85rem 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  background: #1a1a1a;
+}
+.docflow-spinner {
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 3px solid #444;
+  border-top-color: #7ec8ff;
+  border-radius: 50%;
+  animation: docflow-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.docflow-loader-text { line-height: 1.35; }
+.docflow-loader-title {
+  font-weight: 600;
+  animation: docflow-pulse 1.6s ease-in-out infinite;
+}
+.docflow-bar-wrap {
+  margin: 0.55rem 0 0.85rem 0;
+  height: 0.55rem;
+  background: #2a2a2a;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.docflow-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3d8bfd, #7ec8ff);
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+</style>
+"""
+
+
+def _loading_html(message: str = "Starting document job…") -> str:
+    """Shown immediately so the user knows work has begun."""
+    return f"""
+{_SPINNER_CSS}
+<div class="docflow-loader">
+  <div class="docflow-spinner" aria-hidden="true"></div>
+  <div class="docflow-loader-text">
+    <div class="docflow-loader-title">{_html_esc(message)}</div>
+    <div style="opacity:0.8;font-size:0.9rem;margin-top:0.15rem">
+      Please wait — pipeline stages will appear here live.
+    </div>
+  </div>
+</div>
+"""
+
+
+def _append_ws_stage(stages: list[dict], event: dict) -> list[dict]:
+    """Keep a unique chronological stage list (no snapshot / no duplicates)."""
+    if not isinstance(event, dict):
+        return stages
+    if isinstance(event.get("extra"), dict) and event["extra"].get("source") == "snapshot":
+        return stages
+    stage = str(event.get("stage") or "").strip()
+    if not stage:
+        return stages
+    msg = str(event.get("message") or "")
+    if msg.lower().startswith("current status:"):
+        return stages
+
+    # Update in place if same stage already present; else append.
+    for i, existing in enumerate(stages):
+        if existing.get("stage") == stage:
+            stages[i] = event
+            return stages
+    stages.append(event)
+    return stages
+
+
+def _stages_table_html(stages: list[dict]) -> str:
+    if not stages:
+        return (
+            "<p style='opacity:0.75;margin:0.4rem 0'>Waiting for WebSocket stages…</p>"
         )
-        return f'<div style="color:#FFC4C4;line-height:1.45">{safe}</div>', None
-
-    try:
-        health = check_health()
-        if not health.get("mapper_available"):
-            return _err(
-                "Mapper LLM is NOT available — document generation requires LLM #1 "
-                "(rules fallback is disabled).\n\n"
-                f"Configured: {health.get('mapper_provider')}/{health.get('mapper_model')}\n\n"
-                "Fix credentials in .env, restart the API, then Refresh API status."
-            )
-    except ApiError as exc:
-        return _err(f"Cannot reach API: {exc}")
-
-    template_path = _resolve_gradio_path(template_file)
-    if not template_path:
-        return _err("Upload a Word .docx template.")
-    if not template_path.lower().endswith(".docx"):
-        return _err("Template must be a .docx file.")
-
-    try:
-        data = _resolve_json_payload(json_file, json_text)
-    except json.JSONDecodeError as exc:
-        return _err(f"Invalid JSON: {exc}")
-    except ValueError as exc:
-        return _err(str(exc))
-
-    try:
-        accepted = create_document_job(
-            template_path,
-            data,
-            skip_validation=skip_validation,
+    rows: list[str] = []
+    for event in stages:
+        stage = str(event.get("stage") or "")
+        msg = str(event.get("message") or stage)
+        ev_pct = event.get("progress")
+        pct_s = f"{float(ev_pct) * 100:.0f}%" if isinstance(ev_pct, (int, float)) else ""
+        err = event.get("error")
+        color = (
+            "#FF9A9A"
+            if stage == "failed"
+            else "#9EF0B8"
+            if stage == "completed"
+            else "#CFCFCF"
         )
-        job_id = accepted["job_id"]
-        status = wait_for_job(job_id)
-    except ApiError as exc:
-        return _err(f"API error: {exc}")
-    except Exception as exc:  # noqa: BLE001
-        return _err(f"Error: {exc}")
+        detail = f" — {_html_esc(err)}" if err else ""
+        rows.append(
+            "<tr>"
+            f"<td style='padding:0.3rem 0.5rem;color:{color}'><code>{_html_esc(stage)}</code></td>"
+            f"<td style='padding:0.3rem 0.5rem'>{_html_esc(msg)}{detail}</td>"
+            f"<td style='padding:0.3rem 0.5rem;opacity:0.8'>{_html_esc(pct_s)}</td>"
+            "</tr>"
+        )
+    return f"""
+<section style="margin:0.75rem 0 0 0">
+  <h4 style="margin:0 0 0.4rem 0">Pipeline stages</h4>
+  <table style="width:100%;border-collapse:collapse;font-size:0.92rem">
+    <thead>
+      <tr>
+        <th style="text-align:left;padding:0.3rem 0.5rem;border-bottom:1px solid #3a3a3a">Stage</th>
+        <th style="text-align:left;padding:0.3rem 0.5rem;border-bottom:1px solid #3a3a3a">Message</th>
+        <th style="text-align:left;padding:0.3rem 0.5rem;border-bottom:1px solid #3a3a3a">%</th>
+      </tr>
+    </thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table>
+</section>
+"""
 
-    if status.get("status") != "completed":
-        err = status.get("error_message") or "Unknown failure"
-        return _err(f"Job {job_id} failed.\n\n{err}")
 
-    out_name = Path(status.get("output_path") or "").name
-    if not out_name.endswith(".docx"):
-        from document_processing_agenticflow.services.naming import build_contract_output_filename
+def _progress_html(job_id: str, stages: list[dict], *, working: bool = True) -> str:
+    """Current status loader + unique WebSocket stage list."""
+    latest = stages[-1] if stages else {}
+    latest_stage = str(latest.get("stage") or "starting")
+    latest_msg = str(latest.get("message") or "Waiting for first pipeline stage…")
+    progress = latest.get("progress")
+    pct = float(progress) if isinstance(progress, (int, float)) else 0.05
+    pct = max(0.0, min(pct, 1.0))
+    pct_label = f"{pct * 100:.0f}%"
+    terminal = bool(latest.get("terminal") or latest_stage in {"completed", "failed"})
+    failed = latest_stage == "failed"
+    show_spinner = working and not terminal
 
-        out_name = build_contract_output_filename(job_id, template_path.name)
-    tmp = Path(tempfile.gettempdir()) / out_name
-    try:
-        download_job_output(job_id, tmp)
-    except ApiError as exc:
-        return _err(f"Generated but download failed: {exc}")
+    if failed:
+        status_title = "Job failed"
+        status_sub = _html_esc(latest.get("error") or latest_msg)
+    elif terminal:
+        status_title = "Job completed"
+        status_sub = "Building final report…"
+    else:
+        status_title = f"In progress — {_html_esc(latest_msg)}"
+        status_sub = (
+            f"Stage <code>{_html_esc(latest_stage)}</code> · {_html_esc(pct_label)}"
+        )
 
+    spinner = (
+        '<div class="docflow-spinner" aria-hidden="true"></div>' if show_spinner else ""
+    )
+    bar_color = "#FF9A9A" if failed else "#9EF0B8" if terminal else None
+    bar_style = f"width:{pct * 100:.1f}%;"
+    if bar_color:
+        bar_style += f"background:{bar_color};"
+
+    return f"""
+{_SPINNER_CSS}
+<div style="line-height:1.45">
+  <div class="docflow-loader">
+    {spinner}
+    <div class="docflow-loader-text">
+      <div class="docflow-loader-title">{status_title}</div>
+      <div style="opacity:0.85;font-size:0.9rem;margin-top:0.15rem">{status_sub}</div>
+      <div style="opacity:0.7;font-size:0.85rem;margin-top:0.25rem">
+        Job <code>{_html_esc(job_id)}</code>
+      </div>
+    </div>
+  </div>
+  <div class="docflow-bar-wrap" title="{_html_esc(pct_label)}">
+    <div class="docflow-bar" style="{bar_style}"></div>
+  </div>
+  {_stages_table_html(stages)}
+</div>
+"""
+
+
+def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | None = None) -> str:
     conf = status.get("confidence") or {}
     pct = status.get("scores_pct") or conf.get("scores_pct") or {}
     validation = status.get("validation") or {}
@@ -386,13 +512,7 @@ def ui_generate_document(
         return f"{float(val):.1f}%"
 
     def _esc(value: object) -> str:
-        return (
-            str(value)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-        )
+        return _html_esc(value)
 
     def _table(title: str, headers: list[str], rows: list[list[str]]) -> str:
         head = "".join(
@@ -429,8 +549,8 @@ def ui_generate_document(
         return (
             f'<span style="display:inline-flex;align-items:center;gap:0.4rem">'
             f'<span style="width:0.55rem;height:0.55rem;border-radius:50%;'
-            f"background:{color};display:inline-block\"></span>"
-            f"<span style=\"color:{color}\">{label}</span></span>"
+            f'background:{color};display:inline-block"></span>'
+            f'<span style="color:{color}">{label}</span></span>'
         )
 
     sections = [
@@ -443,6 +563,7 @@ def ui_generate_document(
                 ["Status", "<strong>completed</strong>"],
             ],
         ),
+        _stages_table_html(stages or []),
         _table(
             "LLMs",
             ["Role", "Status"],
@@ -568,12 +689,121 @@ def ui_generate_document(
         )
     )
 
-    report = (
+    return (
         '<div style="font-size:0.95rem;line-height:1.4">'
         + "".join(sections)
         + "</div>"
     )
-    return report, str(tmp)
+
+
+def ui_generate_document(
+    template_file: object | None,
+    json_file: object | None,
+    json_text: str,
+    skip_validation: bool,
+):
+    """Generator: live WebSocket stages, then final report + download path."""
+
+    def _err(msg: str):
+        safe = _html_esc(msg).replace("\n", "<br>")
+        yield f'<div style="color:#FFC4C4;line-height:1.45">{safe}</div>', None
+
+    # Immediate feedback so the UI is never blank while validating/uploading.
+    yield _loading_html("Checking API and preparing upload…"), None
+
+    try:
+        health = check_health()
+        if not health.get("mapper_available"):
+            yield from _err(
+                "Mapper LLM is NOT available — document generation requires LLM #1 "
+                "(rules fallback is disabled).\n\n"
+                f"Configured: {health.get('mapper_provider')}/{health.get('mapper_model')}\n\n"
+                "Fix credentials in .env, restart the API, then Refresh API status."
+            )
+            return
+    except ApiError as exc:
+        yield from _err(f"Cannot reach API: {exc}")
+        return
+
+    template_path = _resolve_gradio_path(template_file)
+    if not template_path:
+        yield from _err("Upload a Word .docx template.")
+        return
+    if not template_path.lower().endswith(".docx"):
+        yield from _err("Template must be a .docx file.")
+        return
+
+    try:
+        data = _resolve_json_payload(json_file, json_text)
+    except json.JSONDecodeError as exc:
+        yield from _err(f"Invalid JSON: {exc}")
+        return
+    except ValueError as exc:
+        yield from _err(str(exc))
+        return
+
+    yield _loading_html("Uploading template + JSON and starting job…"), None
+
+    try:
+        accepted = create_document_job(
+            template_path,
+            data,
+            skip_validation=skip_validation,
+        )
+        job_id = accepted["job_id"]
+        ws_url = accepted.get("ws_url")
+        stages: list[dict] = []
+        yield _progress_html(job_id, stages), None
+
+        from document_processing_agenticflow.ui.api_client import (
+            get_job_status,
+            iter_job_progress,
+        )
+
+        try:
+            for event in iter_job_progress(job_id, timeout=180.0, ws_url=ws_url):
+                stages = _append_ws_stage(stages, event)
+                yield _progress_html(job_id, stages), None
+                if event.get("terminal") or event.get("stage") in {"completed", "failed"}:
+                    break
+            status = get_job_status(job_id)
+        except Exception:
+            yield _loading_html(
+                "WebSocket unavailable — waiting with long-poll (still working)…"
+            ), None
+            status = wait_for_job(job_id, timeout=180.0, ws_url=ws_url)
+            for event in status.get("stages") or []:
+                stages = _append_ws_stage(stages, event)
+            yield _progress_html(job_id, stages), None
+    except ApiError as exc:
+        yield from _err(f"API error: {exc}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        yield from _err(f"Error: {exc}")
+        return
+
+    if status.get("status") != "completed":
+        err = status.get("error_message") or "Unknown failure"
+        yield from _err(f"Job {job_id} failed.\n\n{err}")
+        return
+
+    yield _progress_html(job_id, stages, working=True), None
+    yield _loading_html("Downloading generated document…"), None
+
+    out_name = Path(status.get("output_path") or "").name
+    if not out_name.endswith(".docx"):
+        from document_processing_agenticflow.services.naming import build_contract_output_filename
+
+        out_name = build_contract_output_filename(job_id, template_path.name)
+    tmp = Path(tempfile.gettempdir()) / out_name
+    try:
+        download_job_output(job_id, tmp)
+    except ApiError as exc:
+        yield from _err(f"Generated but download failed: {exc}")
+        return
+
+    yield _build_completed_job_report(job_id, status, stages), str(tmp)
+
 
 
 def ui_health() -> str:
@@ -859,7 +1089,8 @@ def build_ui() -> gr.Blocks:
         with gr.Tab("Generate Document"):
             gr.Markdown(
                 f"**Upload** a `.docx` template and **upload or paste** JSON data. "
-                f"Job runs on `{cfg.api_base_url}/api/v1/documents/jobs`."
+                f"Job runs on `{cfg.api_base_url}/api/v1/documents/jobs` "
+                "(WebSocket live stages on `/ws`)."
             )
             with gr.Row():
                 with gr.Column():
@@ -884,7 +1115,16 @@ def build_ui() -> gr.Blocks:
                     skip_validation = gr.Checkbox(label="Skip LLM #2 validation", value=False)
                     generate_btn = gr.Button("Generate document", variant="primary")
                 with gr.Column():
-                    job_report = gr.HTML(label="Job result")
+                    job_report = gr.HTML(
+                        label="Job result",
+                        value=(
+                            '<div style="opacity:0.75;line-height:1.4">'
+                            "Upload a template + JSON, then click "
+                            "<strong>Generate document</strong>. "
+                            "A spinner and live stages will appear here while the job runs."
+                            "</div>"
+                        ),
+                    )
                     output_file = gr.File(
                         label="Download generated .docx",
                         type="filepath",
@@ -895,6 +1135,7 @@ def build_ui() -> gr.Blocks:
                 fn=ui_generate_document,
                 inputs=[template_upload, json_file_upload, json_input, skip_validation],
                 outputs=[job_report, output_file],
+                show_progress="full",
             )
 
         # ------------------------------------------------------------------ Voice chat (2nd)

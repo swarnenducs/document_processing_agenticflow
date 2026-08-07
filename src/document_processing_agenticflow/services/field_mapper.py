@@ -205,11 +205,13 @@ def _llm_mapping(
         result: _LLMMappingPayload = traced_invoke(
             chain,
             {
-                "placeholders_json": json.dumps(template.placeholders, indent=2),
-                "occurrences_json": json.dumps(occurrences, indent=2)[:8000],
-                "tables_json": json.dumps(tables, indent=2)[:6000],
-                "blocks_json": json.dumps(block_summaries, indent=2)[:10000],
-                "data_json": json.dumps(data, indent=2)[:12000],
+                "placeholders_json": json.dumps(
+                    template.placeholders, separators=(",", ":")
+                )[:3000],
+                "occurrences_json": json.dumps(occurrences, separators=(",", ":"))[:5000],
+                "tables_json": json.dumps(tables, separators=(",", ":"))[:4000],
+                "blocks_json": json.dumps(block_summaries, separators=(",", ":"))[:6000],
+                "data_json": json.dumps(data, separators=(",", ":"), default=str)[:8000],
             },
             role="mapper",
             provider=config.provider,

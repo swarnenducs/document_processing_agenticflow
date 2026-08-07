@@ -54,7 +54,18 @@ def _find_leftovers(text: str) -> list[str]:
     return found
 
 
-def _key_value_snippets(generated_text: str, mapping: MappingResult, *, limit: int = 4000) -> str:
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 24)] + f"\n...<truncated:{len(text)}>"
+
+
+def _dumps_compact(obj: Any, limit: int) -> str:
+    """Minify JSON so Groq TPM budgets are not wasted on whitespace."""
+    return _clip(json.dumps(obj, separators=(",", ":"), default=str), limit)
+
+
+def _key_value_snippets(generated_text: str, mapping: MappingResult, *, limit: int = 1500) -> str:
     """Pull short windows around mapped values so truncation does not hide fills."""
     snippets: list[str] = []
     seen: set[str] = set()
@@ -64,11 +75,11 @@ def _key_value_snippets(generated_text: str, mapping: MappingResult, *, limit: i
             continue
         idx = generated_text.find(value)
         if idx < 0:
-            snippets.append(f"[MISSING mapped value for {item.placeholder!r}: {value!r}]")
+            snippets.append(f"[MISSING {item.placeholder!r}: {value!r}]")
             seen.add(value)
             continue
-        start = max(0, idx - 80)
-        end = min(len(generated_text), idx + len(value) + 120)
+        start = max(0, idx - 40)
+        end = min(len(generated_text), idx + len(value) + 60)
         window = generated_text[start:end].replace("\n", " ")
         snippets.append(f"- {item.placeholder}={value!r}: …{window}…")
         seen.add(value)
@@ -79,7 +90,7 @@ def _key_value_snippets(generated_text: str, mapping: MappingResult, *, limit: i
         idx = generated_text.find(marker)
         if idx < 0:
             continue
-        window = generated_text[idx : idx + 280].replace("\n", " ")
+        window = generated_text[idx : idx + 160].replace("\n", " ")
         snippets.append(f"- section {marker}: …{window}…")
     return "\n".join(snippets)[:limit] if snippets else "(no snippets)"
 
@@ -128,15 +139,23 @@ def _llm_validation(
     except (ImportError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Failed to build validator LLM: {exc}") from exc
 
-    template_text = "\n".join(b.text for b in template.blocks if b.text.strip())
+    # Prefer placeholder-bearing blocks; keep total prompt small for Groq TPM (~8k).
+    placeholder_blocks = [
+        b.text.strip()
+        for b in template.blocks
+        if b.text.strip() and (b.placeholder_keys or "<" in b.text or "XX%" in b.text or "X%" in b.text)
+    ]
+    template_text = "\n".join(placeholder_blocks) or "\n".join(
+        b.text for b in template.blocks if b.text.strip()
+    )
     generated_text = _docx_plain_text(generated_path)
     leftovers = _find_leftovers(generated_text)
     mapping_summary = [
         {
-            "placeholder": m.placeholder,
-            "json_path": m.json_path,
-            "value": m.value,
-            "confidence": m.confidence,
+            "p": m.placeholder,
+            "path": m.json_path,
+            "v": m.value,
+            "c": round(float(m.confidence), 3),
         }
         for m in mapping.mappings
     ]
@@ -146,13 +165,15 @@ def _llm_validation(
         result: _LLMValidationPayload = traced_invoke(
             chain,
             {
-                "template_text": template_text[:8000],
-                "generated_text": generated_text[:8000],
-                "key_snippets": _key_value_snippets(generated_text, mapping),
-                "data_json": json.dumps(json_data, indent=2)[:8000],
-                "mappings_json": json.dumps(mapping_summary, indent=2)[:8000],
-                "unmapped_placeholders_json": json.dumps(mapping.unmapped_placeholders),
-                "leftovers_json": json.dumps(leftovers),
+                "template_text": _clip(template_text, 1200),
+                "generated_text": _clip(generated_text, 1200),
+                "key_snippets": _key_value_snippets(generated_text, mapping, limit=1500),
+                "data_json": _dumps_compact(json_data, 2000),
+                "mappings_json": _dumps_compact(mapping_summary, 2000),
+                "unmapped_placeholders_json": _dumps_compact(
+                    mapping.unmapped_placeholders, 500
+                ),
+                "leftovers_json": _dumps_compact(leftovers, 500),
             },
             role="validator",
             provider=config.provider,

@@ -129,6 +129,25 @@ def invoke_document_graph(
             "mapper_model_id": "groq:openai/gpt-oss-120b",
         }})
     """
+    final = None
+    for snapshot in stream_document_graph(
+        state,
+        config=config,
+        mapper_model_id=mapper_model_id,
+        validator_model_id=validator_model_id,
+    ):
+        final = snapshot
+    return final
+
+
+def stream_document_graph(
+    state: DocumentProcessingState | dict,
+    *,
+    config: dict | None = None,
+    mapper_model_id: str | None = None,
+    validator_model_id: str | None = None,
+):
+    """Yield full graph state after each node (for live progress / WebSockets)."""
     from document_processing_agenticflow.services.llm_factory import (
         bind_model_overrides_from_config,
         reset_role_model_overrides,
@@ -151,7 +170,6 @@ def invoke_document_graph(
         run_config["configurable"] = configurable
 
     tokens = bind_model_overrides_from_config(run_config)
-    # Also bind explicit kwargs even when config was empty
     if mapper_model_id or validator_model_id:
         reset_role_model_overrides(tokens)
         tokens = set_role_model_overrides(
@@ -159,7 +177,10 @@ def invoke_document_graph(
             validator_model_id=validator_model_id or configurable.get("validator_model_id"),
         )
     try:
-        return build_graph().invoke(payload, config=run_config or None)
+        for snapshot in build_graph().stream(
+            payload, config=run_config or None, stream_mode="values"
+        ):
+            yield snapshot
     finally:
         reset_role_model_overrides(tokens)
 
