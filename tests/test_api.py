@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from document_processing_agenticflow.api.main import create_app
-from document_processing_agenticflow.core.settings import get_settings
-from document_processing_agenticflow.storage.job_store import JobStore
+from ip_api.api.main import create_app
+from ip_api.core.settings import get_settings
+from ip_api.storage.job_store import JobStore
 from scripts.create_sample_template import build_sample_template
 
 
@@ -24,8 +24,8 @@ def api_client(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
-    import document_processing_agenticflow.api.routes as routes_mod
-    import document_processing_agenticflow.core.settings as settings_mod
+    import ip_api.api.routes as routes_mod
+    import ip_api.core.settings as settings_mod
 
     settings_mod._settings = None
     routes_mod._store = None
@@ -132,7 +132,7 @@ def test_job_store_paths(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "custom_storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "custom.db"))
 
-    import document_processing_agenticflow.core.settings as settings_mod
+    import ip_api.core.settings as settings_mod
 
     settings_mod._settings = None
     cfg = get_settings()

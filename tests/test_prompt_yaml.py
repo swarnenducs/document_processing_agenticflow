@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from document_processing_agenticflow.services.prompts.loader import (
+from document_processing_mcp.services.prompts.loader import (
     chat_prompt_from_yaml,
     load_prompt_yaml,
     prompts_dir,

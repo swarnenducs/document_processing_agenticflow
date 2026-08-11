@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from document_processing_agenticflow.services.voice_contract_workflow import (
+from voice_enable_mcp.services.voice_contract_workflow import (
     confirm_voice_contract,
     extract_legal_entity_and_reference,
     normalize_contract_ref,
     run_voice_contract_workflow,
 )
-from document_processing_agenticflow.storage.job_store import JobStore
+from voice_enable_mcp.storage.job_store import JobStore
 
 
 def test_extract_flexible_prompt_without_with_and_spaced_ref() -> None:
@@ -24,7 +24,7 @@ def test_extract_flexible_prompt_without_with_and_spaced_ref() -> None:
 def test_irrelevant_instruction_returns_ask_relevant_service(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
-    import document_processing_agenticflow.core.settings as settings_mod
+    import voice_enable_mcp.core.settings as settings_mod
 
     settings_mod._settings = None
     result = run_voice_contract_workflow("What is the weather today?", store=JobStore())
@@ -37,7 +37,7 @@ def test_irrelevant_instruction_returns_ask_relevant_service(tmp_path: Path, mon
 def test_create_contract_needs_human_confirmation(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
-    import document_processing_agenticflow.core.settings as settings_mod
+    import voice_enable_mcp.core.settings as settings_mod
 
     settings_mod._settings = None
     store = JobStore()
@@ -57,7 +57,7 @@ def test_create_contract_needs_human_confirmation(tmp_path: Path, monkeypatch) -
 def test_langgraph_interrupt_resume_creates_contract(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
-    import document_processing_agenticflow.core.settings as settings_mod
+    import voice_enable_mcp.core.settings as settings_mod
 
     settings_mod._settings = None
     store = JobStore()
@@ -90,7 +90,7 @@ def test_confirm_creates_text_and_docx(tmp_path: Path, monkeypatch) -> None:
     """Compatibility path without thread_id (direct finalize)."""
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
-    import document_processing_agenticflow.core.settings as settings_mod
+    import voice_enable_mcp.core.settings as settings_mod
 
     settings_mod._settings = None
     store = JobStore()
@@ -112,7 +112,7 @@ def test_confirm_creates_text_and_docx(tmp_path: Path, monkeypatch) -> None:
 def test_unknown_entity_rejected(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
-    import document_processing_agenticflow.core.settings as settings_mod
+    import voice_enable_mcp.core.settings as settings_mod
 
     settings_mod._settings = None
     result = run_voice_contract_workflow(

@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from document_processing_agenticflow.api.main import create_app
-from document_processing_agenticflow.services.job_events import JobEventHub
+from ip_api.api.main import create_app
+from ip_api.services.job_events import JobEventHub
 from scripts.create_sample_template import build_sample_template
 
 
@@ -24,8 +24,8 @@ def api_client(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
-    import document_processing_agenticflow.api.routes as routes_mod
-    import document_processing_agenticflow.core.settings as settings_mod
+    import ip_api.api.routes as routes_mod
+    import ip_api.core.settings as settings_mod
 
     settings_mod._settings = None
     routes_mod._store = None

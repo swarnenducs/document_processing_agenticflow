@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from document_processing_agenticflow.graph import build_graph
-from document_processing_agenticflow.models.schemas import FieldMapping, MappingResult
-from document_processing_agenticflow.services.confidence import build_confidence_report, enrich_mapping_scores
-from document_processing_agenticflow.services.document_generator import generate_styled_document
-from document_processing_agenticflow.services.field_mapper import map_json_to_template
-from document_processing_agenticflow.services.style_extractor import extract_word_styles
-from document_processing_agenticflow.tools import get_document_tools
+from document_processing_mcp.graph import build_graph
+from document_processing_mcp.models.schemas import FieldMapping, MappingResult
+from document_processing_mcp.services.confidence import build_confidence_report, enrich_mapping_scores
+from document_processing_mcp.services.document_generator import generate_styled_document
+from document_processing_mcp.services.field_mapper import map_json_to_template
+from document_processing_mcp.services.style_extractor import extract_word_styles
+from document_processing_mcp.tools import get_document_tools
 from scripts.create_sample_template import build_sample_template
 
 

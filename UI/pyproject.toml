@@ -1,0 +1,19 @@
+[project]
+name = "ui-app"
+version = "0.1.0"
+description = "Gradio UI (self-contained; talks to ip_api over HTTP)"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.28.0",
+    "pyyaml>=6.0.0",
+    "gradio>=5.0.0",
+]
+
+[project.scripts]
+doc-ui = "ui_app.ui.gradio_app:main"
+
+[build-system]
+requires = ["uv_build>=0.9.3,<0.10.0"]
+build-backend = "uv_build"
