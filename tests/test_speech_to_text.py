@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from document_processing_agenticflow.services.speech_to_text import resolve_speech_provider
+from voice_enable_mcp.services.speech_to_text import resolve_speech_provider
 
 
 def _clear_speech_env(monkeypatch) -> None:

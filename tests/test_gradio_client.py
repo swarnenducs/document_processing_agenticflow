@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from document_processing_agenticflow.ui.api_client import ApiError, transcribe_audio_file
-from document_processing_agenticflow.ui.gradio_app import (
+from ui_app.ui.api_client import ApiError, transcribe_audio_file
+from ui_app.ui.gradio_app import (
     _resolve_gradio_path,
     _resolve_json_payload,
 )
@@ -65,7 +65,7 @@ def test_transcribe_audio_file_success(tmp_path: Path) -> None:
     mock_client.__exit__ = MagicMock(return_value=False)
     mock_client.post.return_value = mock_resp
 
-    with patch("document_processing_agenticflow.ui.api_client.httpx.Client", return_value=mock_client):
+    with patch("ui_app.ui.api_client.httpx.Client", return_value=mock_client):
         result = transcribe_audio_file(audio, language="en")
 
     assert result["text"] == "Hello world"

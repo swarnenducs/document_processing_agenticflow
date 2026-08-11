@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from document_processing_agenticflow.services.llm_factory import (
+from document_processing_mcp.services.llm_factory import (
     agent_config,
     config_model_id,
     list_llm_providers,
@@ -125,7 +125,7 @@ def test_role_scoped_overrides(monkeypatch) -> None:
 
 
 def test_is_mapper_available_openai(monkeypatch) -> None:
-    from document_processing_agenticflow.services.llm_factory import is_mapper_available
+    from document_processing_mcp.services.llm_factory import is_mapper_available
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("MAPPER_PROVIDER", "openai")
@@ -137,7 +137,7 @@ def test_is_mapper_available_openai(monkeypatch) -> None:
 
 
 def test_is_mapper_available_azure(monkeypatch) -> None:
-    from document_processing_agenticflow.services.llm_factory import is_mapper_available
+    from document_processing_mcp.services.llm_factory import is_mapper_available
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("MAPPER_PROVIDER", "azure_openai")
@@ -153,7 +153,7 @@ def test_is_mapper_available_azure(monkeypatch) -> None:
 
 
 def test_azure_placeholder_endpoint_not_available(monkeypatch) -> None:
-    from document_processing_agenticflow.services.llm_factory import is_mapper_available
+    from document_processing_mcp.services.llm_factory import is_mapper_available
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("MAPPER_PROVIDER", "azure_openai")
@@ -165,7 +165,7 @@ def test_azure_placeholder_endpoint_not_available(monkeypatch) -> None:
 
 
 def test_is_validator_available_groq(monkeypatch) -> None:
-    from document_processing_agenticflow.services.llm_factory import is_validator_available
+    from document_processing_mcp.services.llm_factory import is_validator_available
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("VALIDATOR_PROVIDER", "groq")
@@ -177,7 +177,7 @@ def test_is_validator_available_groq(monkeypatch) -> None:
 
 
 def test_register_custom_provider(monkeypatch) -> None:
-    from document_processing_agenticflow.services.llm_factory import (
+    from document_processing_mcp.services.llm_factory import (
         get_mapper_llm,
         is_mapper_available,
     )
@@ -223,7 +223,7 @@ def test_get_mapper_llm_uses_init_chat_model(monkeypatch) -> None:
     """Built-in providers are constructed through LangChain init_chat_model."""
     from langchain_openai import ChatOpenAI
 
-    from document_processing_agenticflow.services.llm_factory import get_mapper_llm
+    from document_processing_mcp.services.llm_factory import get_mapper_llm
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("MAPPER_PROVIDER", "openai")
@@ -237,7 +237,7 @@ def test_get_mapper_llm_uses_init_chat_model(monkeypatch) -> None:
 def test_get_mapper_llm_azure_classic_via_init(monkeypatch) -> None:
     from langchain_openai import AzureChatOpenAI
 
-    from document_processing_agenticflow.services.llm_factory import get_mapper_llm
+    from document_processing_mcp.services.llm_factory import get_mapper_llm
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("MAPPER_PROVIDER", "azure_openai")
@@ -253,7 +253,7 @@ def test_get_mapper_llm_azure_classic_via_init(monkeypatch) -> None:
 def test_get_mapper_llm_foundry_uses_openai_compatible_init(monkeypatch) -> None:
     from langchain_openai import ChatOpenAI
 
-    from document_processing_agenticflow.services.llm_factory import get_mapper_llm
+    from document_processing_mcp.services.llm_factory import get_mapper_llm
 
     _clear_model_ids(monkeypatch)
     monkeypatch.setenv("MAPPER_PROVIDER", "azure_openai")

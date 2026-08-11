@@ -23,3 +23,4 @@ samples/output/*
 /data/
 .DS_Store
 *.tmp
+_legacy/

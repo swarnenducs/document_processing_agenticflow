@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from document_processing_agenticflow.mcp.client import MCPAgentClient, tool_result_payload
-from document_processing_agenticflow.mcp.document_process_mcp import DocumentProcessMCP
-from document_processing_agenticflow.mcp.voice_process_mcp import VoiceProcessMCP
+from ip_api.mcp_client import MCPAgentClient, tool_result_payload
+from document_processing_mcp.server import DocumentProcessMCP
+from voice_enable_mcp.server import VoiceProcessMCP
 
 
 def test_document_mcp_lists_tools() -> None:
@@ -68,7 +68,7 @@ def test_tool_result_payload_prefers_data() -> None:
 
 
 def test_fastapi_exposes_agent_routes() -> None:
-    from document_processing_agenticflow.api.main import create_app
+    from ip_api.api.main import create_app
 
     paths = set(create_app().openapi()["paths"])
     assert "/api/v1/agents/health" in paths

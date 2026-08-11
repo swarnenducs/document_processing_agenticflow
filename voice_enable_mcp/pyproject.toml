@@ -1,0 +1,26 @@
+[project]
+name = "voice-enable-mcp"
+version = "0.1.0"
+description = "Voice/contract LangGraph FastMCP (self-contained; own prompts/)"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "typing-extensions>=4.0.0",
+    "pyyaml>=6.0.0",
+    "httpx>=0.28.0",
+    "langchain-core>=0.3.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-groq>=0.3.0",
+    "langgraph>=0.4.0",
+    "fastmcp>=3.4.6",
+]
+
+[project.scripts]
+voice-process-mcp = "voice_enable_mcp.server:main"
+doc-mcp-voice = "voice_enable_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.9.3,<0.10.0"]
+build-backend = "uv_build"

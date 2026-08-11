@@ -9,7 +9,8 @@ Gradio UI ──► FastAPI (:8000)
                  │
                  ├── /api/v1/documents/*     (direct pipeline / jobs)
                  ├── /api/v1/voice/*         (direct voice workflow)
-                 └── /api/v1/agents/*        (proxies to FastMCP tools)
+                 ├── /api/v1/agents/*        (proxies to FastMCP tools)
+                 └── /api/ask ──► MAF (:8003) ──► MCP tools
                           │
           ┌───────────────┴────────────────┐
           ▼                                ▼
@@ -18,31 +19,28 @@ Gradio UI ──► FastAPI (:8000)
  (health, generate_document)        (health, start/confirm/list)
 ```
 
-## Modules
+See [MAF_LOCAL.md](MAF_LOCAL.md) and [COMPONENTS.md](COMPONENTS.md).
 
-- [`mcp/base.py`](src/document_processing_agenticflow/mcp/base.py) — `BaseAgentMCPServer(FastMCP)`
-- [`mcp/document_process_mcp.py`](src/document_processing_agenticflow/mcp/document_process_mcp.py) — **`document_process_mcp`**
-- [`mcp/voice_process_mcp.py`](src/document_processing_agenticflow/mcp/voice_process_mcp.py) — **`voice_process_mcp`**
-- [`mcp/client.py`](src/document_processing_agenticflow/mcp/client.py) — FastAPI client helper
-
-## Run ALL services
+## Run ALL components
 
 ```bash
-python run_both.py
+python run_all_components.py
 # or
-uv run doc-app
+uv run doc-all
+# deprecated alias:
+python run_both.py
 ```
 
-Starts: FastAPI + Gradio + `document_process_mcp` + `voice_process_mcp`.
+Starts: FastAPI + Gradio + MAF + `document_process_mcp` + `voice_process_mcp`.
 
 Useful flags:
 
 ```bash
-python run_both.py --mcp-only                 # only MCP agents (HTTP)
-python run_both.py --mcp-only --mcp-http      # explicit HTTP mode
-python run_both.py --mcp-transport http       # same; default for run_both
-python run_both.py --no-mcp                   # API + UI only
-python run_both.py --api-only
+python run_all_components.py --mcp-only
+python run_all_components.py --maf-only
+python run_all_components.py --api-only
+python run_all_components.py --no-maf
+python run_all_components.py --no-mcp
 ```
 
 Standalone (separate processes, HTTP):
@@ -50,6 +48,9 @@ Standalone (separate processes, HTTP):
 ```bash
 uv run document-process-mcp --transport http --port 8001
 uv run voice-process-mcp --transport http --port 8002
+uv run doc-maf   # :8003
+uv run doc-api   # :8000
+uv run doc-ui    # :7860
 ```
 
 ## FastAPI → MCP examples
@@ -66,4 +67,4 @@ curl -s http://127.0.0.1:8000/api/v1/agents/voice/contract \
   -d '{"transcript":"please create contract with legal entity AVC contract reference number CR 1001"}'
 ```
 
-Env: `DOCUMENT_MCP_URL`, `VOICE_MCP_URL` (see `.env.example`).
+Env: `DOCUMENT_MCP_URL`, `VOICE_MCP_URL`, `MAF_BASE_URL` (see `.env.example`).

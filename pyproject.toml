@@ -1,46 +1,19 @@
 [project]
 name = "document-processing-agenticflow"
-version = "0.1.0"
-description = "LangGraph agentic flow for Word template style extraction, JSON-to-field mapping, and styled document generation"
+version = "0.2.0"
+description = "Monorepo: self-contained UI, ip_api, document/voice MCPs, central-agentic-flow (MAF)"
 readme = "README.md"
-authors = [
-    { name = "swarnenduchatterjee", email = "swarnendu.chatterjee@traydstream.com" }
-]
 requires-python = ">=3.11"
+# Local workspace members only — NOT published to PyPI.
+# uv resolves them via [tool.uv.sources] below.
+# Plain pip cannot resolve these names: use requirements-workspace.txt instead.
 dependencies = [
-    "langgraph>=0.4.0",
-    "langchain>=0.3.0",
-    "langchain-openai>=0.3.0",
-    "langchain-groq>=0.3.0",
-    "langchain-core>=0.3.0",
-    "python-docx>=1.1.0",
-    "lxml>=5.0.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
-    "typing-extensions>=4.0.0",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "python-multipart>=0.0.12",
-    "httpx>=0.28.0",
-    "websockets>=15.0.0",
-    "gradio>=5.0.0",
-    "pyyaml>=6.0.0",
-    "fastmcp>=3.4.6",
+    "document-processing-mcp",
+    "voice-enable-mcp",
+    "central-agentic-flow",
+    "ip-api",
+    "ui-app",
 ]
-
-[project.scripts]
-doc-agent = "document_processing_agenticflow.cli:main"
-doc-api = "document_processing_agenticflow.api.server:main"
-doc-ui = "document_processing_agenticflow.ui.gradio_app:main"
-doc-app = "document_processing_agenticflow.run_app:main"
-doc-mcp-document = "document_processing_agenticflow.mcp.document_process_mcp:main"
-doc-mcp-voice = "document_processing_agenticflow.mcp.voice_process_mcp:main"
-document-process-mcp = "document_processing_agenticflow.mcp.document_process_mcp:main"
-voice-process-mcp = "document_processing_agenticflow.mcp.voice_process_mcp:main"
-
-[build-system]
-requires = ["uv_build>=0.9.3,<0.10.0"]
-build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
@@ -48,10 +21,37 @@ dev = [
     "ruff>=0.9.0",
 ]
 
+[tool.uv]
+package = false
+default-groups = ["dev"]
+
+[tool.uv.workspace]
+members = [
+    "document-processing-mcp",
+    "voice_enable_mcp",
+    "central-agentic-flow",
+    "ip_api",
+    "UI",
+]
+
+[tool.uv.sources]
+document-processing-mcp = { workspace = true }
+voice-enable-mcp = { workspace = true }
+central-agentic-flow = { workspace = true }
+ip-api = { workspace = true }
+ui-app = { workspace = true }
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "."]
+pythonpath = [
+    "document-processing-mcp/src",
+    "voice_enable_mcp/src",
+    "central-agentic-flow/src",
+    "ip_api/src",
+    "UI/src",
+    ".",
+]
