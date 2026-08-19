@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -53,8 +53,9 @@ _ENTITY_REF_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 
-@dataclass
-class VoiceContractResult:
+class VoiceContractResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     ok: bool
     message: str
     intent: str | None = None
@@ -63,7 +64,7 @@ class VoiceContractResult:
     contract_reference_number: str | None = None
     legal_entity: dict[str, Any] | None = None
     pricelist: dict[str, Any] | None = None
-    candidates: list[dict[str, Any]] = field(default_factory=list)
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
     contract_payload: dict[str, Any] | None = None
     contract_file: str | None = None
     contract_text_file: str | None = None
@@ -76,7 +77,7 @@ class VoiceContractResult:
     contact: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return self.model_dump(mode="json")
 
 
 def _normalize(value: str) -> str:

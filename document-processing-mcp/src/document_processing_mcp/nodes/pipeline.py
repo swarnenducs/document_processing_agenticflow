@@ -16,6 +16,9 @@ from document_processing_mcp.services.style_extractor import extract_word_styles
 
 def load_data_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """Load JSON payload that will be mapped onto the Word template."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("load_data_node", data_path=state.get("data_path"))
     errors = list(state.get("errors") or [])
     data_path = state.get("data_path")
     if not data_path:
@@ -47,6 +50,9 @@ def load_data_node(state: DocumentProcessingState) -> DocumentProcessingState:
 
 def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """Step 1 — extract Word XML styles and placeholders from the template."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("extract_styles_node", template_path=state.get("template_path"))
     errors = list(state.get("errors") or [])
     if state.get("status") == "failed":
         return state
@@ -72,6 +78,9 @@ def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingSta
 
 def validate_extraction_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """LLM critic of extracted Word XML / placeholders (confidence on extraction)."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("validate_extraction_node", skip=state.get("skip_extraction_validation"))
     errors = list(state.get("errors") or [])
     if state.get("status") == "failed":
         return state
@@ -107,6 +116,9 @@ def validate_extraction_node(state: DocumentProcessingState) -> DocumentProcessi
 
 def map_fields_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """Step 2 — map JSON data onto template placeholders (LLM #1 required)."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("map_fields_node", retry_count=state.get("retry_count"))
     errors = list(state.get("errors") or [])
     if state.get("status") == "failed":
         return state
@@ -137,6 +149,9 @@ def map_fields_node(state: DocumentProcessingState) -> DocumentProcessingState:
 
 def generate_document_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """Step 3 — generate a new .docx with mapped values and preserved styles."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("generate_document_node", output_path=state.get("output_path"))
     errors = list(state.get("errors") or [])
     if state.get("status") == "failed":
         return state
@@ -166,6 +181,9 @@ def generate_document_node(state: DocumentProcessingState) -> DocumentProcessing
 
 def validate_document_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """Step 4 — validate template vs generated doc vs JSON (LLM #2 + rules)."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("validate_document_node", skip=state.get("skip_validation"))
     errors = list(state.get("errors") or [])
     if state.get("status") == "failed":
         return state
@@ -222,6 +240,9 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
 
 def finalize_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """Mark pipeline complete and ensure confidence report exists."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("finalize_node", status=state.get("status"))
     errors = list(state.get("errors") or [])
     confidence = state.get("confidence")
     if confidence is None:

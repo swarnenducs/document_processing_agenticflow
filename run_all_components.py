@@ -63,11 +63,16 @@ def _reexec_in_venv_if_needed() -> None:
 def _bootstrap() -> None:
     os.chdir(ROOT)
     parts = [str(p) for p in SRC_ROOTS if p.is_dir()]
+    root = str(ROOT)
+    if root not in parts:
+        parts.append(root)
     existing = os.environ.get("PYTHONPATH", "")
     for p in existing.split(os.pathsep):
         if p and p not in parts:
             parts.append(p)
     os.environ["PYTHONPATH"] = os.pathsep.join(parts)
+    if root not in sys.path:
+        sys.path.insert(0, root)
     for p in reversed(SRC_ROOTS):
         s = str(p)
         if p.is_dir() and s not in sys.path:

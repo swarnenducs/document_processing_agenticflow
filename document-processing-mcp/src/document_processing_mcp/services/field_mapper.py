@@ -167,7 +167,7 @@ def _llm_mapping(
     *,
     model_id: str | None = None,
 ) -> MappingResult:
-    from document_processing_mcp.services.llm_factory import get_mapper_llm, is_mapper_available
+    from document_processing_mcp.services.llm_factory import MapperLLM, is_mapper_available
     from document_processing_mcp.services.prompts import build_mapper_chain
 
     if not is_mapper_available() and not model_id:
@@ -177,10 +177,8 @@ def _llm_mapping(
         )
 
     try:
-        llm, config = get_mapper_llm(
-            model_id=model_id,
-            structured_schema=_LLMMappingPayload,
-        )
+        mapper = MapperLLM(model_id=model_id, structured_schema=_LLMMappingPayload)
+        llm, config = mapper.as_tuple()
     except (ImportError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Failed to build mapper LLM: {exc}") from exc
 

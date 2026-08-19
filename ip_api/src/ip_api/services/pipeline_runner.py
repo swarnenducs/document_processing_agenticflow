@@ -1,17 +1,21 @@
-"""Run the LangGraph document pipeline for API/background jobs."""
+"""Run the document pipeline by calling document-processing-mcp with blob refs."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from ip_api.core.request_context import bind_xid, get_xid
-from document_processing_mcp.graph import stream_document_graph
+from ip_api.services import maf_client
 from ip_api.services.job_events import publish_job_stage
+from ip_api.storage.blob_store import is_blob_ref
 from ip_api.storage.job_store import JobStore
 
+logger = logging.getLogger(__name__)
 
-def run_document_job(
+
+async def run_document_job(
     job_id: str,
     *,
     skip_validation: bool = False,
@@ -20,13 +24,16 @@ def run_document_job(
     store: JobStore | None = None,
     xid: str | None = None,
 ) -> dict[str, Any]:
-    """Execute LangGraph pipeline for a job already registered in SQLite."""
+    """Call Document MCP for a job already registered (blob refs or local paths)."""
+    from ip_api.flow_debug import flow_breakpoint
+
+    flow_breakpoint("run_document_job", job_id=job_id, xid=xid)
     job_store = store or JobStore()
     job = job_store.get_job(job_id)
     corr = xid or job.xid or get_xid()
 
     with bind_xid(corr, job_id=job_id):
-        return _run_document_job_bound(
+        return await _run_document_job_bound(
             job_id,
             job=job,
             job_store=job_store,
@@ -36,7 +43,7 @@ def run_document_job(
         )
 
 
-def _run_document_job_bound(
+async def _run_document_job_bound(
     job_id: str,
     *,
     job: Any,
@@ -50,91 +57,144 @@ def _run_document_job_bound(
     publish_job_stage(job_id, "processing", xid=xid)
 
     try:
-        from ip_api.services.naming import build_contract_output_filename
-
-        fallback_name = build_contract_output_filename(
-            job_id, Path(job.template_path or "template.docx").name
-        )
-        result: dict[str, Any] | None = None
-        last_stage: str | None = None
-        for snapshot in stream_document_graph(
+        payload = await maf_client.invoke_tool(
+            "document",
+            "generate_document",
             {
                 "template_path": job.template_path,
                 "data_path": job.data_path,
-                "output_path": job.output_path
-                or str(job_store.cfg.job_dir(job_id) / fallback_name),
-                "errors": [],
-                "status": "started",
-                "retry_count": 0,
+                "output_path": job.output_path,
+                "job_id": job_id,
+                "xid": xid,
+                "skip_validation": skip_validation,
                 "max_retries": max_retries,
                 "validation_threshold": validation_threshold,
-                "skip_validation": skip_validation,
-            }
-        ):
-            result = snapshot
-            stage = str(snapshot.get("status") or "")
-            if stage and stage != last_stage:
-                errors = snapshot.get("errors") or []
-                publish_job_stage(
-                    job_id,
-                    stage,
-                    xid=xid,
-                    error="; ".join(errors) if stage == "failed" and errors else None,
-                )
-                last_stage = stage
-        if result is None:
-            raise RuntimeError("Document graph produced no state")
+            },
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"contract_autocreation_mcp returned unexpected payload: {payload!r}")
     except Exception as exc:  # noqa: BLE001
-        job_store.complete_job(job_id, error=str(exc))
-        publish_job_stage(job_id, "failed", xid=xid, error=str(exc))
-        raise
+        try:
+            job_store.complete_job(job_id, error=str(exc))
+        except Exception as store_exc:  # noqa: BLE001
+            logger.warning("Could not persist failed job %s: %s", job_id, store_exc)
+        try:
+            publish_job_stage(job_id, "failed", xid=xid, error=str(exc))
+        except Exception as pub_exc:  # noqa: BLE001
+            logger.warning("Could not publish failed stage for %s: %s", job_id, pub_exc)
+        return {"job_id": job_id, "status": "failed", "errors": [str(exc)], "xid": xid}
 
-    errors = result.get("errors") or []
-    status = result.get("status")
-    if status != "completed" or errors:
-        msg = "; ".join(errors) if errors else f"Pipeline ended with status={status}"
-        job_store.complete_job(job_id, error=msg)
-        if last_stage != "failed":
-            publish_job_stage(job_id, "failed", xid=xid, error=msg)
+    refreshed = job_store.get_job(job_id)
+    mcp_status = str(payload.get("status") or "")
+    errors = payload.get("errors") or []
+    error_msg = payload.get("error") or (
+        "; ".join(str(e) for e in errors) if errors else None
+    )
+    ok = bool(payload.get("ok")) and mcp_status == "completed"
+
+    if payload.get("db_updated") and refreshed.status in {"completed", "failed"}:
+        stage = refreshed.status
+        if stage == "failed" or not ok:
+            publish_job_stage(job_id, "failed", xid=xid, error=refreshed.error_message or error_msg)
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "errors": errors,
+                "xid": xid,
+                "output_path": refreshed.output_path,
+                "elapsed_ms": payload.get("elapsed_ms") if payload.get("elapsed_ms") is not None else refreshed.elapsed_ms,
+                "elapsed": payload.get("elapsed") or refreshed.elapsed,
+            }
+        if refreshed.elapsed is None and (
+            payload.get("elapsed") or payload.get("elapsed_ms") is not None
+        ):
+            job_store.complete_job(
+                job_id,
+                confidence=payload.get("confidence") if isinstance(payload.get("confidence"), dict) else None,
+                validation=payload.get("validation") if isinstance(payload.get("validation"), dict) else None,
+                extraction_validation=payload.get("extraction_validation")
+                if isinstance(payload.get("extraction_validation"), dict)
+                else None,
+                result={
+                    "status": "completed",
+                    "elapsed_ms": payload.get("elapsed_ms"),
+                    "elapsed": payload.get("elapsed"),
+                    "output_path": refreshed.output_path or payload.get("output_path"),
+                },
+                mapper_llm=payload.get("mapper_llm"),
+                validator_llm=payload.get("validator_llm"),
+                output_path=refreshed.output_path or payload.get("output_path"),
+            )
+            refreshed = job_store.get_job(job_id)
+        publish_job_stage(job_id, "completed", xid=xid)
+        return {
+            "job_id": job_id,
+            "xid": xid,
+            "status": "completed",
+            "output_path": refreshed.output_path or payload.get("output_path"),
+            "mapper_llm": payload.get("mapper_llm"),
+            "validator_llm": payload.get("validator_llm"),
+            "scores_pct": (payload.get("confidence") or {}).get("scores_pct")
+            if isinstance(payload.get("confidence"), dict)
+            else None,
+            "confidence": payload.get("confidence"),
+            "validation": payload.get("validation"),
+            "extraction_validation": payload.get("extraction_validation"),
+            "elapsed_ms": payload.get("elapsed_ms") if payload.get("elapsed_ms") is not None else refreshed.elapsed_ms,
+            "elapsed": payload.get("elapsed") or refreshed.elapsed,
+        }
+
+    stored_output = payload.get("output_path") or job.output_path
+    local = Path(str(stored_output)) if stored_output else None
+    if local and local.exists() and not is_blob_ref(stored_output):
+        stored_output = job_store.persist_output(job_id, local)
+
+    if not ok:
+        msg = error_msg or f"Pipeline ended with status={mcp_status or 'unknown'}"
+        job_store.complete_job(
+            job_id,
+            error=msg,
+            confidence=payload.get("confidence") if isinstance(payload.get("confidence"), dict) else None,
+            validation=payload.get("validation") if isinstance(payload.get("validation"), dict) else None,
+            extraction_validation=payload.get("extraction_validation")
+            if isinstance(payload.get("extraction_validation"), dict)
+            else None,
+            output_path=stored_output,
+        )
+        publish_job_stage(job_id, "failed", xid=xid, error=msg)
         return {"job_id": job_id, "status": "failed", "errors": errors, "xid": xid}
-
-    confidence = result.get("confidence")
-    validation = result.get("validation")
-    extraction = result.get("extraction_validation")
-    mapping = result.get("mapping")
-
-    confidence_dict = confidence.model_dump() if confidence else None
-    validation_dict = validation.model_dump() if validation else None
-    extraction_dict = extraction.model_dump() if extraction else None
-
-    mapper_llm = confidence.mapper_llm if confidence else None
-    validator_llm = confidence.validator_llm if confidence else None
-    if not mapper_llm and mapping and mapping.mapper_provider and mapping.mapper_model:
-        mapper_llm = f"{mapping.mapper_provider}/{mapping.mapper_model}"
 
     result_snapshot = {
         "job_id": job_id,
         "xid": xid,
         "status": "completed",
-        "output_path": job.output_path,
-        "mapper_llm": mapper_llm,
-        "validator_llm": validator_llm,
-        "scores_pct": (confidence_dict or {}).get("scores_pct") if confidence_dict else None,
-        "confidence": confidence_dict,
-        "validation": validation_dict,
-        "extraction_validation": extraction_dict,
+        "output_path": stored_output,
+        "mapper_llm": payload.get("mapper_llm"),
+        "validator_llm": payload.get("validator_llm"),
+        "scores_pct": (payload.get("confidence") or {}).get("scores_pct")
+        if isinstance(payload.get("confidence"), dict)
+        else None,
+        "confidence": payload.get("confidence"),
+        "validation": payload.get("validation"),
+        "extraction_validation": payload.get("extraction_validation"),
+        "elapsed_ms": payload.get("elapsed_ms"),
+        "elapsed": payload.get("elapsed"),
     }
-
     job_store.complete_job(
         job_id,
-        confidence=confidence_dict,
-        validation=validation_dict,
-        extraction_validation=extraction_dict,
+        confidence=result_snapshot["confidence"]
+        if isinstance(result_snapshot["confidence"], dict)
+        else None,
+        validation=result_snapshot["validation"]
+        if isinstance(result_snapshot["validation"], dict)
+        else None,
+        extraction_validation=result_snapshot["extraction_validation"]
+        if isinstance(result_snapshot["extraction_validation"], dict)
+        else None,
         result=result_snapshot,
-        mapper_llm=mapper_llm,
-        validator_llm=validator_llm,
+        mapper_llm=payload.get("mapper_llm"),
+        validator_llm=payload.get("validator_llm"),
+        output_path=stored_output,
     )
-    if last_stage != "completed":
-        publish_job_stage(job_id, "completed", xid=xid)
-
+    publish_job_stage(job_id, "completed", xid=xid)
     return result_snapshot

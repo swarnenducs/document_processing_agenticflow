@@ -1,7 +1,7 @@
 """Standalone MAF (Microsoft Agent Framework) HTTP service.
 
 Deployable separately from FastAPI. Default: http://127.0.0.1:8003
-Routes: GET /health, POST /ask, GET /ask/health
+Routes: GET /health, POST /ask, GET /ask/health, POST /invoke, GET /tools, GET /mcps
 """
 
 from __future__ import annotations
@@ -44,10 +44,20 @@ class AskResponse(BaseModel):
     user_email: str | None = None
 
 
+class InvokeRequest(BaseModel):
+    server: str | None = Field(
+        default=None,
+        description="Registry name (document, voice, or extra). Optional if tool is prefixed.",
+    )
+    tool: str = Field(..., min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    xid: str | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Document Processing MAF Orchestrator",
-        description="Microsoft Agent Framework → document_process_mcp + voice_process_mcp",
+        description="Microsoft Agent Framework — sole caller of MCP servers (document, voice, extras)",
         version="0.1.0",
     )
 
@@ -58,28 +68,62 @@ def create_app() -> FastAPI:
     @app.get("/ask/health")
     async def ask_health() -> dict[str, Any]:
         try:
-            from central_agentic_flow.orchestrator import (
-                document_mcp_url,
-                resolve_maf_chat_client,
-                voice_mcp_url,
-            )
+            from central_agentic_flow.mcp_bridge import catalog_mcp_servers
+            from central_agentic_flow.orchestrator import resolve_maf_chat_client
 
             client = resolve_maf_chat_client()
+            catalog = await catalog_mcp_servers()
             return {
                 "ok": True,
                 "orchestrator": "maf",
                 "service": "maf",
                 "chat_client": type(client).__name__,
-                "document_mcp_url": document_mcp_url(),
-                "voice_mcp_url": voice_mcp_url(),
+                **catalog,
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "orchestrator": "maf", "service": "maf", "error": str(exc)}
 
+    @app.get("/mcps")
+    async def list_mcps() -> dict[str, Any]:
+        from central_agentic_flow.mcp_bridge import catalog_mcp_servers
+
+        try:
+            return await catalog_mcp_servers()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"MCP catalog failed: {exc}") from exc
+
+    @app.get("/tools")
+    async def list_tools() -> dict[str, Any]:
+        from central_agentic_flow.mcp_bridge import catalog_mcp_servers
+
+        try:
+            return await catalog_mcp_servers()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"MCP catalog failed: {exc}") from exc
+
+    @app.post("/invoke")
+    async def invoke(body: InvokeRequest) -> dict[str, Any]:
+        from central_agentic_flow.mcp_bridge import invoke_mcp_tool
+
+        try:
+            return await invoke_mcp_tool(
+                server=body.server,
+                tool=body.tool,
+                arguments=body.arguments,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"MCP invoke failed: {exc}") from exc
+
     @app.post("/ask", response_model=AskResponse)
     async def ask(body: AskRequest) -> AskResponse:
         from central_agentic_flow.orchestrator import ask_maf
+        from central_agentic_flow.flow_debug import flow_breakpoint
 
+        flow_breakpoint("maf_http_ask", message=body.message, session_id=body.session_id)
         try:
             result = await ask_maf(body.message, instructions=body.instructions)
         except ValueError as exc:

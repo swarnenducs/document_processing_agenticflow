@@ -15,6 +15,7 @@ dependencies = [
     "langchain-groq>=0.3.0",
     "langgraph>=0.4.0",
     "fastmcp>=3.4.6",
+    "python-docx>=1.1.0",
 ]
 
 [project.scripts]
@@ -24,3 +25,14 @@ doc-mcp-voice = "voice_enable_mcp.server:main"
 [build-system]
 requires = ["uv_build>=0.9.3,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+

@@ -10,11 +10,12 @@ from langgraph.types import interrupt
 from voice_enable_mcp.models.voice_state import VoiceContractState
 from voice_enable_mcp.services.voice_contract_workflow import (
     _IRRELEVANT_MSG,
-    _is_create_contract_intent,
-    extract_legal_entity_and_reference,
     finalize_contract,
     format_contract_ref,
-    is_confirmation,
+)
+from voice_enable_mcp.services.voice_lcel import (
+    interpret_voice_confirmation,
+    parse_voice_transcript,
 )
 
 
@@ -25,6 +26,9 @@ def _store():
 
 
 def parse_intent_node(state: VoiceContractState) -> dict[str, Any]:
+    from voice_enable_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("parse_intent_node", transcript=state.get("transcript"))
     text = " ".join((state.get("transcript") or "").strip().split())
     if not text:
         return {
@@ -36,7 +40,8 @@ def parse_intent_node(state: VoiceContractState) -> dict[str, Any]:
             "errors": ["empty transcript"],
         }
 
-    if not _is_create_contract_intent(text):
+    parsed = parse_voice_transcript(text)
+    if not parsed.create_contract:
         return {
             "status": "rejected",
             "ok": False,
@@ -46,7 +51,8 @@ def parse_intent_node(state: VoiceContractState) -> dict[str, Any]:
             "errors": ["unsupported intent"],
         }
 
-    entity_name, contract_ref = extract_legal_entity_and_reference(text)
+    entity_name = parsed.legal_entity_name or None
+    contract_ref = parsed.contract_reference_number or None
     if not entity_name or not contract_ref:
         return {
             "status": "rejected",
@@ -136,6 +142,13 @@ def fetch_pricelist_node(state: VoiceContractState) -> dict[str, Any]:
 
 def await_confirmation_node(state: VoiceContractState) -> dict[str, Any]:
     """Human-in-the-loop gate via LangGraph interrupt()."""
+    from voice_enable_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint(
+        "await_confirmation_node",
+        auto_create=state.get("auto_create"),
+        thread_id=state.get("thread_id"),
+    )
     if state.get("auto_create"):
         return {
             "confirmed": True,
@@ -177,10 +190,20 @@ def await_confirmation_node(state: VoiceContractState) -> dict[str, Any]:
         action = str(decision or "").strip()
         ref = ""
 
-    if is_confirmation(action) and not ref:
-        ref = str(pretty_ref or "")
-    elif not ref:
-        ref = format_contract_ref(action)
+    interpreted = interpret_voice_confirmation(
+        action or ref,
+        suggested_ref=str(pretty_ref or ""),
+    )
+    if not interpreted.confirmed and not ref:
+        return {
+            "confirmed": False,
+            "confirmation": {"action": action, "ref": ref},
+            "status": "rejected",
+            "ok": False,
+            "message": _IRRELEVANT_MSG,
+            "errors": ["confirmation declined"],
+        }
+    ref = interpreted.contract_reference_number or ref or str(pretty_ref or "")
 
     # Re-resolve pricelist for chosen ref
     store = _store()
@@ -219,6 +242,9 @@ def await_confirmation_node(state: VoiceContractState) -> dict[str, Any]:
 
 
 def generate_contract_node(state: VoiceContractState) -> dict[str, Any]:
+    from voice_enable_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("generate_contract_node", thread_id=state.get("thread_id"))
     store = _store()
     entity = state.get("legal_entity") or {}
     pricelist = state.get("pricelist") or {}

@@ -146,6 +146,9 @@ def start_voice_contract_agent(
     Returns (result, thread_id). When HITL is required, status=needs_confirmation
     and the caller must resume with ``resume_voice_contract_agent``.
     """
+    from voice_enable_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("start_voice_contract_agent", transcript=transcript, thread_id=thread_id)
     graph = get_voice_contract_graph()
     tid = thread_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": tid}}
@@ -174,6 +177,9 @@ def resume_voice_contract_agent(
     contract_reference_number: str | None = None,
 ) -> VoiceContractResult:
     """Resume HITL interrupt with user confirmation / selected reference."""
+    from voice_enable_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("resume_voice_contract_agent", thread_id=thread_id, user_text=user_text, action=action)
     graph = get_voice_contract_graph()
     config = {"configurable": {"thread_id": thread_id}}
     resume_payload: dict[str, Any] = {

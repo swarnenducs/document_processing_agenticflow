@@ -8,10 +8,14 @@ Roles
 
 Switch any provider / model
 ---------------------------
-Preferred (LangChain ``provider:model`` string → ``init_chat_model``)::
+Preferred (LangChain ``init_chat_model("provider:model")``)::
 
-    MAPPER_MODEL_ID=azure_openai:gpt-5-mini
-    VALIDATOR_MODEL_ID=groq:openai/gpt-oss-120b
+    MAPPER_MODEL_ID=openai:gpt-5-mini
+    VALIDATOR_MODEL_ID=openai:gpt-4.1-mini
+
+    # Same as:
+    #   from langchain.chat_models import init_chat_model
+    #   llm = init_chat_model("openai:gpt-5-mini", temperature=0)
     # Any init_chat_model provider works, e.g.:
     # MAPPER_MODEL_ID=anthropic:claude-sonnet-4-20250514
     # MAPPER_MODEL_ID=openai:gpt-4o
@@ -44,7 +48,7 @@ import os
 from collections.abc import Callable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 T = TypeVar("T")
 
@@ -253,6 +257,15 @@ def _first_env(*keys: str) -> str | None:
     return None
 
 
+def _foundry_v1_base() -> str | None:
+    """Azure AI Foundry OpenAI-v1 base (``.../openai/v1``) when configured."""
+    endpoint = _first_env("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL")
+    if not endpoint:
+        return None
+    style, base = _normalize_azure_endpoint(endpoint)
+    return base if style == "foundry_v1" else None
+
+
 def _resolve_api_key(role: str, provider: str) -> str | None:
     prefix = _role_prefix(role)
     role_key = _env(f"{prefix}_API_KEY")
@@ -262,7 +275,10 @@ def _resolve_api_key(role: str, provider: str) -> str | None:
         mapper_key = _env("MAPPER_API_KEY")
         if mapper_key:
             return mapper_key
-    return _first_env(*_PROVIDER_API_KEY_ENV.get(provider, ()))
+    key = _first_env(*_PROVIDER_API_KEY_ENV.get(provider, ()))
+    if provider == "openai" and _foundry_v1_base():
+        return _first_env("AZURE_OPENAI_API_KEY") or key
+    return key
 
 
 def _resolve_base_url(role: str, provider: str) -> str | None:
@@ -281,6 +297,8 @@ def _resolve_base_url(role: str, provider: str) -> str | None:
     for raw in candidates:
         if raw and not _is_placeholder_value(raw):
             return raw.rstrip("/")
+    if provider == "openai":
+        return _foundry_v1_base()
     return None
 
 
@@ -565,9 +583,36 @@ def _resolve_init_target(
     return config_model_id(config), kwargs
 
 
-def _build_via_init_chat_model(config: LLMRoleConfig, temperature: float = 0) -> Any:
-    """Construct a chat model using LangChain ``init_chat_model`` only."""
+def _config_prefix_for_role(role: str) -> str:
+    """RunnableConfig key prefix: validator is LLM-as-judge → ``judge_``."""
+    if role == "validator":
+        return "judge"
+    return role
+
+
+def _build_via_init_chat_model(
+    config: LLMRoleConfig,
+    temperature: float = 0,
+    *,
+    configurable_fields: Literal["any"] | list[str] | tuple[str, ...] = "any",
+    config_prefix: str | None = None,
+) -> Any:
+    """Construct a chat model using LangChain ``init_chat_model`` only.
+
+    Equivalent to::
+
+        from langchain.chat_models import init_chat_model
+        llm = init_chat_model(
+            "openai:gpt-5-mini",
+            configurable_fields="any",
+            config_prefix="judge",
+            temperature=0,
+        )
+    """
     model_id, kwargs = _resolve_init_target(config, temperature)
+    kwargs.setdefault("temperature", temperature)
+    kwargs.setdefault("configurable_fields", configurable_fields)
+    kwargs.setdefault("config_prefix", config_prefix or _config_prefix_for_role(config.role))
     try:
         return _init_chat_model(model_id, **kwargs)
     except Exception as exc:
@@ -580,20 +625,123 @@ def _build_via_init_chat_model(config: LLMRoleConfig, temperature: float = 0) ->
         ) from exc
 
 
-def _build_llm(config: LLMRoleConfig, temperature: float | None = None) -> Any:
+def _build_llm(
+    config: LLMRoleConfig,
+    temperature: float | None = None,
+    *,
+    configurable_fields: Literal["any"] | list[str] | tuple[str, ...] = "any",
+    config_prefix: str | None = None,
+) -> Any:
     temp = config.temperature if temperature is None else temperature
     provider = _normalize_provider(config.provider)
 
     if provider in _PROVIDER_REGISTRY:
         return _PROVIDER_REGISTRY[provider](config, temp)
 
-    return _build_via_init_chat_model(config, temp)
+    return _build_via_init_chat_model(
+        config,
+        temp,
+        configurable_fields=configurable_fields,
+        config_prefix=config_prefix,
+    )
 
 
 def _with_optional_structured(llm: Any, structured_schema: type[T] | None) -> Any:
     if structured_schema is None:
         return llm
     return llm.with_structured_output(structured_schema)
+
+
+class ConfigurableChatLLM:
+    """Role-scoped wrapper around ``init_chat_model(..., configurable_fields='any')``.
+
+    Runtime overrides (temperature, max_tokens, model, …) go through LangChain config::
+
+        llm.invoke(messages, config={"configurable": {
+            "judge_model": "openai:gpt-4.1-mini",
+            "judge_temperature": 0,
+        }})
+    """
+
+    def __init__(
+        self,
+        role: str,
+        *,
+        model_id: str | None = None,
+        model_override: str | None = None,
+        temperature: float | None = None,
+        structured_schema: type[T] | None = None,
+        config_prefix: str | None = None,
+        configurable_fields: Literal["any"] | list[str] | tuple[str, ...] = "any",
+    ) -> None:
+        self.role = role.strip().lower()
+        self.config = resolve_role_config(
+            self.role, model_override=model_override, model_id=model_id
+        )
+        self.config_prefix = config_prefix or _config_prefix_for_role(self.role)
+        self.model = _with_optional_structured(
+            _build_llm(
+                self.config,
+                temperature,
+                configurable_fields=configurable_fields,
+                config_prefix=self.config_prefix,
+            ),
+            structured_schema,
+        )
+
+    def as_tuple(self) -> tuple[Any, LLMRoleConfig]:
+        return self.model, self.config
+
+    def invoke(self, input: Any, config: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        return self.model.invoke(input, config=config, **kwargs)
+
+    def with_structured_output(self, schema: type[T], **kwargs: Any) -> Any:
+        return self.model.with_structured_output(schema, **kwargs)
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+        return self.model.bind_tools(tools, **kwargs)
+
+
+class MapperLLM(ConfigurableChatLLM):
+    """LLM #1 — JSON → Word field / table mapping."""
+
+    def __init__(self, *, model_id: str | None = None, **kwargs: Any) -> None:
+        super().__init__("mapper", model_id=model_id, **kwargs)
+
+
+class LLMAsJudge(ConfigurableChatLLM):
+    """LLM #2 — independent critic (LLM-as-judge) for extraction and generated docs.
+
+    Default::
+
+        from langchain.chat_models import init_chat_model
+        init_chat_model(
+            "openai:gpt-4.1-mini",
+            configurable_fields="any",
+            config_prefix="judge",
+            temperature=0,
+        )
+    """
+
+    def __init__(self, *, model_id: str | None = None, **kwargs: Any) -> None:
+        kwargs.setdefault("config_prefix", "judge")
+        super().__init__("validator", model_id=model_id, **kwargs)
+
+
+LLM_AS_judge = LLMAsJudge
+
+
+class AgentLLM(ConfigurableChatLLM):
+    """Optional tool-calling orchestrator (defaults to mapper provider)."""
+
+    def __init__(
+        self,
+        model_name: str | None = None,
+        *,
+        model_id: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__("agent", model_id=model_id, model_override=model_name, **kwargs)
 
 
 def init_role_chat_model(
@@ -605,9 +753,13 @@ def init_role_chat_model(
     structured_schema: type[T] | None = None,
 ) -> tuple[Any, LLMRoleConfig]:
     """Public entry: build any role's chat model via ``init_chat_model``."""
-    config = resolve_role_config(role, model_override=model_override, model_id=model_id)
-    llm = _with_optional_structured(_build_llm(config, temperature), structured_schema)
-    return llm, config
+    return ConfigurableChatLLM(
+        role,
+        model_id=model_id,
+        model_override=model_override,
+        temperature=temperature,
+        structured_schema=structured_schema,
+    ).as_tuple()
 
 
 def get_mapper_llm(
@@ -616,9 +768,7 @@ def get_mapper_llm(
     structured_schema: type[T] | None = None,
 ) -> tuple[Any, LLMRoleConfig]:
     """LLM #1 — mapping. Switch with ``MAPPER_MODEL_ID`` or ``model_id='provider:model'``."""
-    return init_role_chat_model(
-        "mapper", model_id=model_id, structured_schema=structured_schema
-    )
+    return MapperLLM(model_id=model_id, structured_schema=structured_schema).as_tuple()
 
 
 def get_validator_llm(
@@ -626,10 +776,8 @@ def get_validator_llm(
     model_id: str | None = None,
     structured_schema: type[T] | None = None,
 ) -> tuple[Any, LLMRoleConfig]:
-    """LLM #2 — critic. Switch with ``VALIDATOR_MODEL_ID`` or ``model_id='provider:model'``."""
-    return init_role_chat_model(
-        "validator", model_id=model_id, structured_schema=structured_schema
-    )
+    """LLM #2 — critic. Prefer ``LLMAsJudge``; this is the tuple wrapper."""
+    return LLMAsJudge(model_id=model_id, structured_schema=structured_schema).as_tuple()
 
 
 def get_agent_llm(
@@ -638,29 +786,37 @@ def get_agent_llm(
     model_id: str | None = None,
 ) -> tuple[Any, LLMRoleConfig]:
     """Orchestrator agent LLM (defaults to mapper provider/settings)."""
-    return init_role_chat_model(
-        "agent", model_id=model_id, model_override=model_name
-    )
+    return AgentLLM(model_name, model_id=model_id).as_tuple()
 
 
 def build_configurable_chat_model(
     *,
     default_model_id: str | None = None,
     temperature: float = 0,
+    config_prefix: str = "",
+    configurable_fields: Literal["any"] | list[str] | tuple[str, ...] = "any",
 ) -> Any:
-    """Return an ``init_chat_model`` instance with configurable provider/model fields.
+    """Return an ``init_chat_model`` instance with ``configurable_fields='any'``.
 
     Switch at invoke time via LangGraph / Runnable config::
 
-        model = build_configurable_chat_model(default_model_id="openai:gpt-4o-mini")
-        model.invoke(messages, config={"configurable": {
-            "model": "claude-sonnet-4-20250514",
-            "model_provider": "anthropic",
-        }})
+        model = build_configurable_chat_model(
+            default_model_id="openai:gpt-5-mini",
+            config_prefix="foo",
+        )
+        model.invoke("what's your name")
+        model.invoke(
+            "what's your name",
+            config={"configurable": {
+                "foo_model": "openai:gpt-4.1-mini",
+                "foo_temperature": 0,
+            }},
+        )
     """
     kwargs: dict[str, Any] = {
         "temperature": temperature,
-        "configurable_fields": ("model", "model_provider"),
+        "configurable_fields": configurable_fields,
+        "config_prefix": config_prefix,
     }
     if default_model_id:
         return _init_chat_model(default_model_id, **kwargs)
@@ -678,6 +834,11 @@ def provider_credentials_available(config: LLMRoleConfig) -> bool:
         key = config.api_key or _first_env(*_PROVIDER_API_KEY_ENV["azure_openai"])
         endpoint = config.base_url or _first_env(*_PROVIDER_BASE_URL_ENV["azure_openai"])
         return bool(key) and bool(endpoint)
+
+    if provider == "openai":
+        if config.api_key or _first_env("OPENAI_API_KEY"):
+            return True
+        return bool(_foundry_v1_base() and _first_env("AZURE_OPENAI_API_KEY"))
 
     if provider in {"openai_compatible", "ollama"}:
         return bool(

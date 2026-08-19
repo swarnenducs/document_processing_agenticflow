@@ -56,11 +56,12 @@ def wait_for_http(
     timeout: float = 60.0,
     interval: float = 0.5,
     accept_4xx: bool = False,
+    request_timeout: float = 15.0,
 ) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            resp = httpx.get(url, timeout=2.0)
+            resp = httpx.get(url, timeout=request_timeout)
             if resp.status_code == 200 or (accept_4xx and resp.status_code < 500):
                 print(f"{name} ready: {url}")
                 return True
@@ -95,6 +96,9 @@ def _child_env() -> dict[str, str]:
         s = str(src)
         if s not in parts:
             parts.insert(0, s)
+    root = str(PROJECT_ROOT)
+    if root not in parts:
+        parts.append(root)
     env["PYTHONPATH"] = os.pathsep.join(parts)
     return env
 
@@ -226,7 +230,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-maf",
         action="store_true",
-        help="Do not start MAF service (API /api/ask will fail unless MAF_EMBEDDED=true)",
+        help="Do not start MAF service (API /api/ask needs MAF at MAF_BASE_URL)",
     )
     parser.add_argument(
         "--mcp-transport",
@@ -240,7 +244,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Force MCP HTTP mode",
     )
     parser.add_argument("--no-wait", action="store_true", help="Skip health waits")
-    parser.add_argument("--api-timeout", type=float, default=60.0)
+    parser.add_argument("--api-timeout", type=float, default=90.0)
     parser.add_argument("--mcp-timeout", type=float, default=30.0)
     parser.add_argument("--maf-timeout", type=float, default=30.0)
     parser.add_argument(

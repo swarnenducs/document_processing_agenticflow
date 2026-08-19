@@ -31,6 +31,7 @@ class JobAcceptedResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     job_id: str
+    mcp: str | None = None
     xid: str | None = None
     session_id: str | None = None
     status: str
@@ -48,8 +49,11 @@ class JobStatusResponse(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     completed_at: str | None = None
+    elapsed_ms: float | None = None
+    elapsed: str | None = None
     download_url: str | None = None
     sqlite_persisted: bool = True
+    accuracy_report: dict[str, Any] | None = None
 
 
 class JobListResponse(BaseModel):
@@ -153,3 +157,9 @@ class HealthResponse(BaseModel):
     maf_available: bool = False
     maf_mode: str | None = None
     maf_base_url: str | None = None
+    storage_backend: str | None = None
+    azure_sql_server: str | None = None
+    azure_sql_database: str | None = None
+    azure_blob_container: str | None = None
+    azure_sql_available: bool | None = None
+    azure_blob_available: bool | None = None

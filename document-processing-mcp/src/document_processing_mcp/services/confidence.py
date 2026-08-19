@@ -1,4 +1,8 @@
-"""Aggregate confidence scores across extraction, mapping, generation, and validation."""
+"""Aggregate confidence scores for the document pipeline.
+
+This module is the **only** place that computes overall / per-field scores.
+The API persists the report; the UI only displays ``scores_pct`` from job status.
+"""
 
 from __future__ import annotations
 

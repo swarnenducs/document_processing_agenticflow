@@ -1,11 +1,11 @@
-# Local / compose stack for all self-contained components.
+# Local / compose stack. Each image builds from that component folder only.
 # Usage (repo root): docker compose up --build
 
 services:
   document-processing-mcp:
     build:
-      context: .
-      dockerfile: document-processing-mcp/Dockerfile
+      context: ./document-processing-mcp
+      dockerfile: Dockerfile
     ports:
       - "8001:8001"
     env_file:
@@ -13,18 +13,18 @@ services:
     environment:
       DOCUMENT_MCP_HOST: "0.0.0.0"
       DOCUMENT_MCP_PORT: "8001"
-      DOCUMENT_PROMPTS_DIR: /app/document-processing-mcp/prompts
+      DOCUMENT_PROMPTS_DIR: /app/prompts
       STORAGE_BASE_PATH: /home/data/storage
       SQLITE_DATABASE_PATH: /home/data/app.db
     volumes:
       - app-data:/home/data
-      - ./document-processing-mcp/prompts:/app/document-processing-mcp/prompts:ro
+      - ./document-processing-mcp/prompts:/app/prompts:ro
       - ./samples:/app/samples:ro
 
   voice-enable-mcp:
     build:
-      context: .
-      dockerfile: voice_enable_mcp/Dockerfile
+      context: ./voice_enable_mcp
+      dockerfile: Dockerfile
     ports:
       - "8002:8002"
     env_file:
@@ -32,18 +32,18 @@ services:
     environment:
       VOICE_MCP_HOST: "0.0.0.0"
       VOICE_MCP_PORT: "8002"
-      VOICE_PROMPTS_DIR: /app/voice_enable_mcp/prompts
+      VOICE_PROMPTS_DIR: /app/prompts
       STORAGE_BASE_PATH: /home/data/storage
       SQLITE_DATABASE_PATH: /home/data/app.db
     volumes:
       - app-data:/home/data
-      - ./voice_enable_mcp/prompts:/app/voice_enable_mcp/prompts:ro
+      - ./voice_enable_mcp/prompts:/app/prompts:ro
       - ./samples:/app/samples:ro
 
   central-agentic-flow:
     build:
-      context: .
-      dockerfile: central-agentic-flow/Dockerfile
+      context: ./central-agentic-flow
+      dockerfile: Dockerfile
     ports:
       - "8003:8003"
     env_file:
@@ -51,19 +51,21 @@ services:
     environment:
       MAF_HOST: "0.0.0.0"
       MAF_PORT: "8003"
-      MAF_PROMPTS_DIR: /app/central-agentic-flow/prompts
+      MAF_PROMPTS_DIR: /app/prompts
+      MAF_MCP_REGISTRY_FILE: /app/config/mcp_registry.yml
       DOCUMENT_MCP_URL: http://document-processing-mcp:8001/mcp
       VOICE_MCP_URL: http://voice-enable-mcp:8002/mcp
     volumes:
-      - ./central-agentic-flow/prompts:/app/central-agentic-flow/prompts:ro
+      - ./central-agentic-flow/prompts:/app/prompts:ro
+      - ./central-agentic-flow/config:/app/config:ro
     depends_on:
       - document-processing-mcp
       - voice-enable-mcp
 
   ip-api:
     build:
-      context: .
-      dockerfile: ip_api/Dockerfile
+      context: ./ip_api
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     env_file:
@@ -71,25 +73,19 @@ services:
     environment:
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
-      DOCUMENT_MCP_URL: http://document-processing-mcp:8001/mcp
-      VOICE_MCP_URL: http://voice-enable-mcp:8002/mcp
       MAF_BASE_URL: http://central-agentic-flow:8003
-      DOCUMENT_PROMPTS_DIR: /app/document-processing-mcp/prompts
       STORAGE_BASE_PATH: /home/data/storage
       SQLITE_DATABASE_PATH: /home/data/app.db
     volumes:
       - app-data:/home/data
-      - ./document-processing-mcp/prompts:/app/document-processing-mcp/prompts:ro
       - ./samples:/app/samples:ro
     depends_on:
-      - document-processing-mcp
-      - voice-enable-mcp
       - central-agentic-flow
 
   ui:
     build:
-      context: .
-      dockerfile: UI/Dockerfile
+      context: ./UI
+      dockerfile: Dockerfile
     ports:
       - "7860:7860"
     env_file:

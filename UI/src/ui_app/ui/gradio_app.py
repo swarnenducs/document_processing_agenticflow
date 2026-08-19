@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import tempfile
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from ui_app.ui.api_client import (
     confirm_voice_contract,
     create_document_job,
     download_job_output,
+    get_job_status,
     get_trace_by_xid,
     list_document_jobs,
     list_maf_mcp_tools,
@@ -25,7 +28,27 @@ from ui_app.ui.api_client import (
     wait_for_job,
 )
 
+logger = logging.getLogger(__name__)
+
 # Allow: python -m ui_app.ui.gradio_app
+
+_CONFIRM_HINTS = re.compile(
+    r"^\s*(yes|y|ok|okay|confirm|proceed|create\s+it|go\s+ahead|select)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_confirmation(text: str) -> bool:
+    return bool(_CONFIRM_HINTS.search(text or ""))
+
+
+def _format_contract_ref(value: str) -> str:
+    raw = (value or "").strip().upper()
+    compact = re.sub(r"[\s\-_]+", "", raw)
+    match = re.fullmatch(r"([A-Z]+)(\d+)", compact)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}"
+    return raw or compact
 
 
 def _resolve_gradio_path(value: object | None) -> str | None:
@@ -81,28 +104,14 @@ def _run_contract_request(
     user_id: str | None = None,
     user_email: str | None = None,
 ) -> dict:
-    """Prefer API; fall back to in-process workflow only if voice package is installed."""
-    try:
-        return run_voice_contract_text(
-            text,
-            auto_create=False,
-            session_id=session_id,
-            user_id=user_id,
-            user_email=user_email,
-        )
-    except Exception:
-        try:
-            from voice_enable_mcp.services.voice_contract_workflow import (
-                run_voice_contract_workflow,
-            )
-            from ui_app.storage.job_store import JobStore
-
-            return run_voice_contract_workflow(text, store=JobStore()).to_dict()
-        except ImportError as exc:
-            raise RuntimeError(
-                "API unavailable and voice_enable_mcp is not installed in this UI image. "
-                "Start ip_api + voice_enable_mcp, or run via run_all_components.py."
-            ) from exc
+    """Voice contract start — HTTP to ip_api only (no local workflow)."""
+    return run_voice_contract_text(
+        text,
+        auto_create=False,
+        session_id=session_id,
+        user_id=user_id,
+        user_email=user_email,
+    )
 
 
 def _confirm_contract_request(
@@ -116,54 +125,17 @@ def _confirm_contract_request(
     user_id: str | None = None,
     user_email: str | None = None,
 ) -> dict:
-    try:
-        return confirm_voice_contract(
-            legal_entity,
-            contract_reference_number,
-            transcript=transcript,
-            thread_id=thread_id,
-            user_text=user_text,
-            session_id=session_id,
-            user_id=user_id,
-            user_email=user_email,
-        )
-    except Exception:
-        try:
-            from voice_enable_mcp.services.voice_contract_workflow import (
-                confirm_voice_contract as local_confirm,
-            )
-            from ui_app.storage.job_store import JobStore
-        except ImportError as exc:
-            raise RuntimeError(
-                "API unavailable and voice_enable_mcp is not installed in this UI image."
-            ) from exc
-
-        store = JobStore()
-        result = local_confirm(
-            entity_code_or_name=legal_entity,
-            contract_reference_number=contract_reference_number,
-            store=store,
-            transcript=transcript,
-            thread_id=thread_id,
-            user_text=user_text or "yes",
-        )
-        payload = result.to_dict()
-        if result.ok and result.status == "completed":
-            saved = store.save_voice_contract(
-                spoken_name=result.spoken_name or "",
-                spoken_number=result.spoken_number or "",
-                contact=result.contact or result.legal_entity,
-                legal_entity=result.legal_entity,
-                pricelist=result.pricelist,
-                contract_payload=result.contract_payload,
-                contract_file=result.contract_file,
-                transcript=result.transcript,
-            )
-            payload["contract_id"] = saved["contract_id"]
-            payload["message"] = (
-                f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
-            )
-        return payload
+    """Voice contract confirm — HTTP to ip_api only (no local workflow)."""
+    return confirm_voice_contract(
+        legal_entity,
+        contract_reference_number,
+        transcript=transcript,
+        thread_id=thread_id,
+        user_text=user_text,
+        session_id=session_id,
+        user_id=user_id,
+        user_email=user_email,
+    )
 
 
 def ui_contract_chat(
@@ -189,14 +161,9 @@ def ui_contract_chat(
     try:
         # Confirmation turn
         if pending.get("awaiting_confirmation"):
-            from voice_enable_mcp.services.voice_contract_workflow import (
-                format_contract_ref,
-                is_confirmation,
-            )
-
             chosen_ref = pending.get("contract_reference_number")
             entity_key = pending.get("legal_entity_code") or pending.get("legal_entity_name")
-            ref = chosen_ref if is_confirmation(text) else format_contract_ref(text)
+            ref = chosen_ref if _is_confirmation(text) else _format_contract_ref(text)
             result = _confirm_contract_request(
                 str(entity_key),
                 str(ref),
@@ -304,34 +271,16 @@ def ui_contract_chat_from_audio(
         return new_history, new_pending, txt, docx, transcript, sid
     except ApiError as exc:
         history = list(history or [])
-        # Prefer local transcription fallback on API/speech connection failures.
-        try:
-            from voice_enable_mcp.services.speech_to_text import (
-                transcribe_audio,
-            )
-
-            lang = language.strip() or None
-            prov = None if provider in {"", "default", "auto"} else provider
-            local = transcribe_audio(path, language=lang, provider=prov)
-            transcript = local.text
-            new_history, new_pending, txt, docx, sid = ui_contract_chat(
-                transcript, history, pending, sid, uid, email
-            )
-            return new_history, new_pending, txt, docx, transcript, sid
-        except Exception as local_exc:  # noqa: BLE001
-            history.append(
-                {
-                    "role": "assistant",
-                    "content": (
-                        f"Speech transcription failed (`{exc}` / `{local_exc}`).\n\n"
-                        "Please **type** this in the chat box instead:\n"
-                        "`please create contract with legal entity AVC contract "
-                        "reference number CR 1001`\n"
-                        "Then reply `yes`."
-                    ),
-                }
-            )
-            return history, pending or {}, None, None, "", sid
+        history.append(
+            {
+                "role": "assistant",
+                "content": (
+                    f"Speech transcription failed (`{exc}`).\n\n"
+                    "Type the instruction in chat instead."
+                ),
+            }
+        )
+        return history, pending or {}, None, None, "", sid
     except Exception as exc:  # noqa: BLE001
         history = list(history or [])
         history.append(
@@ -346,21 +295,82 @@ def ui_contract_chat_from_audio(
         return history, pending or {}, None, None, "", sid
 
 
-def _resolve_json_payload(json_file: object | None, json_text: str) -> dict | Path:
+def _resolve_json_payload(json_file: object | None, json_text: str) -> dict:
+    """Build the JSON request payload. A local file is read here, never uploaded."""
     file_path = _resolve_gradio_path(json_file)
     if file_path:
         p = Path(file_path)
         if p.suffix.lower() != ".json":
-            raise ValueError("JSON upload must be a `.json` file")
-        return p
+            raise ValueError("Local JSON must be a `.json` file")
+        payload = json.loads(p.read_text(encoding="utf-8"))
+    elif json_text.strip():
+        payload = json.loads(json_text)
+    else:
+        raise ValueError("Paste JSON in the request, or pick a local `.json` file to send as request data")
 
-    if not json_text.strip():
-        raise ValueError("Upload a `.json` file or paste JSON data")
-
-    payload = json.loads(json_text)
     if not isinstance(payload, dict):
         raise ValueError("JSON root must be an object `{}`")
     return payload
+
+
+def _format_elapsed_ms(elapsed_ms: float) -> str:
+    total_s = max(0.0, float(elapsed_ms) / 1000.0)
+    if total_s < 60:
+        return f"{total_s:.1f} s"
+    minutes = int(total_s // 60)
+    seconds = total_s - minutes * 60
+    if minutes < 60:
+        return f"{minutes}m {seconds:.1f}s"
+    hours = minutes // 60
+    minutes_rem = minutes % 60
+    return f"{hours}h {minutes_rem}m {seconds:.0f}s"
+
+
+def _coerce_elapsed_ms(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _overall_time_label(status: dict) -> str:
+    """Human wall time from API elapsed / elapsed_ms / timestamps."""
+    result = status.get("result") if isinstance(status.get("result"), dict) else {}
+    acc = status.get("accuracy_report") if isinstance(status.get("accuracy_report"), dict) else {}
+    conf = status.get("confidence") if isinstance(status.get("confidence"), dict) else {}
+    for source in (status, result, acc, conf):
+        if not isinstance(source, dict):
+            continue
+        human = source.get("elapsed")
+        if isinstance(human, str) and human.strip() and human.strip() != "-":
+            return human.strip()
+        ms = _coerce_elapsed_ms(source.get("elapsed_ms"))
+        if ms is not None:
+            return _format_elapsed_ms(ms)
+
+    created = str(status.get("created_at") or "").strip()
+    completed = str(status.get("completed_at") or "").strip()
+    if created and completed:
+        from datetime import datetime
+
+        try:
+            start = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+            if start.tzinfo is None and end.tzinfo is not None:
+                start = start.replace(tzinfo=end.tzinfo)
+            elif end.tzinfo is None and start.tzinfo is not None:
+                end = end.replace(tzinfo=start.tzinfo)
+            if end >= start:
+                return _format_elapsed_ms((end - start).total_seconds() * 1000.0)
+        except (TypeError, ValueError):
+            pass
+    return ""
 
 
 def _html_esc(value: object) -> str:
@@ -558,16 +568,14 @@ def _progress_html(job_id: str, stages: list[dict], *, working: bool = True) -> 
 
 
 def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | None = None) -> str:
+    """Render scores already computed by Document MCP (confidence.py). UI does not score."""
     conf = status.get("confidence") or {}
-    pct = status.get("scores_pct") or conf.get("scores_pct") or {}
+    acc = status.get("accuracy_report") if isinstance(status.get("accuracy_report"), dict) else {}
+    pct = status.get("scores_pct") or conf.get("scores_pct") or acc.get("scores_pct") or {}
     validation = status.get("validation") or {}
 
-    def _p(key: str, fallback_key: str | None = None) -> str:
+    def _p(key: str) -> str:
         val = pct.get(key)
-        if val is None and fallback_key:
-            raw = conf.get(fallback_key)
-            if isinstance(raw, (int, float)):
-                val = round(float(raw) * 100, 1)
         if val is None:
             return "n/a"
         return f"{float(val):.1f}%"
@@ -601,8 +609,17 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
 
     mapper_llm = _esc(status.get("mapper_llm") or conf.get("mapper_llm") or "")
     validator_llm = _esc(status.get("validator_llm") or conf.get("validator_llm") or "")
-    mapper_ok = bool(mapper_llm and mapper_llm != "—")
-    validator_ok = bool(validator_llm and validator_llm != "—")
+    mapper_ok = bool(mapper_llm and mapper_llm != "-")
+    validator_ok = bool(validator_llm and validator_llm != "-")
+    elapsed = _overall_time_label(status) or "n/a"
+    elapsed_banner = ""
+    if elapsed != "n/a":
+        elapsed_banner = f"""
+<div style="margin:0 0 1rem 0;padding:0.75rem 0.9rem;border:1px solid #3a3a3a;border-radius:8px;background:#1a1a1a">
+  <div style="opacity:0.8;font-size:0.85rem">Overall time taken</div>
+  <div style="font-size:1.35rem;font-weight:700;color:#9EF0B8;margin-top:0.15rem">{_esc(elapsed)}</div>
+</div>
+"""
 
     def _avail(ok: bool) -> str:
         color = "#9EF0B8" if ok else "#FF9A9A"
@@ -615,13 +632,16 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
         )
 
     sections = [
+        elapsed_banner,
         _table(
             "Job",
             ["Field", "Value"],
             [
                 ["Job ID", f"<code>{_esc(job_id)}</code>"],
+                ["MCP", _esc(status.get("mcp") or acc.get("mcp") or "document_process_mcp")],
                 ["xid", f"<code>{_esc(status.get('xid') or '')}</code>"],
                 ["Status", "<strong>completed</strong>"],
+                ["Overall time taken", f"<strong>{_esc(elapsed)}</strong>"],
             ],
         ),
         _stages_table_html(stages or []),
@@ -639,27 +659,27 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
             [
                 [
                     "<strong>Overall confidence</strong>",
-                    f"<strong>{_p('overall_confidence_pct', 'overall_confidence')}</strong>",
+                    f"<strong>{_p('overall_confidence_pct')}</strong>",
                 ],
                 [
                     "Placeholder mapping (LLM #1)",
-                    _p("placeholder_mapping_confidence_pct", "mapping_confidence"),
+                    _p("placeholder_mapping_confidence_pct"),
                 ],
                 [
                     "Placeholder coverage",
-                    _p("placeholder_coverage_pct", "coverage_score"),
+                    _p("placeholder_coverage_pct"),
                 ],
                 [
                     "Table mapping (LLM #1)",
-                    _p("table_mapping_confidence_pct", "table_mapping_confidence"),
+                    _p("table_mapping_confidence_pct"),
                 ],
                 [
                     "Generation integrity",
-                    _p("generation_integrity_pct", "generation_integrity"),
+                    _p("generation_integrity_pct"),
                 ],
                 [
                     "<strong>Document validation (LLM #2)</strong>",
-                    f"<strong>{_p('validation_score_pct', 'validation_score')}</strong>",
+                    f"<strong>{_p('validation_score_pct')}</strong>",
                 ],
             ],
         ),
@@ -674,9 +694,9 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
                     ["Passed", f"<code>{_esc(validation.get('passed'))}</code>"],
                     [
                         "Score",
-                        f"<code>{_p('validation_score_pct', 'validation_score')}</code>",
+                        f"<code>{_p('validation_score_pct')}</code>",
                     ],
-                    ["Summary", _esc(validation.get("summary") or "—")],
+                    ["Summary", _esc(validation.get("summary") or "-")],
                 ],
             )
         )
@@ -684,7 +704,7 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
         if issues:
             issue_rows = [
                 [
-                    _esc(issue.get("severity") or "—"),
+                    _esc(issue.get("severity") or "-"),
                     f"<code>{_esc(issue.get('field') or '')}</code>",
                     _esc(issue.get("message") or ""),
                 ]
@@ -734,18 +754,12 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
             )
         )
 
-    from ui_app.core.settings import settings as _settings
-
-    db_path = _settings().sqlite_database_path
     sections.append(
         _table(
-            "Persistence",
+            "Trace",
             ["Field", "Value"],
             [
-                ["Stored in SQLite", "<strong>yes</strong>"],
                 ["xid", f"<code>{_esc(status.get('xid') or '')}</code>"],
-                ["Database", f"<code>{_esc(db_path)}</code>"],
-                ["Tables", "<code>document_jobs</code>, <code>call_logs</code>"],
             ],
         )
     )
@@ -754,7 +768,7 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
         '<div style="font-size:0.95rem;line-height:1.4">'
         + "".join(sections)
         + "</div>"
-    )
+    ).replace("${", "$&#123;").replace("{{", "{&#123;")
 
 
 def ui_generate_document(
@@ -767,6 +781,9 @@ def ui_generate_document(
     user_email: str | None = None,
 ):
     """Generator: live WebSocket stages, then final report + download path."""
+    from ui_app.flow_debug import flow_breakpoint
+
+    flow_breakpoint("ui_generate_document", template_file=template_file, session_id=session_id)
 
     def _err(msg: str):
         safe = _html_esc(msg).replace("\n", "<br>")
@@ -806,7 +823,7 @@ def ui_generate_document(
         yield from _err(str(exc))
         return
 
-    yield _loading_html("Uploading template + JSON and starting job…"), None, session_id
+    yield _loading_html("Uploading template and sending JSON in the request…"), None, session_id
 
     try:
         accepted = create_document_job(
@@ -835,7 +852,8 @@ def ui_generate_document(
                 if event.get("terminal") or event.get("stage") in {"completed", "failed"}:
                     break
             status = get_job_status(job_id)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Job WebSocket failed, falling back to long-poll: %s", exc)
             yield _loading_html(
                 "WebSocket unavailable — waiting with long-poll (still working)…"
             ), None, sid
@@ -860,9 +878,7 @@ def ui_generate_document(
 
     out_name = Path(status.get("output_path") or "").name
     if not out_name.endswith(".docx"):
-        from ui_app.services.naming import build_contract_output_filename
-
-        out_name = build_contract_output_filename(job_id, template_path.name)
+        out_name = f"{job_id}.docx"
     tmp = Path(tempfile.gettempdir()) / out_name
     try:
         download_job_output(job_id, tmp)
@@ -870,6 +886,10 @@ def ui_generate_document(
         yield from _err(f"Generated but download failed: {exc}")
         return
 
+    try:
+        status = get_job_status(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not refresh job status %s after download: %s", job_id, exc)
     yield _build_completed_job_report(job_id, status, stages), str(tmp), sid
 
 
@@ -909,7 +929,7 @@ def ui_health() -> str:
     doc_mcp_ok = bool(health.get("document_mcp_available"))
     voice_mcp_ok = bool(health.get("voice_mcp_available"))
     maf_ok = bool(health.get("maf_available"))
-    maf_mode = health.get("maf_mode") or "—"
+    maf_mode = health.get("maf_mode") or "-"
     maf_base = health.get("maf_base_url") or ""
 
     # Prefer live /api/ask/health when v1 health omitted maf (older API)
@@ -926,11 +946,24 @@ def ui_health() -> str:
     tool_rows_html = ""
     try:
         tools_payload = list_maf_mcp_tools()
-        for key, label, prefix in (
-            ("document_process_mcp", "document_process_mcp", "document"),
-            ("voice_process_mcp", "voice_process_mcp", "voice"),
-        ):
-            block = tools_payload.get(key) or {}
+        servers = tools_payload.get("servers")
+        if servers:
+            iterable = [
+                (
+                    spec.get("mcp") or spec.get("name"),
+                    spec.get("mcp") or spec.get("name"),
+                    spec.get("prefix") or spec.get("name"),
+                    spec,
+                )
+                for spec in servers
+                if isinstance(spec, dict)
+            ]
+        else:
+            iterable = [
+                ("contract_autocreation_mcp", "contract_autocreation_mcp", "document", tools_payload.get("contract_autocreation_mcp") or tools_payload.get("document_process_mcp") or {}),
+                ("voice_process_mcp", "voice_process_mcp", "voice", tools_payload.get("voice_process_mcp") or {}),
+            ]
+        for _key, label, prefix, block in iterable:
             names = block.get("maf_prefixed") or [
                 f"{prefix}_{n}" for n in (block.get("tools") or [])
             ]
@@ -976,7 +1009,8 @@ def ui_health() -> str:
         warn += (
             "<p style='color:#FFD0A8'><strong>Central agent (MAF) is not available.</strong> "
             "Start it with <code>python run_all_components.py</code> "
-            "(or <code>--maf-only</code>), or set <code>MAF_EMBEDDED=true</code>.</p>"
+            "(or <code>--maf-only</code>), or run <code>./run.sh</code> in "
+            "<code>central-agentic-flow</code>.</p>"
         )
 
     maf_meta = f"mode <code>{_html_esc(maf_mode)}</code>"
@@ -1046,7 +1080,7 @@ def ui_health() -> str:
         <td style="padding:0.45rem 0.6rem">{_signal(validator_ok)}</td>
       </tr>
       <tr style="border-bottom:1px solid #2a2a2a">
-        <td style="padding:0.45rem 0.6rem"><strong>document_process_mcp</strong></td>
+        <td style="padding:0.45rem 0.6rem"><strong>contract_autocreation_mcp</strong></td>
         <td style="padding:0.45rem 0.6rem">{_signal(doc_mcp_ok)}</td>
       </tr>
       <tr>
@@ -1068,6 +1102,9 @@ def ui_central_agent_ask(
     user_email: str | None = None,
 ):
     """Chat turn against the MAF central orchestrator (via API /api/ask)."""
+    from ui_app.flow_debug import flow_breakpoint
+
+    flow_breakpoint("ui_central_agent_ask", message=message, session_id=session_id)
     history = list(history or [])
     text = (message or "").strip()
     sid = (session_id or "").strip() or None
@@ -1113,7 +1150,7 @@ def _html_esc(value: object) -> str:
 
 def _pretty_json(value: object, *, limit: int = 4000) -> str:
     if value is None:
-        return "—"
+        return "-"
     try:
         text = json.dumps(value, indent=2, ensure_ascii=False, default=str)
     except Exception:  # noqa: BLE001
@@ -1128,16 +1165,11 @@ def ui_recent_jobs_for_trace(limit: float | int = 15) -> str:
     try:
         payload = list_document_jobs(limit=int(limit))
         jobs = payload.get("jobs") or []
-    except Exception:
-        try:
-            from ui_app.storage.job_store import JobStore
-
-            jobs = JobStore().list_document_jobs(limit=int(limit))
-        except Exception as exc:  # noqa: BLE001
-            return f'<div style="color:#FFC4C4">Failed to list jobs: {_html_esc(exc)}</div>'
+    except Exception as exc:  # noqa: BLE001
+        return f'<div style="color:#FFC4C4">Failed to list jobs: {_html_esc(exc)}</div>'
 
     if not jobs:
-        return "<p>No document jobs in SQLite yet. Generate a document first.</p>"
+        return "<p>No document jobs yet. Generate a document first.</p>"
 
     rows = []
     for job in jobs:
@@ -1147,6 +1179,7 @@ def ui_recent_jobs_for_trace(limit: float | int = 15) -> str:
             f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(job.get('job_id'))}</code></td>"
             f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(xid)}</code></td>"
             f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('status'))}</td>"
+            f"<td style='padding:0.35rem 0.5rem'>{_html_esc(_overall_time_label(job) or '—')}</td>"
             f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('created_at'))}</td>"
             "</tr>"
         )
@@ -1159,6 +1192,7 @@ def ui_recent_jobs_for_trace(limit: float | int = 15) -> str:
         <th style="padding:0.35rem 0.5rem">Job ID</th>
         <th style="padding:0.35rem 0.5rem">xid</th>
         <th style="padding:0.35rem 0.5rem">Status</th>
+        <th style="padding:0.35rem 0.5rem">Overall time</th>
         <th style="padding:0.35rem 0.5rem">Created</th>
       </tr>
     </thead>
@@ -1176,13 +1210,8 @@ def ui_lookup_trace(xid: str) -> str:
 
     try:
         payload = get_trace_by_xid(corr)
-    except Exception:
-        try:
-            from ui_app.storage.job_store import JobStore
-
-            payload = JobStore().get_trace_by_xid(corr)
-        except Exception as exc:  # noqa: BLE001
-            return f'<div style="color:#FFC4C4">Trace lookup failed: {_html_esc(exc)}</div>'
+    except Exception as exc:  # noqa: BLE001
+        return f'<div style="color:#FFC4C4">Trace lookup failed: {_html_esc(exc)}</div>'
 
     jobs = payload.get("jobs") or []
     logs = payload.get("logs") or []
@@ -1210,7 +1239,7 @@ def ui_lookup_trace(xid: str) -> str:
         resp = _pretty_json(log.get("response"), limit=2500)
         err = log.get("error_message") or ""
         latency = log.get("latency_ms")
-        latency_s = f"{float(latency):.0f} ms" if isinstance(latency, (int, float)) else "—"
+        latency_s = f"{float(latency):.0f} ms" if isinstance(latency, (int, float)) else "-"
         border = "border-bottom:1px solid #2a2a2a" if i < len(logs) - 1 else ""
         log_rows.append(
             f"""
@@ -1358,7 +1387,8 @@ def build_ui() -> gr.Blocks:
         # ------------------------------------------------------------------ Document (1st)
         with gr.Tab("Generate Document"):
             gr.Markdown(
-                f"**Upload** a `.docx` template and **upload or paste** JSON data. "
+                f"**Upload** a `.docx` template and **send JSON in the request** "
+                "(paste below, or pick a local `.json` to include as request data — it is not uploaded as a file). "
                 f"Job runs on `{cfg.api_base_url}/api/v1/documents/jobs` "
                 "(WebSocket live stages on `/ws`)."
             )
@@ -1370,17 +1400,17 @@ def build_ui() -> gr.Blocks:
                         file_count="single",
                         type="filepath",
                     )
-                    json_file_upload = gr.File(
-                        label="Upload JSON data file (.json)",
-                        file_types=[".json"],
-                        file_count="single",
-                        type="filepath",
+                    json_input = gr.Textbox(
+                        label="JSON data (sent in the request)",
+                        lines=12,
+                        placeholder='{"invoice_number": "INV-001", "customer": {"name": "Acme"}}',
                     )
-                    with gr.Accordion("Or paste JSON", open=False):
-                        json_input = gr.Textbox(
-                            label="JSON data model (used when no .json file uploaded)",
-                            lines=12,
-                            placeholder='{"invoice_number": "INV-001", "customer": {"name": "Acme"}}',
+                    with gr.Accordion("Optional: load JSON from a local file into the request", open=False):
+                        json_file_upload = gr.File(
+                            label="Local .json (parsed and sent as request JSON, not as a file upload)",
+                            file_types=[".json"],
+                            file_count="single",
+                            type="filepath",
                         )
                     skip_validation = gr.Checkbox(label="Skip LLM #2 validation", value=False)
                     generate_btn = gr.Button("Generate document", variant="primary")
@@ -1389,7 +1419,7 @@ def build_ui() -> gr.Blocks:
                         label="Job result",
                         value=(
                             '<div style="opacity:0.75;line-height:1.4">'
-                            "Upload a template + JSON, then click "
+                            "Upload a template, paste JSON in the request, then click "
                             "<strong>Generate document</strong>. "
                             "A spinner and live stages will appear here while the job runs."
                             "</div>"

@@ -9,8 +9,11 @@ dependencies = [
     "httpx>=0.28.0",
     "agent-framework-core>=1.13.0",
     "agent-framework-openai>=1.12.0",
+    "fastmcp>=3.4.6",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
+    "langchain-core>=0.3.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.scripts]
@@ -20,3 +23,14 @@ doc-maf-ask = "central_agentic_flow.cli:main"
 [build-system]
 requires = ["uv_build>=0.9.3,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+

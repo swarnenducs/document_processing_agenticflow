@@ -12,12 +12,46 @@ from ip_api.core.request_context import require_xid
 from ip_api.services.trace_log import log_event
 
 
+def _jsonable(value: Any) -> Any:
+    """Pydantic / FastMCP Root → JSON-serializable dict."""
+    if value is None or isinstance(value, (dict, list, str, int, float, bool)):
+        return value
+    json_fn = getattr(value, "model_dump_json", None)
+    if callable(json_fn):
+        import json
+
+        return json.loads(json_fn())
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        try:
+            dumped = dump(mode="json")
+        except TypeError:
+            dumped = dump()
+        if isinstance(dumped, dict):
+            return dumped
+        if dumped is not value:
+            return _jsonable(dumped)
+    fields = getattr(type(value), "model_fields", None)
+    if fields:
+        return {name: _jsonable(getattr(value, name, None)) for name in fields}
+    try:
+        dumped = vars(value)
+        if isinstance(dumped, dict) and dumped:
+            return dumped
+    except TypeError:
+        pass
+    return value
+
+
 def tool_result_payload(result: Any) -> Any:
-    """Normalize FastMCP CallToolResult into a JSON-serializable payload."""
-    if result.data is not None:
-        return result.data
-    if result.structured_content is not None:
-        return result.structured_content
+    """Normalize FastMCP CallToolResult into a JSON object (dict)."""
+    structured = getattr(result, "structured_content", None)
+    if isinstance(structured, dict):
+        return structured
+    data = getattr(result, "data", None)
+    converted = _jsonable(data)
+    if isinstance(converted, dict):
+        return converted
     texts: list[str] = []
     for block in result.content or []:
         text = getattr(block, "text", None)
@@ -41,9 +75,12 @@ class MCPAgentClient:
             return [t.name for t in tools]
 
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+        from ip_api.flow_debug import flow_breakpoint
+
         xid = require_xid()
         started = time.perf_counter()
         args = arguments or {}
+        flow_breakpoint("mcp_call_tool", tool_name=name, xid=xid)
         try:
             async with Client(self.target, timeout=self.timeout) as client:
                 result = await client.call_tool(name, args)

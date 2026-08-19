@@ -1,0 +1,100 @@
+# Central agent MCP registry (YAML).
+# Add a new MCP by copying a server block — no Python change required.
+#
+# Invoke modes:
+#   ask   — LLM /ask may call this MCP
+#   jobs  — API /invoke (document jobs, voice REST) may call this MCP
+#
+# URLs support ${ENV} and ${ENV:-default}.
+# Optional: instructions_file (markdown next to this file or under prompts/).
+
+orchestrator:
+  instructions_file: orchestrator_instructions.md
+
+servers:
+  - name: contract-autocreation-mcp
+    aliases: [document, template-auto-creation]
+    mcp: contract_autocreation_mcp
+    enabled: true
+    url: "${DOCUMENT_MCP_URL:-http://127.0.0.1:8001/mcp}"
+    prefix: document
+    description: Template auto-creation — fill a Word .docx from JSON (LangGraph).
+    invoke:
+      modes: [ask, jobs]
+      default_tool: generate_document
+      tools:
+        health:
+          when: "Ping document MCP liveness."
+        generate_document:
+          when: >
+            Fill a Word .docx from a template and JSON. Use for generate-document
+            jobs and when the user asks to create/fill a contract or template.
+          request:
+            required: [template_path]
+            optional:
+              [data_path, data_json, output_path, job_id, xid, skip_validation,
+               skip_extraction_validation, max_retries, validation_threshold]
+    instructions: |
+      Call document_generate_document with template_path and either data_path or data_json.
+      Paths may be local files or Azure Blob refs
+      (blob://container/jobs/{job_id}/upload/... or .../download/...).
+      Pass job_id when a document job already exists so SQL/accuracy can be updated.
+
+  - name: voice-agent
+    aliases: [voice]
+    mcp: voice_process_mcp
+    enabled: true
+    url: "${VOICE_MCP_URL:-http://127.0.0.1:8002/mcp}"
+    prefix: voice
+    description: Voice agent — spoken/typed create-contract with human-in-the-loop confirm.
+    invoke:
+      modes: [ask, jobs]
+      default_tool: start_voice_contract
+      tools:
+        health:
+          when: "Ping voice MCP liveness."
+        start_voice_contract:
+          when: "User wants to create a contract from spoken or typed text."
+          request:
+            required: [transcript]
+            optional: [auto_create]
+        confirm_voice_contract:
+          when: "User confirmed the legal entity and contract reference (HITL resume)."
+          request:
+            required: [legal_entity, contract_reference_number]
+            optional: [thread_id, user_text, transcript]
+        list_voice_contracts:
+          when: "User asks to list saved voice contracts."
+          request:
+            optional: [limit]
+    instructions: |
+      Call voice_start_voice_contract with the transcript.
+      If the tool returns needs_confirmation, ask the user then call
+      voice_confirm_voice_contract (prefer thread_id from the start response).
+
+  # Example extra MCP — set enabled: true and a live URL (or MAF_EXTRA_MCPS).
+  - name: fabric-sql-agent
+    aliases: [fabric]
+    mcp: fabric_sql_agent_mcp
+    enabled: false
+    url: "${FABRIC_SQL_AGENT_URL:-http://127.0.0.1:8004/mcp}"
+    prefix: fabric
+    description: Fabric SQL agent (warehouse / lakehouse query).
+    invoke:
+      modes: [ask]
+      default_tool: run_sql
+      tools:
+        list_tables:
+          when: "User asks which Fabric SQL tables or lakehouse tables exist."
+        describe_table:
+          when: "User asks for a Fabric table schema."
+          request:
+            required: [table]
+        run_sql:
+          when: "User asks to query Fabric SQL / warehouse / lakehouse data."
+          request:
+            required: [sql]
+            optional: [limit, warehouse]
+    instructions: |
+      Call fabric_list_tables or fabric_describe_table to discover schema.
+      Call fabric_run_sql with the SQL; never invent query results.

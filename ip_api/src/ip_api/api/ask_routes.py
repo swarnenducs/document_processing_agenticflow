@@ -1,4 +1,4 @@
-"""Thin API entry: POST /api/ask → MAF service (or embedded orchestrator)."""
+"""Thin API entry: POST /api/ask → MAF HTTP service."""
 
 from __future__ import annotations
 
@@ -39,13 +39,12 @@ def _maf_base_url() -> str:
     return (os.getenv("MAF_BASE_URL") or os.getenv("MAF_URL") or "http://127.0.0.1:8003").rstrip("/")
 
 
-def _maf_embedded() -> bool:
-    return (os.getenv("MAF_EMBEDDED", "false") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest) -> AskResponse:
-    """Proxy to standalone MAF service, or run embedded when MAF_EMBEDDED=true."""
+    """Proxy to standalone MAF service over HTTP."""
+    from ip_api.flow_debug import flow_breakpoint
+
+    flow_breakpoint("api_ask", message=body.message, session_id=body.session_id)
     session = ensure_request_session(
         request_kind="maf",
         session_id=body.session_id,
@@ -53,25 +52,6 @@ async def ask(body: AskRequest) -> AskResponse:
         user_email=body.user_email,
         path="/api/ask",
     )
-
-    if _maf_embedded():
-        from central_agentic_flow.orchestrator import ask_maf
-
-        try:
-            result = await ask_maf(body.message, instructions=body.instructions)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"MAF ask failed: {exc}") from exc
-        return AskResponse(
-            text=result.text,
-            response_id=result.response_id,
-            session_id=session.session_id,
-            user_id=session.user_id,
-            user_email=session.user_email,
-        )
 
     url = f"{_maf_base_url()}/ask"
     payload = {
@@ -109,43 +89,7 @@ async def ask(body: AskRequest) -> AskResponse:
 
 @router.get("/ask/health")
 async def ask_health() -> dict[str, Any]:
-    """Readiness: proxy MAF /ask/health (or embedded client resolve)."""
-    if _maf_embedded():
-        try:
-            from central_agentic_flow.orchestrator import (
-                document_mcp_url,
-                resolve_maf_chat_client,
-                voice_mcp_url,
-            )
+    """Readiness: proxy MAF /ask/health."""
+    from ip_api.services.maf_client import maf_health
 
-            client = resolve_maf_chat_client()
-            return {
-                "ok": True,
-                "orchestrator": "maf",
-                "mode": "embedded",
-                "chat_client": type(client).__name__,
-                "document_mcp_url": document_mcp_url(),
-                "voice_mcp_url": voice_mcp_url(),
-            }
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "orchestrator": "maf", "mode": "embedded", "error": str(exc)}
-
-    url = f"{_maf_base_url()}/ask/health"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(url)
-        payload = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {
-            "ok": resp.status_code < 400,
-            "status_code": resp.status_code,
-        }
-        if isinstance(payload, dict):
-            return {**payload, "mode": "proxy", "maf_base_url": _maf_base_url()}
-        return {"ok": True, "mode": "proxy", "maf_base_url": _maf_base_url(), "payload": payload}
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "orchestrator": "maf",
-            "mode": "proxy",
-            "maf_base_url": _maf_base_url(),
-            "error": str(exc),
-        }
+    return await maf_health()

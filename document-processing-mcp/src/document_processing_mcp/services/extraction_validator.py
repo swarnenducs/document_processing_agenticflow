@@ -70,7 +70,7 @@ def validate_extraction(
     this function requires a live validator LLM.
     """
     from document_processing_mcp.services.llm_factory import (
-        get_validator_llm,
+        LLMAsJudge,
         is_validator_available,
     )
     from document_processing_mcp.services.prompts.extraction_validator_prompt import (
@@ -82,10 +82,10 @@ def validate_extraction(
             "Extraction validator LLM is required. Check VALIDATOR_PROVIDER credentials."
         )
 
-    llm, config = get_validator_llm(
+    llm, config = LLMAsJudge(
         model_id=model_id,
         structured_schema=_LLMExtractionPayload,
-    )
+    ).as_tuple()
     def _clip(text: str, limit: int) -> str:
         if len(text) <= limit:
             return text

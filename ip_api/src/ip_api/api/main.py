@@ -98,8 +98,10 @@ async def lifespan(_app: FastAPI):
     load_dotenv()
     cfg = settings()
     cfg.ensure_directories()
+    from ip_api.storage.db import ensure_schema
     from ip_api.storage.session_store import get_session_store
 
+    ensure_schema()
     get_session_store()
     yield
 
@@ -121,6 +123,11 @@ def create_app() -> FastAPI:
     app.include_router(router, prefix="/api/v1")
     app.include_router(mcp_router, prefix="/api/v1")
     app.include_router(ask_router, prefix="/api")
+
+    @app.get("/", include_in_schema=False)
+    def root() -> dict[str, object]:
+        return {"ok": True, "health": "/api/v1/health", "docs": "/docs"}
+
     return app
 
 

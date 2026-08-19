@@ -1,0 +1,10 @@
+{
+  "python.analysis.extraPaths": [
+    "document-processing-mcp/src",
+    "voice_enable_mcp/src",
+    "central-agentic-flow/src",
+    "ip_api/src",
+    "UI/src",
+    "."
+  ]
+}

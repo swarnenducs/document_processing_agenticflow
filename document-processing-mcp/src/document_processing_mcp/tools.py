@@ -182,7 +182,7 @@ def compute_confidence_report_tool(
     generation_json: str,
     validation_json: str | None = None,
 ) -> dict[str, Any]:
-    """Aggregate mapping + generation + validation into an overall generator confidence score."""
+    """Aggregate mapping + generation + validation into an overall generator confidence score (Document MCP only)."""
     mapping = MappingResult.model_validate_json(mapping_json)
     generation = GenerationResult.model_validate_json(generation_json)
     validation = (

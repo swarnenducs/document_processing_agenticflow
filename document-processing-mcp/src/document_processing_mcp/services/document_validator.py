@@ -119,7 +119,7 @@ def _llm_validation(
     model_id: str | None = None,
 ) -> ValidationResult:
     from document_processing_mcp.services.llm_factory import (
-        get_validator_llm,
+        LLMAsJudge,
         is_validator_available,
     )
 
@@ -132,10 +132,8 @@ def _llm_validation(
     from document_processing_mcp.services.prompts import build_validator_chain
 
     try:
-        llm, config = get_validator_llm(
-            model_id=model_id,
-            structured_schema=_LLMValidationPayload,
-        )
+        judge = LLMAsJudge(model_id=model_id, structured_schema=_LLMValidationPayload)
+        llm, config = judge.as_tuple()
     except (ImportError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Failed to build validator LLM: {exc}") from exc
 
@@ -212,7 +210,7 @@ def validate_documents(
     *,
     model_id: str | None = None,
 ) -> ValidationResult:
-    """Step 4: LLM-only validation via init_chat_model (switchable provider/model)."""
+    """Step 4: LLM-as-judge validation via ``LLMAsJudge`` / init_chat_model."""
     return _llm_validation(
         template, generated_path, json_data, mapping, model_id=model_id
     )

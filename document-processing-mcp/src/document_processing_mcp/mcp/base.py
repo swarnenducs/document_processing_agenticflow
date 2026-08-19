@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from abc import ABC, abstractmethod
 
@@ -35,13 +36,19 @@ class BaseAgentMCPServer(FastMCP, ABC):
 
     def run_http(self, *, show_banner: bool = False) -> None:
         """Serve Streamable HTTP for FastAPI / remote MCP clients."""
-        self.run(
-            transport="http",
-            host=self.host,
-            port=self.port,
-            show_banner=show_banner,
-        )
+        try:
+            self.run(
+                transport="http",
+                host=self.host,
+                port=self.port,
+                show_banner=show_banner,
+            )
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return
 
     def run_stdio(self, *, show_banner: bool = False) -> None:
         """Serve stdio (Cursor / local MCP hosts)."""
-        self.run(transport="stdio", show_banner=show_banner)
+        try:
+            self.run(transport="stdio", show_banner=show_banner)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return

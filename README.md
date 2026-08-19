@@ -2,16 +2,19 @@
 
 LangGraph workspace (managed with **UV**) that turns a Word `.docx` template + JSON data into a new Word document while preserving the original Word XML styles — with **tool-wrapped steps**, **generator confidence scores**, and **two separate LLMs**.
 
-**Interview / architecture walkthrough:** see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).  
-**LangGraph interview prep (state, edges, dynamic models):** see [INTERVIEW_LANGGRAPH.md](INTERVIEW_LANGGRAPH.md).  
-**How voice → contract works (LangGraph agent + HITL):** see [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md).  
-**Deploy to Azure Web Apps (GitHub Actions CI/CD):** see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+**Docs index:** [docs/README.md](docs/README.md).  
+**Interview / architecture walkthrough:** see [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md).  
+**LangGraph interview prep (state, edges, dynamic models):** see [docs/INTERVIEW_LANGGRAPH.md](docs/INTERVIEW_LANGGRAPH.md).  
+**How voice → contract works (LangGraph agent + HITL):** see [docs/VOICE_CONTRACT_FLOW.md](docs/VOICE_CONTRACT_FLOW.md).  
+**Deploy to Azure Web Apps (GitHub Actions CI/CD):** see [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
 
 ## Two separate LLMs (provider-injectable)
 
-Mapper and validator are **independent roles**. Each can use a different provider via env
-(`MAPPER_PROVIDER` / `VALIDATOR_PROVIDER`), compact ids (`MAPPER_MODEL_ID=azure_openai:gpt-5-mini`),
-or you can inject a custom builder in code with `register_llm_provider(...)`.
+Mapper and validator are **independent roles**. Prefer LangChain compact ids
+(`MAPPER_MODEL_ID=openai:gpt-5-mini`, `VALIDATOR_MODEL_ID=openai:gpt-4.1-mini`) —
+the same as `init_chat_model("openai:gpt-5-mini", temperature=0)`. Split
+`MAPPER_PROVIDER` / `MAPPER_MODEL` still works, and you can inject a custom
+builder with `register_llm_provider(...)`.
 Built-in chat models are created with LangChain **`init_chat_model`**.
 
 Built-in providers: **`openai`**, **`azure_openai`** (alias `azure`), **`groq`**,
@@ -97,6 +100,8 @@ load_json → extract_styles → map_fields (LLM #1 OpenAI) → generate_docx �
 uv sync
 cp .env.example .env   # add your OPENAI_API_KEY + GROQ_API_KEY
 ```
+
+Each component also has its own `.env.example` for a future split repo (`document-processing-mcp/`, `voice_enable_mcp/`, `central-agentic-flow/`, `ip_api/`, `UI/`). Copy that file to `.env` in the same folder; it is loaded first. The root `.env` fills any keys the component file does not set.
 
 For plain `pip` installs (Azure zip deploy, CI without UV), use the exported lock files:
 
@@ -242,7 +247,7 @@ src/document_processing_agenticflow/
   api/                     # FastAPI REST API
   storage/                 # SQLite + file paths
   core/settings.py         # env-based paths
-samples/  scripts/  tests/
+samples/  scripts/  tests/   # tests/ points at per-component tests/
 ```
 
 ## Template placeholders (token syntax only)
@@ -264,11 +269,13 @@ Exact-name rules are used only when the configured **mapper** provider has no cr
 
 ## Tests
 
-```bash
-uv run pytest
-```
+Each component has its own `tests/` folder.
 
-Tests exercise offline generation with manual mappings (no live API keys required). Mapper/validator require LLMs at runtime.
+```bash
+uv run pytest                                      # all packages
+cd document-processing-mcp && uv run pytest        # one package
+# after pip: pip install -r requirements-dev.txt && pytest
+```
 
 ## FastAPI + storage
 
@@ -299,7 +306,7 @@ uv run doc-api
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/health` | Health + configured storage paths |
-| `POST` | `/api/v1/documents/jobs` | Upload `.docx` + JSON → async LangGraph job (`202`) |
+| `POST` | `/api/v1/documents/jobs` | Upload `.docx` + JSON form field `data` → async job (`202`) |
 | `GET` | `/api/v1/documents/jobs/{job_id}` | Job status, confidence, validation |
 | `GET` | `/api/v1/documents/jobs/{job_id}/download` | Download generated `.docx` |
 | `DELETE` | `/api/v1/documents/jobs/{job_id}` | Delete job + files |
@@ -317,7 +324,7 @@ uv run doc-api
 ```bash
 curl -X POST http://localhost:8000/api/v1/documents/jobs \
   -F "template=@samples/templates/invoice_template.docx" \
-  -F "data=@samples/data/invoice.json;type=application/json"
+  -F "data=<samples/data/invoice.json"
 
 curl http://localhost:8000/api/v1/documents/jobs/{job_id}
 curl -O http://localhost:8000/api/v1/documents/jobs/{job_id}/download
@@ -347,7 +354,7 @@ curl -s http://localhost:8000/api/v1/voice/contract/confirm \
   -d '{"legal_entity":"AVC","contract_reference_number":"CR-1001","thread_id":"<THREAD_ID>","user_text":"yes"}'
 ```
 
-Full walkthrough: [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md).
+Full walkthrough: [docs/VOICE_CONTRACT_FLOW.md](docs/VOICE_CONTRACT_FLOW.md).
 
 ## Gradio UI
 
@@ -400,7 +407,7 @@ Open **http://127.0.0.1:7860**
 
 | Tab | What it does |
 |-----|----------------|
-| **Generate Document** (1st) | **Upload** `.docx` template + **upload** `.json` (or paste JSON) → poll job → download result |
+| **Generate Document** (1st) | **Upload** `.docx` template + **paste JSON in the request** → poll job → download result |
 | **Voice → Contract** (2nd) | Voice/text → LangGraph agent → entity/pricelist lookup → HITL confirm → dummy contract |
 
 

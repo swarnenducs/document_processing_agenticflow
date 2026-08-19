@@ -46,12 +46,17 @@ line-length = 100
 target-version = "py311"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [
+    "document-processing-mcp/tests",
+    "voice_enable_mcp/tests",
+    "central-agentic-flow/tests",
+    "ip_api/tests",
+    "UI/tests",
+]
 pythonpath = [
     "document-processing-mcp/src",
     "voice_enable_mcp/src",
     "central-agentic-flow/src",
     "ip_api/src",
     "UI/src",
-    ".",
 ]

@@ -8,11 +8,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Always load project-root `.env` so keys work even if the process cwd differs
-# (common on Windows when starting the API from another folder).
+# core/ → package → src → <component folder>
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_PROJECT_ROOT / ".env")
-load_dotenv()  # optional cwd `.env` fills any remaining unset keys
+_monorepo = _PROJECT_ROOT.parent
+if (_monorepo / "run_all_components.py").is_file():
+    load_dotenv(_monorepo / ".env", override=False)
+load_dotenv(override=False)
 
 
 def _path_from_env(key: str, default: str) -> Path:

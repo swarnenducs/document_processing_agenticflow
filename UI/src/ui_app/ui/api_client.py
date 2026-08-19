@@ -244,13 +244,23 @@ def create_document_job(
         "template": (tpl.name, tpl.read_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     }
 
-    if isinstance(data, (str, Path)) and Path(data).exists():
-        p = Path(data)
-        files["data_json"] = (p.name, p.read_bytes(), "application/json")
-    elif isinstance(data, dict):
-        form_data["data"] = json.dumps(data)
+    if isinstance(data, dict):
+        payload = data
+    elif isinstance(data, (str, Path)) and Path(data).exists():
+        try:
+            payload = json.loads(Path(data).read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ApiError(f"Invalid JSON: {exc}") from exc
+    elif isinstance(data, str):
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ApiError(f"Invalid JSON: {exc}") from exc
     else:
-        raise ApiError("Provide JSON dict or a .json file path")
+        raise ApiError("Provide JSON as a dict or JSON string in the request")
+    if not isinstance(payload, dict):
+        raise ApiError("JSON root must be an object")
+    form_data["data"] = json.dumps(payload)
 
     with httpx.Client(timeout=60.0) as client:
         resp = client.post(f"{_base_url()}/api/v1/documents/jobs", files=files, data=form_data)

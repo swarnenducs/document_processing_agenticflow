@@ -154,7 +154,10 @@ def stream_document_graph(
         set_role_model_overrides,
     )
 
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
     payload = dict(state)
+    flow_breakpoint("stream_document_graph", status=payload.get("status"), template_path=payload.get("template_path"))
     if mapper_model_id:
         payload["mapper_model_id"] = mapper_model_id
     if validator_model_id:

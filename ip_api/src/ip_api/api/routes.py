@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,15 +31,13 @@ from ip_api.core.settings import settings
 from ip_api.services.job_events import get_job_event_hub, publish_job_stage
 from ip_api.services.pipeline_runner import run_document_job
 from ip_api.services.session_service import ensure_request_session
-from voice_enable_mcp.services.speech_to_text import transcribe_audio
-from voice_enable_mcp.services.voice_contract_workflow import (
-    confirm_voice_contract,
-    run_voice_contract_workflow,
-)
+from ip_api.services.speech_to_text import transcribe_audio
+from ip_api.storage.blob_store import is_blob_ref
 from ip_api.storage.job_store import JobRecord, JobStore
 
 router = APIRouter()
 _store: JobStore | None = None
+logger = logging.getLogger(__name__)
 
 
 def _attach_session(payload: dict[str, Any], session) -> dict[str, Any]:
@@ -47,11 +47,107 @@ def _attach_session(payload: dict[str, Any], session) -> dict[str, Any]:
     return payload
 
 
+def _format_elapsed_ms(elapsed_ms: float) -> str:
+    total_s = max(0.0, float(elapsed_ms) / 1000.0)
+    if total_s < 60:
+        return f"{total_s:.1f} s"
+    minutes = int(total_s // 60)
+    seconds = total_s - minutes * 60
+    if minutes < 60:
+        return f"{minutes}m {seconds:.1f}s"
+    hours = minutes // 60
+    minutes_rem = minutes % 60
+    return f"{hours}h {minutes_rem}m {seconds:.0f}s"
+
+
+def _coerce_elapsed_ms(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        from decimal import Decimal
+
+        if isinstance(value, Decimal):
+            return float(value)
+    except Exception:  # noqa: BLE001
+        pass
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _pair_elapsed(ms: object, human: object) -> tuple[float | None, str | None]:
+    coerced = _coerce_elapsed_ms(ms)
+    label = human.strip() if isinstance(human, str) and human.strip() else None
+    if coerced is not None:
+        return coerced, label or _format_elapsed_ms(coerced)
+    if label:
+        return None, label
+    return None, None
+
+
+def _job_elapsed(
+    result: dict[str, Any] | None,
+    created_at: object | None,
+    completed_at: object | None,
+    *,
+    elapsed_ms: object | None = None,
+    elapsed: object | None = None,
+) -> tuple[float | None, str | None]:
+    """Prefer Document MCP wall time; fall back to columns, then created/completed stamps."""
+    if isinstance(result, dict):
+        pair = _pair_elapsed(result.get("elapsed_ms"), result.get("elapsed"))
+        if pair != (None, None):
+            return pair
+    pair = _pair_elapsed(elapsed_ms, elapsed)
+    if pair != (None, None):
+        return pair
+    start = _parse_iso(created_at)
+    end = _parse_iso(completed_at)
+    if start is None or end is None:
+        return None, None
+    try:
+        if start.tzinfo is None and end.tzinfo is not None:
+            start = start.replace(tzinfo=end.tzinfo)
+        elif end.tzinfo is None and start.tzinfo is not None:
+            end = end.replace(tzinfo=start.tzinfo)
+        if end >= start:
+            ms = (end - start).total_seconds() * 1000.0
+            return round(ms, 1), _format_elapsed_ms(ms)
+    except TypeError:
+        return None, None
+    return None, None
+
+
 def get_store() -> JobStore:
     global _store
     if _store is None:
         _store = JobStore()
     return _store
+
+
+def _download_ready(status: str | None, output_path: str | None) -> bool:
+    if status != "completed" or not output_path:
+        return False
+    return is_blob_ref(output_path) or Path(output_path).exists()
 
 ALLOWED_AUDIO = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".flac"}
 
@@ -78,20 +174,38 @@ async def _save_upload(upload: UploadFile, dest: Path, allowed_suffixes: set[str
 
 
 @router.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    import os
-
-    import httpx
-
+async def health() -> HealthResponse:
     from ip_api.services.llm_factory import (
         is_mapper_available,
         is_validator_available,
         mapper_config,
         validator_config,
     )
-    from voice_enable_mcp.services.speech_to_text import resolve_speech_provider
+    from ip_api.services.speech_to_text import resolve_speech_provider
+
+    from ip_api.services.maf_client import maf_health, maf_base_url
+    from ip_api.storage.blob_store import get_blob_store
+    from ip_api.storage.db import build_database_url, engine_uses_mssql
 
     cfg = settings()
+    blob = get_blob_store()
+    db_url = build_database_url()
+    sql_ok: bool | None = None
+    if cfg.uses_azure_sql:
+        try:
+            from ip_api.storage.db import get_engine
+            from sqlalchemy import text
+
+            with get_engine().connect() as conn:
+                conn.execute(text("SELECT 1"))
+            sql_ok = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Azure SQL health check failed: %s", exc)
+            sql_ok = False
+
+    blob_ok: bool | None = None
+    if blob.enabled:
+        blob_ok = blob.ping()
     mapper = mapper_config()
     validator = validator_config()
     mapper_ok = is_mapper_available()
@@ -102,54 +216,38 @@ def health() -> HealthResponse:
     except Exception:  # noqa: BLE001
         speech_ok = False
 
-    def _mcp_available(url: str) -> bool:
-        """True if FastMCP HTTP endpoint accepts connections (any non-5xx)."""
-        try:
-            with httpx.Client(timeout=2.0) as client:
-                resp = client.get(url.rstrip("/"))
-            return resp.status_code < 500
-        except Exception:  # noqa: BLE001
-            return False
+    def _mcp_from_catalog(catalog: dict[str, Any], name: str) -> bool:
+        for row in catalog.get("servers") or []:
+            if isinstance(row, dict) and row.get("name") == name:
+                return bool(row.get("available"))
+        return False
 
-    doc_mcp_url = os.getenv("DOCUMENT_MCP_URL", "http://127.0.0.1:8001/mcp")
-    voice_mcp_url = os.getenv("VOICE_MCP_URL", "http://127.0.0.1:8002/mcp")
-    doc_mcp_ok = _mcp_available(doc_mcp_url)
-    voice_mcp_ok = _mcp_available(voice_mcp_url)
-
-    maf_embedded = (os.getenv("MAF_EMBEDDED", "false") or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    maf_base = (os.getenv("MAF_BASE_URL") or os.getenv("MAF_URL") or "http://127.0.0.1:8003").rstrip(
-        "/"
+    try:
+        catalog = await asyncio.wait_for(maf_health(), timeout=2.5)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("MAF health probe failed: %s", exc)
+        catalog = {"ok": False}
+    if not isinstance(catalog, dict):
+        catalog = {"ok": False}
+    maf_ok = bool(catalog.get("ok"))
+    doc_mcp_ok = (
+        _mcp_from_catalog(catalog, "contract-autocreation-mcp")
+        or _mcp_from_catalog(catalog, "template-auto-creation")
+        or _mcp_from_catalog(catalog, "document")
     )
-    maf_mode: str | None
-    maf_ok = False
-    if maf_embedded:
-        maf_mode = "embedded"
-        try:
-            from central_agentic_flow.orchestrator import resolve_maf_chat_client
-
-            resolve_maf_chat_client()
-            maf_ok = True
-        except Exception:  # noqa: BLE001
-            maf_ok = False
-    else:
-        maf_mode = "proxy"
-        try:
-            with httpx.Client(timeout=2.0) as client:
-                resp = client.get(f"{maf_base}/ask/health")
-            if resp.status_code < 500:
-                payload = resp.json() if "application/json" in resp.headers.get("content-type", "") else {}
-                maf_ok = bool(payload.get("ok", True)) if isinstance(payload, dict) else True
-        except Exception:  # noqa: BLE001
-            maf_ok = False
+    voice_mcp_ok = _mcp_from_catalog(catalog, "voice-agent") or _mcp_from_catalog(catalog, "voice")
+    maf_mode = "proxy"
+    maf_base = maf_base_url()
 
     return HealthResponse(
         storage_base_path=str(cfg.storage_base_path),
         sqlite_database_path=str(cfg.sqlite_database_path),
+        storage_backend="azure_blob" if blob.enabled else "local",
+        azure_sql_server=cfg.azure_sql_server if engine_uses_mssql(db_url) else None,
+        azure_sql_database=cfg.azure_sql_database if engine_uses_mssql(db_url) else None,
+        azure_blob_container=cfg.azure_blob_container if blob.enabled else None,
+        azure_sql_available=sql_ok,
+        azure_blob_available=blob_ok,
         speech_provider=cfg.speech_provider,
         mapper_provider=mapper.provider,
         mapper_model=mapper.model,
@@ -162,7 +260,7 @@ def health() -> HealthResponse:
         voice_mcp_available=voice_mcp_ok,
         maf_available=maf_ok,
         maf_mode=maf_mode,
-        maf_base_url=maf_base if not maf_embedded else None,
+        maf_base_url=maf_base,
         status="ok" if mapper_ok else "degraded",
     )
 
@@ -176,12 +274,9 @@ def health() -> HealthResponse:
 async def create_document_job(
     background_tasks: BackgroundTasks,
     template: UploadFile = File(..., description="Word .docx template"),
-    data_json: UploadFile | None = File(
-        default=None, description="JSON data file (alternative to data field)"
-    ),
-    data: str | None = Form(
-        default=None,
-        description="JSON object as string (alternative to data_json file)",
+    data: str = Form(
+        ...,
+        description="JSON object sent as a request form field (not a file upload)",
     ),
     skip_validation: bool = Form(default=False),
     max_retries: int = Form(default=1),
@@ -191,11 +286,18 @@ async def create_document_job(
     user_email: str | None = Form(default=None),
 ) -> JobAcceptedResponse:
     """
-    Upload a Word template + JSON data model → async LangGraph job.
+    Upload a Word template and send JSON data in the request (form field ``data``).
 
     Returns job_id immediately. Prefer long-poll:
     ``GET /documents/jobs/{job_id}?wait=true`` then download when completed.
     """
+    from ip_api.flow_debug import flow_breakpoint
+
+    flow_breakpoint(
+        "create_document_job",
+        template=getattr(template, "filename", None),
+        session_id=session_id,
+    )
     session = ensure_request_session(
         request_kind="document",
         session_id=session_id,
@@ -204,34 +306,20 @@ async def create_document_job(
         path="/api/v1/documents/jobs",
     )
 
-    if not data and not data_json:
-        raise HTTPException(status_code=400, detail="Provide `data` (form JSON string) or `data_json` file")
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON in `data`: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON root must be an object")
 
     job_id, _job_dir, template_path, data_path, output_path = get_store().create_job_paths(
         template_filename=template.filename or "template.docx",
     )
 
     await _save_upload(template, template_path, allowed_suffixes={".docx"})
-
-    if data_json:
-        # Always save as data.json (avoids issues with spaces in uploaded filenames)
-        await _save_upload(data_json, data_path, allowed_suffixes={".json"})
-        # Re-validate JSON parses
-        try:
-            payload = json.loads(data_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON file: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="JSON root must be an object")
-        data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    else:
-        try:
-            payload = json.loads(data or "{}")
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON in `data`: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="JSON root must be an object")
-        data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     get_store().insert_job(job_id, template_path, data_path, output_path, xid=require_xid())
 
@@ -279,13 +367,21 @@ def list_document_jobs(limit: int = 50) -> JobListResponse:
             scores_pct = confidence.get("scores_pct")
         if scores_pct is None and isinstance(row.get("result"), dict):
             scores_pct = row["result"].get("scores_pct")
+        elapsed_ms, elapsed = _job_elapsed(
+            row.get("result") if isinstance(row.get("result"), dict) else None,
+            row.get("created_at"),
+            row.get("completed_at"),
+            elapsed_ms=row.get("elapsed_ms"),
+            elapsed=row.get("elapsed"),
+        )
         download_url = None
         out = row.get("output_path")
-        if row.get("status") == "completed" and out and Path(str(out)).exists():
+        if _download_ready(row.get("status"), out):
             download_url = f"/api/v1/documents/jobs/{row['job_id']}/download"
         jobs.append(
             JobStatusResponse(
                 job_id=row["job_id"],
+                mcp=row.get("mcp"),
                 xid=row.get("xid"),
                 status=row["status"],
                 template_path=row.get("template_path"),
@@ -301,6 +397,8 @@ def list_document_jobs(limit: int = 50) -> JobListResponse:
                 created_at=row.get("created_at"),
                 updated_at=row.get("updated_at"),
                 completed_at=row.get("completed_at"),
+                elapsed_ms=elapsed_ms,
+                elapsed=elapsed,
                 download_url=download_url,
                 sqlite_persisted=True,
             )
@@ -310,7 +408,7 @@ def list_document_jobs(limit: int = 50) -> JobListResponse:
 
 def _job_status_response(job: JobRecord) -> JobStatusResponse:
     download_url = None
-    if job.status == "completed" and job.output_path and Path(job.output_path).exists():
+    if _download_ready(job.status, job.output_path):
         download_url = f"/api/v1/documents/jobs/{job.id}/download"
 
     confidence = json.loads(job.confidence_json) if job.confidence_json else None
@@ -328,8 +426,17 @@ def _job_status_response(job: JobRecord) -> JobStatusResponse:
     if scores_pct is None and isinstance(result, dict):
         scores_pct = result.get("scores_pct")
 
+    elapsed_ms, elapsed = _job_elapsed(
+        result if isinstance(result, dict) else None,
+        job.created_at,
+        job.completed_at,
+        elapsed_ms=job.elapsed_ms,
+        elapsed=job.elapsed,
+    )
+
     return JobStatusResponse(
         job_id=job.id,
+        mcp=job.mcp,
         xid=job.xid,
         status=job.status,
         template_path=job.template_path,
@@ -345,8 +452,11 @@ def _job_status_response(job: JobRecord) -> JobStatusResponse:
         created_at=job.created_at,
         updated_at=job.updated_at,
         completed_at=job.completed_at,
+        elapsed_ms=elapsed_ms,
+        elapsed=elapsed,
         download_url=download_url,
         sqlite_persisted=True,
+        accuracy_report=get_store().get_accuracy_report(job.id),
     )
 
 
@@ -385,6 +495,19 @@ async def get_document_job(
             return _job_status_response(job)
 
     return _job_status_response(job)
+
+
+@router.get("/documents/jobs/{job_id}/accuracy")
+def get_document_accuracy(job_id: str) -> dict[str, Any]:
+    """Accuracy / confidence report persisted for this document job."""
+    try:
+        get_store().get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    report = get_store().get_accuracy_report(job_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"No accuracy report for job {job_id}")
+    return report
 
 
 @router.websocket("/documents/jobs/{job_id}/ws")
@@ -468,13 +591,15 @@ def download_document(job_id: str) -> FileResponse:
 
     if job.status != "completed":
         raise HTTPException(status_code=409, detail=f"Job not ready. Status: {job.status}")
-    if not job.output_path or not Path(job.output_path).exists():
-        raise HTTPException(status_code=404, detail="Output file not found")
+    try:
+        output = get_store().resolve_output_file(job)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return FileResponse(
-        path=job.output_path,
+        path=output,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=Path(job.output_path).name,
+        filename=output.name,
     )
 
 
@@ -554,11 +679,13 @@ def get_transcription(transcription_id: str) -> dict[str, Any]:
 
 
 @router.post("/voice/contract", response_model=VoiceContractResponse)
-def voice_contract_from_text(body: VoiceContractRequest) -> VoiceContractResponse:
-    """
-    Start LangGraph voice-contract agent.
-    Returns needs_confirmation + thread_id for HITL resume, unless auto_create=true.
-    """
+async def voice_contract_from_text(body: VoiceContractRequest) -> VoiceContractResponse:
+    """Start voice-contract via MAF → voice MCP (may return needs_confirmation)."""
+    from ip_api.flow_debug import flow_breakpoint
+
+    from ip_api.services.maf_client import invoke_tool
+
+    flow_breakpoint("voice_contract_from_text", transcript=body.transcript, session_id=body.session_id)
     session = ensure_request_session(
         request_kind="voice",
         session_id=body.session_id,
@@ -566,27 +693,31 @@ def voice_contract_from_text(body: VoiceContractRequest) -> VoiceContractRespons
         user_email=body.user_email,
         path="/api/v1/voice/contract",
     )
-    store = get_store()
-    result = run_voice_contract_workflow(
-        body.transcript,
-        store=store,
-        auto_create=body.auto_create,
-    )
-    payload = result.to_dict()
-    if result.ok and result.status == "completed":
-        saved = _persist_voice_contract(store, result)
-        payload["contract_id"] = saved["contract_id"]
-        payload["contract_file"] = saved.get("contract_file")
-        payload["contract_text_file"] = saved.get("contract_text_file") or result.contract_text_file
-        payload["message"] = (
-            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
+    try:
+        payload = await invoke_tool(
+            "voice",
+            "start_voice_contract",
+            {"transcript": body.transcript, "auto_create": body.auto_create},
         )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"central agent voice call failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "message": str(payload)}
     return VoiceContractResponse(**_attach_session(payload, session))
 
 
 @router.post("/voice/contract/confirm", response_model=VoiceContractResponse)
-def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceContractResponse:
-    """Resume LangGraph HITL interrupt (preferred) or finalize by entity/ref."""
+async def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceContractResponse:
+    """Resume HITL via MAF → voice MCP."""
+    from ip_api.flow_debug import flow_breakpoint
+
+    from ip_api.services.maf_client import invoke_tool
+
+    flow_breakpoint(
+        "voice_contract_confirm",
+        thread_id=body.thread_id,
+        legal_entity=body.legal_entity,
+    )
     session = ensure_request_session(
         request_kind="voice",
         session_id=body.session_id,
@@ -594,25 +725,22 @@ def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceContractRe
         user_email=body.user_email,
         path="/api/v1/voice/contract/confirm",
     )
-    store = get_store()
-    result = confirm_voice_contract(
-        entity_code_or_name=body.legal_entity,
-        contract_reference_number=body.contract_reference_number,
-        store=store,
-        transcript=body.transcript,
-        thread_id=body.thread_id,
-        user_text=body.user_text or "yes",
-    )
-    payload = result.to_dict()
-    if result.ok and result.status == "completed":
-        # Always normalize draft files into storage + ensure SQLite row exists.
-        saved = _persist_voice_contract(store, result)
-        payload["contract_id"] = saved["contract_id"]
-        payload["contract_file"] = saved.get("contract_file")
-        payload["contract_text_file"] = saved.get("contract_text_file") or result.contract_text_file
-        payload["message"] = (
-            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
+    try:
+        payload = await invoke_tool(
+            "voice",
+            "confirm_voice_contract",
+            {
+                "legal_entity": body.legal_entity,
+                "contract_reference_number": body.contract_reference_number,
+                "thread_id": body.thread_id,
+                "user_text": body.user_text or "yes",
+                "transcript": body.transcript,
+            },
         )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"central agent voice confirm failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "message": str(payload)}
     return VoiceContractResponse(**_attach_session(payload, session))
 
 
@@ -626,7 +754,9 @@ async def voice_contract_from_audio(
     user_id: str | None = Form(default=None),
     user_email: str | None = Form(default=None),
 ) -> VoiceContractResponse:
-    """Transcribe audio, then parse create-contract (confirmation by default)."""
+    """Transcribe audio in the API, then start the contract via MAF → voice MCP."""
+    from ip_api.services.maf_client import invoke_tool
+
     session = ensure_request_session(
         request_kind="voice",
         session_id=session_id,
@@ -652,8 +782,7 @@ async def voice_contract_from_audio(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
 
-    store = get_store()
-    store.save_transcription(
+    get_store().save_transcription(
         transcription_id,
         audio_path,
         transcription.text,
@@ -661,95 +790,50 @@ async def voice_contract_from_audio(
         transcription.model,
     )
 
-    result = run_voice_contract_workflow(
-        transcription.text,
-        store=store,
-        auto_create=auto_create,
-    )
-    payload = result.to_dict()
+    try:
+        payload = await invoke_tool(
+            "voice",
+            "start_voice_contract",
+            {"transcript": transcription.text, "auto_create": auto_create},
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"central agent voice call failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "message": str(payload)}
     payload["transcription_id"] = transcription_id
     payload["provider"] = transcription.provider
     payload["model"] = transcription.model
-    if result.ok and result.status == "completed":
-        saved = _persist_voice_contract(
-            store,
-            result,
-            transcription_id=transcription_id,
-        )
-        payload["contract_id"] = saved["contract_id"]
-        payload["contract_file"] = saved.get("contract_file")
-        payload["contract_text_file"] = saved.get("contract_text_file") or result.contract_text_file
-        payload["message"] = (
-            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
-        )
     return VoiceContractResponse(**_attach_session(payload, session))
 
 
-def _persist_voice_contract(
-    store: Any,
-    result: Any,
-    *,
-    transcription_id: str | None = None,
-) -> dict[str, Any]:
-    import shutil
+async def _voice_contract_row(contract_id: str) -> dict[str, Any]:
+    from ip_api.services.maf_client import invoke_tool
 
-    contract_id = str(uuid.uuid4())
-    final_docx: str | None = None
-    final_txt: str | None = None
-    dest_dir = settings().storage_base_path / "voice_contracts"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    if result.contract_file:
-        src = Path(result.contract_file)
-        dest = dest_dir / f"{contract_id}.docx"
-        if src.exists():
-            shutil.move(str(src), str(dest))
-            final_docx = str(dest)
-    if result.contract_text_file:
-        src_txt = Path(result.contract_text_file)
-        dest_txt = dest_dir / f"{contract_id}.txt"
-        if src_txt.exists():
-            shutil.move(str(src_txt), str(dest_txt))
-            final_txt = str(dest_txt)
-    elif result.contract_text:
-        dest_txt = dest_dir / f"{contract_id}.txt"
-        dest_txt.write_text(result.contract_text, encoding="utf-8")
-        final_txt = str(dest_txt)
-
-    saved = store.save_voice_contract(
-        contract_id=contract_id,
-        spoken_name=result.spoken_name or result.legal_entity_name or "",
-        spoken_number=result.spoken_number or result.contract_reference_number or "",
-        contact=result.contact or result.legal_entity,
-        legal_entity=result.legal_entity,
-        pricelist=result.pricelist,
-        contract_payload=result.contract_payload,
-        contract_file=final_docx or final_txt,
-        transcript=result.transcript,
-        transcription_id=transcription_id,
-    )
-    saved["contract_text_file"] = final_txt
-    return saved
-
-
-@router.get("/voice/contracts/{contract_id}")
-def get_voice_contract(contract_id: str) -> dict[str, Any]:
+    try:
+        listed = await invoke_tool("voice", "list_voice_contracts", {"limit": 200})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"central agent list contracts failed: {exc}") from exc
+    rows = (listed or {}).get("contracts") if isinstance(listed, dict) else None
+    for row in rows or []:
+        if str(row.get("contract_id") or row.get("id") or "") == contract_id:
+            return row
     try:
         return get_store().get_voice_contract(contract_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/voice/contracts/{contract_id}")
+async def get_voice_contract(contract_id: str) -> dict[str, Any]:
+    return await _voice_contract_row(contract_id)
+
+
 @router.get("/voice/contracts/{contract_id}/download")
-def download_voice_contract(contract_id: str, format: str = "docx") -> FileResponse:
-    try:
-        row = get_store().get_voice_contract(contract_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+async def download_voice_contract(contract_id: str, format: str = "docx") -> FileResponse:
+    row = await _voice_contract_row(contract_id)
 
     path = row.get("contract_file")
     if format.lower() == "txt":
-        # Prefer sibling .txt next to stored file
         if path:
             txt_candidate = Path(path).with_suffix(".txt")
             if txt_candidate.is_file():
@@ -757,9 +841,7 @@ def download_voice_contract(contract_id: str, format: str = "docx") -> FileRespo
         if not path or not str(path).endswith(".txt"):
             payload = row.get("contract_payload") or {}
             if payload:
-                from voice_enable_mcp.services.voice_contract_workflow import (
-                    render_contract_text,
-                )
+                from ip_api.services.contract_text import render_contract_text
 
                 tmp = settings().storage_base_path / "voice_contracts" / f"{contract_id}.txt"
                 tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -779,6 +861,13 @@ def download_voice_contract(contract_id: str, format: str = "docx") -> FileRespo
 
 
 @router.get("/voice/contracts")
-def list_voice_contracts(limit: int = 50) -> dict[str, Any]:
-    rows = get_store().list_voice_contracts(limit=limit)
-    return {"count": len(rows), "contracts": rows}
+async def list_voice_contracts(limit: int = 50) -> dict[str, Any]:
+    from ip_api.services.maf_client import invoke_tool
+
+    try:
+        payload = await invoke_tool("voice", "list_voice_contracts", {"limit": limit})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"central agent list contracts failed: {exc}") from exc
+    if isinstance(payload, dict):
+        return payload
+    return {"count": 0, "contracts": []}
