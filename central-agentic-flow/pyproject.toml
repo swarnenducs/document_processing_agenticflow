@@ -29,6 +29,11 @@ dev = ["pytest>=8.0.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]
+foundry = [
+    "agent-framework-foundry>=1.11.0",
+    "agent-framework-foundry-hosting>=1.0.0b260813",
+    "azure-identity>=1.26.0b2",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

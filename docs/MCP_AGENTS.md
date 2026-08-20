@@ -10,14 +10,19 @@ Gradio UI ──► FastAPI (:8000)
                  ├── /api/v1/documents/*     (direct pipeline / jobs)
                  ├── /api/v1/voice/*         (direct voice workflow)
                  ├── /api/v1/agents/*        (proxies to FastMCP tools)
-                 └── /api/ask ──► MAF (:8003) ──► MCP tools
+                 └── /api/ask ──► MAF (:8003) ──► chat MCP only
                           │
-          ┌───────────────┴────────────────┐
-          ▼                                ▼
- document_process_mcp (:8001/mcp)   voice_process_mcp (:8002/mcp)
- DocumentProcessMCP                 VoiceProcessMCP
- (health, generate_document)        (health, start/confirm/list)
+          ┌──────────────┴──────────────┐          (chat path)
+          ▼                             ▼                ▼
+ document_process_mcp (:8001/mcp) voice_process_mcp   business MCP
+ DocumentProcessMCP               VoiceProcessMCP     (BUSINESS_MCP_URL,
+ (health, generate_document)      (:8002/mcp)          optional)
+          └──────── jobs only: MAF POST /invoke ───────┘
 ```
+
+Chat and jobs are segregated in `central-agentic-flow/config/mcp_registry.yml`:
+document and voice are `modes: [jobs]`, so the LLM never calls them; the chat
+path reaches only the business MCP (`modes: [ask]`).
 
 See [MAF_LOCAL.md](MAF_LOCAL.md) and [COMPONENTS.md](COMPONENTS.md).
 

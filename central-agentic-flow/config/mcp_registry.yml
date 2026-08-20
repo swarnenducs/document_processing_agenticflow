@@ -1,9 +1,12 @@
 # Central agent MCP registry (YAML).
 # Add a new MCP by copying a server block — no Python change required.
 #
-# Invoke modes:
-#   ask   — LLM /ask may call this MCP
+# Invoke modes (kept segregated on purpose):
+#   ask   — LLM chat (/ask and the Foundry hosted agent) may call this MCP
 #   jobs  — API /invoke (document jobs, voice REST) may call this MCP
+#
+# Document and voice are jobs-only: the LLM never picks those tools.
+# Business question answering is a separate ask-only MCP.
 #
 # URLs support ${ENV} and ${ENV:-default}.
 # Optional: instructions_file (markdown next to this file or under prompts/).
@@ -20,7 +23,7 @@ servers:
     prefix: document
     description: Template auto-creation — fill a Word .docx from JSON (LangGraph).
     invoke:
-      modes: [ask, jobs]
+      modes: [jobs]
       default_tool: generate_document
       tools:
         health:
@@ -48,7 +51,7 @@ servers:
     prefix: voice
     description: Voice agent — spoken/typed create-contract with human-in-the-loop confirm.
     invoke:
-      modes: [ask, jobs]
+      modes: [jobs]
       default_tool: start_voice_contract
       tools:
         health:
@@ -71,6 +74,23 @@ servers:
       Call voice_start_voice_contract with the transcript.
       If the tool returns needs_confirmation, ask the user then call
       voice_confirm_voice_contract (prefer thread_id from the start response).
+
+  # Business question answering for the chat path (/ask and the Foundry agent).
+  # Not shipped in this repo: the entry activates only when BUSINESS_MCP_URL is set,
+  # otherwise the URL resolves empty and the server is skipped.
+  - name: business-agent
+    aliases: [business]
+    mcp: business_process_mcp
+    enabled: true
+    url: "${BUSINESS_MCP_URL:-}"
+    prefix: business
+    description: Business prompt responses — domain question answering for chat.
+    invoke:
+      modes: [ask]
+    instructions: |
+      Answer business questions with the business_* tools; never invent a business answer.
+      Document generation and voice contracts are not available here — they run as
+      API jobs. If asked for one, say it must be submitted through the API.
 
   # Example extra MCP — set enabled: true and a live URL (or MAF_EXTRA_MCPS).
   - name: fabric-sql-agent

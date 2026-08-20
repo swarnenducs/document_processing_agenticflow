@@ -101,6 +101,7 @@ def test_yaml_registry_loads_document_and_voice(monkeypatch):
     monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
     monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
     monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("BUSINESS_MCP_URL", raising=False)
 
     from central_agentic_flow.mcp_registry import (
         ask_mcp_servers,
@@ -115,7 +116,6 @@ def test_yaml_registry_loads_document_and_voice(monkeypatch):
     assert names[:2] == ["contract-autocreation-mcp", "voice-agent"]
     assert "fabric-sql-agent" not in names
     document = next(s for s in load_mcp_registry() if s.name == "contract-autocreation-mcp")
-    assert document.allows_ask()
     assert document.allows_jobs()
     assert document.default_tool == "generate_document"
     assert document.tool_rule("generate_document") is not None
@@ -126,10 +126,39 @@ def test_yaml_registry_loads_document_and_voice(monkeypatch):
     assert document.mcp_key == "contract_autocreation_mcp"
     assert get_mcp_server("voice").name == "voice-agent"
     assert get_mcp_server("voice-agent").name == "voice-agent"
-    assert all(s.allows_ask() for s in ask_mcp_servers())
+
+    # Document and voice are jobs-only, so chat sees no tools until a business MCP exists.
+    voice = get_mcp_server("voice-agent")
+    assert not document.allows_ask()
+    assert not voice.allows_ask()
+    assert ask_mcp_servers() == []
     prompt = build_agent_instructions(preamble="Preamble.")
-    assert "document_generate_document" in prompt
-    assert "voice_start_voice_contract" in prompt
+    assert "document_generate_document" not in prompt
+    assert "voice_start_voice_contract" not in prompt
+
+
+def test_business_mcp_is_ask_only_when_configured(monkeypatch):
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.setenv("BUSINESS_MCP_URL", "https://business.example.net/mcp")
+
+    from central_agentic_flow.mcp_registry import (
+        ask_mcp_servers,
+        assert_jobs_invoke,
+        get_mcp_server,
+        reset_mcp_registry,
+    )
+
+    reset_mcp_registry()
+    assert [s.name for s in ask_mcp_servers()] == ["business-agent"]
+
+    business = get_mcp_server("business")
+    assert business.url == "https://business.example.net/mcp"
+    assert business.prefix == "business"
+    with pytest.raises(ValueError, match="not allowed for /invoke"):
+        assert_jobs_invoke(business, "anything")
+    reset_mcp_registry()
 
 
 def test_yaml_registry_extra_server_and_invoke_modes(tmp_path, monkeypatch):

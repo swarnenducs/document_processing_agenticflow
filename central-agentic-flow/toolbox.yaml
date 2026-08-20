@@ -1,0 +1,21 @@
+# Foundry Toolbox consumed by foundry_main.py.
+#
+# Chat only. Document generation and voice contracts stay on the Web App
+# `POST /invoke` job path and must NOT be added here.
+#
+# Replace the URL with the business MCP HTTPS /mcp endpoint. Do not use localhost.
+#
+# Create:
+#   azd ai toolbox create agent-tools --from-file ./toolbox.yaml
+# Then set the versioned endpoint printed by azd:
+#   azd env set TOOLBOX_ENDPOINT "<versioned-toolbox-mcp-endpoint>"
+#
+# No business MCP yet? Skip creating the toolbox and leave TOOLBOX_ENDPOINT
+# unset; the hosted agent then answers without tools.
+
+description: Business prompt responses for the hosted chat agent
+tools:
+  - type: mcp
+    server_label: business
+    server_url: "https://REPLACE-BUSINESS-MCP.azurewebsites.net/mcp"
+    require_approval: "never"

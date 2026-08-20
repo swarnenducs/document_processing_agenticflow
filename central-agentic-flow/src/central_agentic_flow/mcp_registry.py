@@ -92,6 +92,11 @@ def voice_mcp_url() -> str:
     return (_env("VOICE_MCP_URL", default="http://127.0.0.1:8002/mcp") or "").rstrip("/")
 
 
+def business_mcp_url() -> str:
+    """Chat-path MCP. Empty until a business MCP is configured."""
+    return (_env("BUSINESS_MCP_URL", default="") or "").rstrip("/")
+
+
 def _component_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -253,7 +258,7 @@ def _builtin_servers() -> list[McpServerSpec]:
             url=document_mcp_url(),
             prefix="document",
             description="Template auto-creation — fill a Word .docx from JSON (LangGraph pipeline).",
-            invoke_modes=("ask", "jobs"),
+            invoke_modes=("jobs",),
             default_tool="generate_document",
             aliases=("document", "template-auto-creation"),
             key="contract_autocreation_mcp",
@@ -263,10 +268,25 @@ def _builtin_servers() -> list[McpServerSpec]:
             url=voice_mcp_url(),
             prefix="voice",
             description="Voice agent — spoken/typed create-contract with human-in-the-loop confirm.",
-            invoke_modes=("ask", "jobs"),
+            invoke_modes=("jobs",),
             default_tool="start_voice_contract",
             aliases=("voice",),
             key="voice_process_mcp",
+        ),
+        *(
+            [
+                McpServerSpec(
+                    name="business-agent",
+                    url=business_mcp_url(),
+                    prefix="business",
+                    description="Business prompt responses — domain question answering for chat.",
+                    invoke_modes=("ask",),
+                    aliases=("business",),
+                    key="business_process_mcp",
+                )
+            ]
+            if business_mcp_url()
+            else []
         ),
     ]
 
@@ -326,6 +346,7 @@ def _extras_fingerprint() -> str:
             os.getenv("MAF_MCP_SERVERS") or "",
             os.getenv("DOCUMENT_MCP_URL") or "",
             os.getenv("VOICE_MCP_URL") or "",
+            os.getenv("BUSINESS_MCP_URL") or "",
             os.getenv("MAF_MCP_REGISTRY_FILE") or "",
         ]
     )

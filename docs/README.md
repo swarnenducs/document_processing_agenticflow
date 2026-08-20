@@ -8,7 +8,8 @@ Project documentation lives here. Runtime prompts stay next to each component (`
 | [INTERVIEW_LANGGRAPH.md](INTERVIEW_LANGGRAPH.md) | LangGraph interview prep |
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice → contract HITL flow |
 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Azure Web Apps + GitHub Actions (API + UI CI) |
-| [AZURE_DEPLOY_MAF.md](AZURE_DEPLOY_MAF.md) | MAF on Foundry (model) vs five Web Apps; Foundry hosted-agent TODOs |
+| [AZURE_DEPLOY_MAF.md](AZURE_DEPLOY_MAF.md) | Full MAF deployment: Foundry model, hosted agent and five Web Apps |
+| [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md) | Focused Foundry-hosted MAF deployment runbook |
 | [CICD_AZURE.md](CICD_AZURE.md) | Pointer to the deployment guide |
 | [COMPONENTS.md](COMPONENTS.md) | Package layout and ports |
 | [MAF_LOCAL.md](MAF_LOCAL.md) | Central agent (MAF) local run |

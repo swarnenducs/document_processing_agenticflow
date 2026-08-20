@@ -229,19 +229,171 @@ GitHub Actions in [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) currently describe 
 
 ---
 
-## 3. Foundry **hosted agent** (optional later) — code TODOs
+## 3. Deploy the **chat** agent as a Foundry hosted agent
 
-Publishing **this Python agent into Foundry** (Portal “hosted agent” / `azd ai agent init` + `azure.yaml`) is **not implemented**. Today Foundry is only used as an **OpenAI-compatible LLM**.
+For a focused operational checklist, use
+[FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md).
 
-Do **not** run `azd ai agent init` on this repo until the items below exist.
+Scope: this hosts **chat only**. Document generation and voice contracts stay on
+the Web App `POST /invoke` job path and are declared `modes: [jobs]` in
+`central-agentic-flow/config/mcp_registry.yml`, so no chat host exposes them as
+tools. Chat tools come from a separate business MCP, which is configured through
+`BUSINESS_MCP_URL` (Web App) or a Toolbox (Foundry) and is optional.
 
-| # | TODO | Why |
-|---|------|-----|
-| 1 | Add Foundry **hosted-agent** entry (`main.py` / `agent.yaml` / `azure.yaml`) matching Foundry Python runtime | Foundry does not call `POST /ask` on App Service; it expects the hosted-agent protocol |
-| 2 | Map MCP as Foundry **connections** (or keep HTTP MCP with VNet/private endpoints) | Hosted agents cannot use `localhost:8001` |
-| 3 | Support **Entra ID / managed identity** on `OpenAIChatClient` (no API key) | Production Foundry pattern; code today requires `AZURE_OPENAI_API_KEY` |
-| 4 | Split **chat host** vs **job invoke** (`POST /invoke`) for Foundry vs ip_api | ip_api still needs a stable HTTP MAF or you proxy Foundry invoke |
-| 5 | Update GitHub deploy for 5 images (or Container Apps) | Current GHA is API+UI |
-| 6 | CORS, timeouts, `WEBSITES_PORT` docs for MCP `/mcp` | Easy to miss in App Service |
+Implemented assets:
 
-**Recommended now:** §1 (Foundry model) + §2 (five Web Apps). Revisit hosted-agent TODOs when you want the agent to live **inside** Foundry instead of App Service.
+| File | Purpose |
+|------|---------|
+| `../azure.yaml` | Foundry project, model deployment, Responses hosted agent |
+| `../central-agentic-flow/foundry_main.py` | Hosted-agent entry point |
+| `../central-agentic-flow/toolbox.yaml` | Business MCP Toolbox definition (chat tools only) |
+| `../central-agentic-flow/.agentignore` | Direct-code deployment exclusions |
+
+The hosted agent uses:
+
+- `FoundryChatClient` + `DefaultAzureCredential` (managed identity in Azure)
+- `ResponsesHostServer` (not FastAPI `/ask`)
+- `FoundryToolbox` for the business MCP, attached only when `TOOLBOX_ENDPOINT` is set
+
+### 3.1 Install and authenticate tooling
+
+Install Azure CLI and Azure Developer CLI (`azd`), then install/update the
+Foundry extension. Authentication must be completed by you:
+
+```bash
+az login
+azd auth login
+azd extension install azure.ai.agents
+```
+
+Every command below should be run from the repository root with:
+
+```bash
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd ...
+```
+
+### 3.2 Choose the Foundry project
+
+For a **new** project, `azure.yaml` provisions one with a
+`gpt-4.1-mini` Global Standard deployment.
+
+```bash
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env new dev
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set AZURE_SUBSCRIPTION_ID "<subscription-id>"
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set AZURE_LOCATION "<region>"
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-4.1-mini"
+```
+
+For an **existing** project, set its real endpoint / ARM ID and existing model
+deployment instead of creating a second model:
+
+```bash
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set AZURE_AI_PROJECT_ENDPOINT \
+  "https://<account>.services.ai.azure.com/api/projects/<project>"
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set AZURE_AI_PROJECT_ID \
+  "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>"
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<deployment-name>"
+```
+
+If using an existing project, review/remove the `ai-project.deployments` block
+before `azd provision` so this template does not create an unwanted deployment.
+
+### 3.3 Deploy the business MCP first (optional)
+
+The hosted agent cannot use `127.0.0.1`. If you have a business MCP, deploy it
+and verify its endpoint:
+
+```bash
+https://<business-mcp-app>.azurewebsites.net/mcp
+```
+
+Replace the placeholder URL in `central-agentic-flow/toolbox.yaml`. Public
+unauthenticated MCP URLs are acceptable only for a demo; use App Service
+authentication/API Management or private networking in production. Do not add
+the document or voice MCPs — they belong to the job path.
+
+Without a business MCP, skip to §3.5; the agent deploys and answers tool-less.
+
+### 3.4 Create the Foundry Toolbox
+
+```bash
+cd central-agentic-flow
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd ai toolbox create agent-tools \
+  --from-file ./toolbox.yaml
+```
+
+Copy the **versioned MCP endpoint** printed by that command:
+
+```bash
+cd ..
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env set TOOLBOX_ENDPOINT \
+  "<versioned-toolbox-mcp-endpoint>"
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd env get-values
+```
+
+Toolbox tools reach the agent with a three-underscore prefix, so business tools
+appear as `business___<tool_name>`.
+
+### 3.5 Local smoke test
+
+Create `central-agentic-flow/.env` (never commit it):
+
+```bash
+FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=<deployment-name>
+# Optional; omit to run without tools
+TOOLBOX_ENDPOINT=<versioned-toolbox-mcp-endpoint>
+```
+
+Then:
+
+```bash
+cd central-agentic-flow
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install uv
+cd ..
+
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd ai agent run document-maf-foundry --no-client
+# second terminal:
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd ai agent invoke \
+  document-maf-foundry --local "hello, are you up?"
+```
+
+Stop the local host after the test.
+
+### 3.6 Provision and deploy
+
+Preview first for a new project:
+
+```bash
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd provision --preview --no-prompt
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd provision --no-prompt
+```
+
+For an existing project that needs no infrastructure changes, skip provision.
+
+Deploy and verify:
+
+```bash
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd deploy document-maf-foundry --no-prompt
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd ai agent show --output json
+AZURE_DEV_USER_AGENT=microsoft_foundry_skill azd ai agent invoke \
+  document-maf-foundry "list the tools you have access to"
+```
+
+Expected status: `active` or `deployed`.
+
+### 3.7 Important compatibility boundary
+
+Foundry Responses covers the conversational path only; it does **not** expose
+the FastAPI `POST /invoke`.
+
+- Keep `central-agentic-flow` as a Web App: `ip_api` submits document and voice
+  jobs through `MAF_BASE_URL/invoke`, and those MCPs are jobs-only.
+- Do not point `MAF_BASE_URL` at the Foundry Responses endpoint.
+- The document and voice MCP Web Apps are reached by the MAF Web App directly,
+  not through the Toolbox.
+- A future API adapter can split `MAF_CHAT_ENDPOINT` (Foundry) from
+  `MAF_INVOKE_BASE_URL` (Web App); that change is intentionally not required
+  to deploy/test this hosted chat agent.

@@ -21,13 +21,14 @@ from central_agentic_flow.mcp_registry import (
 
 
 DEFAULT_INSTRUCTIONS = """\
-You are the document-processing orchestrator for this local stack.
+You are the business chat orchestrator for this stack.
 
 Rules:
-- Prefer calling tools instead of inventing file paths or contract results.
-- Tool names are prefixed with the MCP prefix (document_, voice_, ...).
-- Call registered MCP tools instead of inventing results.
-- Keep answers concise; include tool outcomes (paths, ids, status, errors).
+- Only the MCP servers listed below are available; call them instead of inventing results.
+- Tool names are prefixed with the MCP prefix (business_, ...).
+- Document generation and voice contracts are not chat tools. They run as API jobs,
+  so if asked for one, say it must be submitted through the API.
+- Keep answers concise; include tool outcomes (ids, status, errors).
 """
 
 
@@ -247,9 +248,9 @@ async def ask_maf(message: str, *, instructions: str | None = None) -> MafAskRes
         system_instructions=system_raw,
         message=text,
     )
+    # Chat runs tool-less until an ask-mode MCP (e.g. BUSINESS_MCP_URL) is configured.
+    # Document and voice are jobs-only and must not be reachable from chat.
     registry = ask_mcp_servers()
-    if not registry:
-        raise RuntimeError("No MCP servers registered for MAF /ask (need invoke.modes: [ask])")
 
     async with AsyncExitStack() as stack:
         tools = []
