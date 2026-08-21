@@ -48,9 +48,9 @@ def blob_template_prefix() -> str:
     return (settings().azure_blob_template_prefix or "templates").strip().strip("/")
 
 
-def blob_name_for_template(customer_name: str, template_name: str) -> str:
-    """Customer template library: ``templates/{customer_name}/{template_name}``."""
-    return f"{blob_template_prefix()}/{customer_name}/{template_name}"
+def blob_name_for_template(folder_name: str, template_name: str) -> str:
+    """Template library: ``templates/{folder_name}/{template_name}``."""
+    return f"{blob_template_prefix()}/{folder_name}/{template_name}"
 
 
 def _normalize_sas_token(raw: str) -> str:

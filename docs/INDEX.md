@@ -45,7 +45,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | Architecture walkthrough and interview talking points for this codebase |
 | [INTERVIEW_LANGGRAPH.md](INTERVIEW_LANGGRAPH.md) | LangGraph in this repo: state, edges, retries, dynamic models |
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice/text → intent → catalog lookup → HITL confirm → contract file |
-| [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) | SQLite + local files vs Azure SQL + Blob; admin customer template library |
+| [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) | SQLite + local files vs Azure SQL + Blob; default admin template library (`ipp_default_template`) |
 | [api-details-information.md](api-details-information.md) | Catalogue of gateway, MAF, document MCP, and voice MCP APIs |
 | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) | Estimated tokens (and Whisper minutes) per component, with cost knobs |
 | [MCP_AGENTS.md](MCP_AGENTS.md) | Class-based FastMCP servers for document (`:8001`) and voice (`:8002`) |

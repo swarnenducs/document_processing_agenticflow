@@ -39,6 +39,40 @@ curl -s localhost:8000/api/v1/health | jq '{storage_backend, sqlite_database_pat
    when `AZURE_SQL_DIALECT=pymssql`)
 3. `sqlite:///$SQLITE_DATABASE_PATH`
 
+### Local: SQL password from Key Vault
+
+Leave `AZURE_SQL_PASSWORD` empty and set the vault. `python run_all_components.py`
+fetches the secret with Azure CLI (`az login` first):
+
+```bash
+AZURE_SQL_SERVER=YOUR_SQL.database.windows.net
+AZURE_SQL_USER=adminsql
+AZURE_SQL_DATABASE=ipp-app-db
+AZURE_KEY_VAULT_NAME=YOUR-VAULT
+# AZURE_SQL_PASSWORD_SECRET_NAME=azure-sql-password   # default
+# AZURE_SQL_PASSWORD=                                 # leave empty
+```
+
+For a shell that is not started by that launcher:
+
+```bash
+# macOS / Linux
+source scripts/load_sql_password_from_keyvault.sh
+```
+
+```powershell
+# Windows PowerShell
+az login
+. .\scripts\load_sql_password_from_keyvault.ps1
+python run_all_components.py
+# or: .\run.ps1
+```
+
+The password is exported into the process environment only. It is not written to
+`.env`. Your Entra user needs **Key Vault Secrets User** on the vault.
+
+Azure SQL still needs your client IP allowed on the server firewall.
+
 File storage: `FILE_STORAGE_BACKEND` accepts `local` or `azure_blob` (aliases
 `azure`, `blob`, `azureblob`). When unset it auto-selects `azure_blob` if any
 Azure storage credential is present, otherwise `local`.
@@ -90,14 +124,14 @@ on `voice-enable-mcp`. Completed contracts stay in SQL either way.
 
 ## Admin template library
 
-Upload a customer's Word template once, then submit jobs against it by name.
-Templates land at `{customer_name}/{template_name}.docx` in whichever file
-backend is configured:
+Upload a Word template once into the default library folder
+`ipp_default_template`, then submit jobs against it by name. Templates land at
+`{folder_name}/{template_name}.docx` in whichever file backend is configured:
 
 | Backend | Location |
 |---|---|
-| local | `{STORAGE_BASE_PATH}/templates/{customer_name}/{template_name}.docx` |
-| azure_blob | `{AZURE_BLOB_TEMPLATE_PREFIX}/{customer_name}/{template_name}.docx` in `AZURE_BLOB_CONTAINER` |
+| local | `{STORAGE_BASE_PATH}/templates/ipp_default_template/{template_name}.docx` |
+| azure_blob | `{AZURE_BLOB_TEMPLATE_PREFIX}/ipp_default_template/{template_name}.docx` in `AZURE_BLOB_CONTAINER` |
 
 Metadata (`storage_ref`, size, SHA-256, uploader, timestamps) is a
 `template_library` row, so listing works identically on both backends.
@@ -112,59 +146,61 @@ unconfigured deployment cannot expose template writes.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/v1/admin/templates` | Upload / replace (customer name in the form) |
-| POST | `/api/v1/admin/templates/{customer_name}` | Dedicated upload into that customer's folder |
-| GET | `/api/v1/admin/templates` | List (optional `?customer_name=`) |
-| GET | `/api/v1/admin/templates/{customer_name}` | List templates for one customer |
-| GET | `/api/v1/admin/templates/customers` | Distinct customer names |
-| GET | `/api/v1/admin/templates/{customer_name}/{template_name}` | Metadata |
-| GET | `/api/v1/admin/templates/{customer_name}/{template_name}/download` | Stored .docx bytes |
-| DELETE | `/api/v1/admin/templates/{customer_name}/{template_name}` | Remove row + file |
+| POST | `/api/v1/admin/templates` | Upload / replace (`folder_name` form field, default `ipp_default_template`) |
+| POST | `/api/v1/admin/templates/{folder_name}` | Dedicated upload; pass `ipp_default_template` |
+| GET | `/api/v1/admin/templates` | List (optional `?folder_name=ipp_default_template`) |
+| GET | `/api/v1/admin/templates/{folder_name}` | List templates in that folder |
+| GET | `/api/v1/admin/templates/folders` | Distinct folder names |
+| GET | `/api/v1/admin/templates/{folder_name}/{template_name}` | Metadata (`storage_ref` is `blob://…` on Azure) |
+| GET | `/api/v1/admin/templates/{folder_name}/{template_name}/download` | Stored .docx bytes |
+| DELETE | `/api/v1/admin/templates/{folder_name}/{template_name}` | Remove row + file |
 
 ### Upload
 
 ```bash
-curl -X POST localhost:8000/api/v1/admin/templates/acme-corp \
+curl -X POST localhost:8000/api/v1/admin/templates/ipp_default_template \
   -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
   -F "template_name=supply-contract" \
   -F "file=@samples/templates/contract_template.docx"
 
 curl -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
-  localhost:8000/api/v1/admin/templates/acme-corp
+  localhost:8000/api/v1/admin/templates/ipp_default_template
 ```
 
 ```json
 {
-  "customer_name": "acme-corp",
+  "folder_name": "ipp_default_template",
   "template_name": "supply-contract.docx",
-  "location": "acme-corp/supply-contract.docx",
+  "location": "ipp_default_template/supply-contract.docx",
   "storage_backend": "local",
-  "storage_ref": "/.../storage/templates/acme-corp/supply-contract.docx",
+  "storage_ref": "/.../storage/templates/ipp_default_template/supply-contract.docx",
   "size_bytes": 67579,
   "checksum_sha256": "2efe5f82...",
-  "download_url": "/api/v1/admin/templates/acme-corp/supply-contract.docx/download"
+  "download_url": "/api/v1/admin/templates/ipp_default_template/supply-contract.docx/download"
 }
 ```
 
 Naming rules:
 
+- `folder_name` defaults to `ipp_default_template` when omitted.
 - `template_name` is optional and defaults to the uploaded filename.
 - The `.docx` suffix is enforced; the upload must be a `.docx` file.
 - Names are single path segments. Anything containing `/`, `\`, `.` or `..` is
   rejected with `400` rather than silently rewritten, so a template never lands
   somewhere the caller did not ask for. Other unsupported characters collapse to
   `-` (`"Supply Contract v2"` → `Supply-Contract-v2.docx`).
-- Re-uploading the same customer + template replaces the file and keeps the
+- Re-uploading the same folder + template replaces the file and keeps the
   original `created_at`.
 
 ### Generate a document from a stored template
 
-Pass `customer_name` + `template_name` instead of a `template` file:
+Pass `template_name` instead of a `template` file. `folder_name` defaults to
+`ipp_default_template` if omitted:
 
 ```bash
 curl -X POST localhost:8000/api/v1/documents/jobs \
   -F 'data={"contract_title":"Acme supply"}' \
-  -F "customer_name=acme-corp" \
+  -F "folder_name=ipp_default_template" \
   -F "template_name=supply-contract"
 ```
 
@@ -184,3 +220,6 @@ one. Sending neither is also a `400`.
 | `FILE_STORAGE_BACKEND` | auto | `local` or `azure_blob` |
 | `SQLALCHEMY_DATABASE_URL` | *(unset)* | Full override, wins over `AZURE_SQL_*` |
 | `AZURE_SQL_DIALECT` | `pyodbc` | `pyodbc` or `pymssql` |
+| `AZURE_KEY_VAULT_NAME` | *(unset)* | Local only: fetch `AZURE_SQL_PASSWORD` via `az` |
+| `AZURE_KEY_VAULT_URL` | *(unset)* | Alternate to vault name (`https://NAME.vault.azure.net/`) |
+| `AZURE_SQL_PASSWORD_SECRET_NAME` | `azure-sql-password` | Key Vault secret name |

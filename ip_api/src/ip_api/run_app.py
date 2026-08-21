@@ -257,6 +257,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv(PROJECT_ROOT / ".env")
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from scripts.load_sql_password_from_keyvault import apply_sql_password_from_keyvault
+
+    apply_sql_password_from_keyvault()
 
     args = parse_args(argv)
     use_uv = bool(args.use_uv)

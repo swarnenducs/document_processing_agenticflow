@@ -78,7 +78,8 @@ Start a job. Provide **either** an uploaded `.docx` **or** a stored library temp
 |---|---|---|
 | `data` | yes | JSON object as a form string (not a file) |
 | `template` | one of | `.docx` upload |
-| `customer_name` + `template_name` | one of | Reuse an admin-library template |
+| `template_name` | one of | Reuse an admin-library template |
+| `folder_name` | no | Library folder; default `ipp_default_template` |
 | `skip_validation` | no | default `false` |
 | `max_retries` | no | default `1` |
 | `validation_threshold` | no | default `0.7` |
@@ -124,51 +125,51 @@ Live pipeline stages (`accepted`, extraction, mapped, validated, `completed` / `
 
 ---
 
-## C. Gateway — admin customer templates
+## C. Gateway — admin default templates
 
 All routes require `X-Admin-Api-Key` matching `ADMIN_API_KEY`. Unset key → **503**. Wrong key → **401**.
 
-Layout: `{customer_name}/{template_name}.docx` under `STORAGE_BASE_PATH/templates/` or blob prefix `AZURE_BLOB_TEMPLATE_PREFIX` (default `templates`).
+Layout: `{folder_name}/{template_name}.docx` under `STORAGE_BASE_PATH/templates/` or blob prefix `AZURE_BLOB_TEMPLATE_PREFIX` (default `templates`). The default folder is `ipp_default_template`.
 
 ### `POST /api/v1/admin/templates` → `201`
 
-Upload with `customer_name` in the form.
+Upload. `folder_name` in the form defaults to `ipp_default_template`.
 
-**Form:** `customer_name`, `file` (`.docx`), optional `template_name`, `uploaded_by`.
+**Form:** `file` (`.docx`), optional `folder_name` (`ipp_default_template`), optional `template_name`, `uploaded_by`.
 
-### `POST /api/v1/admin/templates/{customer_name}` → `201`
+### `POST /api/v1/admin/templates/{folder_name}` → `201`
 
-Dedicated folder upload. Same file fields; customer is in the path.
+Dedicated folder upload. Pass `ipp_default_template` in the path.
 
-Re-upload of the same customer + name replaces the file and keeps `created_at`.
+Re-upload of the same folder + name replaces the file and keeps `created_at`.
 
-**Response (`TemplateRecordResponse`):** `location` (`acme-corp/supply-contract.docx`), `storage_backend`, `storage_ref`, `size_bytes`, `checksum_sha256`, `download_url`.
+**Response (`TemplateRecordResponse`):** `folder_name`, `location` (`ipp_default_template/supply-contract.docx`), `storage_backend`, `storage_ref` (`blob://…` on Azure), `size_bytes`, `checksum_sha256`, `download_url`.
 
 Path separators (`/`, `\`, `..`) in names → **400**.
 
 ### `GET /api/v1/admin/templates`
 
-List all (`?customer_name=` optional filter, `?limit=`).
+List all (`?folder_name=` optional filter, `?limit=`).
 
-### `GET /api/v1/admin/templates/{customer_name}`
+### `GET /api/v1/admin/templates/{folder_name}`
 
-List templates for one customer.
+List templates in one folder (pass `ipp_default_template`).
 
 **Response:** `{ "count", "storage_backend", "templates": [...] }`
 
-### `GET /api/v1/admin/templates/customers`
+### `GET /api/v1/admin/templates/folders`
 
-Distinct customer names, sorted.
+Distinct folder names, sorted.
 
-### `GET /api/v1/admin/templates/{customer_name}/{template_name}`
+### `GET /api/v1/admin/templates/{folder_name}/{template_name}`
 
 One template’s metadata.
 
-### `GET /api/v1/admin/templates/{customer_name}/{template_name}/download`
+### `GET /api/v1/admin/templates/{folder_name}/{template_name}/download`
 
 Stored `.docx` bytes (local or blob). **410** if the row exists but the file is gone.
 
-### `DELETE /api/v1/admin/templates/{customer_name}/{template_name}`
+### `DELETE /api/v1/admin/templates/{folder_name}/{template_name}`
 
 Removes the SQL row and the file/blob.
 
@@ -294,11 +295,11 @@ Called by MAF over streamable HTTP (`/mcp`). JSON object results.
 3. `GET .../{job_id}/accuracy`
 4. `GET .../{job_id}/download`
 
-**Auto template (reuse customer library)**
+**Auto template (reuse default library)**
 
-1. `POST /api/v1/admin/templates/{customer_name}` (once)
-2. `GET /api/v1/admin/templates/{customer_name}`
-3. `POST /api/v1/documents/jobs` with `customer_name` + `template_name` + `data`
+1. `POST /api/v1/admin/templates/ipp_default_template` (once)
+2. `GET /api/v1/admin/templates/ipp_default_template`
+3. `POST /api/v1/documents/jobs` with `folder_name=ipp_default_template` + `template_name` + `data`
 4. accuracy + download as above
 
 **Chat**

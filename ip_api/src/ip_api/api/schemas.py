@@ -62,11 +62,11 @@ class JobListResponse(BaseModel):
 
 
 class TemplateRecordResponse(BaseModel):
-    """One customer template in the admin library."""
+    """One Word template in the default library folder."""
 
-    customer_name: str
+    folder_name: str
     template_name: str
-    location: str = Field(description="Library path: customer_name/template_name")
+    location: str = Field(description="Library path: folder_name/template_name")
     storage_backend: Literal["local", "azure_blob"]
     storage_ref: str = Field(description="Local absolute path or blob:// reference")
     size_bytes: int | None = None
@@ -85,7 +85,7 @@ class TemplateListResponse(BaseModel):
 
 class TemplateDeletedResponse(BaseModel):
     deleted: bool = True
-    customer_name: str
+    folder_name: str
     template_name: str
     location: str
 

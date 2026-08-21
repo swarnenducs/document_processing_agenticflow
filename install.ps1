@@ -124,7 +124,10 @@ Write-Host "  1. Edit .env and add OPENAI_API_KEY / GROQ_API_KEY / Azure keys as
 Write-Host "  2. Start all services:"
 Write-Host "       uv run python run_all_components.py"
 Write-Host "     or:  $python run_all_components.py"
+Write-Host "     or:  .\run.ps1"
 Write-Host "     or:  .\install.ps1 -Run"
+Write-Host "  SQL password from Key Vault: set AZURE_KEY_VAULT_NAME in .env, az login,"
+Write-Host "  then the launcher fetches it. One-off: . .\scripts\load_sql_password_from_keyvault.ps1"
 Write-Host ""
 Write-Host "Ports: API :8000  document MCP :8001  voice MCP :8002  MAF :8003  UI :7860"
 

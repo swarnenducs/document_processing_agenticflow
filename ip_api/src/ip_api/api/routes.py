@@ -188,29 +188,32 @@ async def _save_upload(
 
 def _resolve_stored_template(
     template: UploadFile | None,
-    customer_name: str | None,
+    folder_name: str | None,
     template_name: str | None,
     templates: TemplateStore,
 ):
     """Pick the template source: inline upload or a row in the admin library."""
-    from ip_api.storage.template_store import TemplateNameError
+    from ip_api.storage.template_store import DEFAULT_TEMPLATE_FOLDER, TemplateNameError
 
-    named = bool((customer_name or "").strip() and (template_name or "").strip())
+    named = bool((template_name or "").strip())
     has_upload = template is not None and bool(template.filename)
     if has_upload and named:
         raise HTTPException(
             status_code=400,
-            detail="Send either a template upload or customer_name + template_name, not both",
+            detail="Send either a template upload or template_name, not both",
         )
     if not has_upload and not named:
         raise HTTPException(
             status_code=400,
-            detail="A template is required: upload one, or pass customer_name + template_name",
+            detail=(
+                "A template is required: upload one, or pass template_name "
+                f"(folder_name defaults to {DEFAULT_TEMPLATE_FOLDER})"
+            ),
         )
     if not named:
         return None
     try:
-        return templates.get(customer_name or "", template_name or "")
+        return templates.get(folder_name, template_name or "")
     except TemplateNameError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except KeyError as exc:
@@ -337,11 +340,13 @@ async def create_document_job(
     template: UploadFile | None = File(
         default=None, description="Word .docx template (omit to use a stored template)"
     ),
-    customer_name: str | None = Form(
-        default=None, description="Stored template customer (with template_name)"
+    folder_name: str | None = Form(
+        default=None,
+        description="Library folder for a stored template. Defaults to ipp_default_template.",
     ),
     template_name: str | None = Form(
-        default=None, description="Stored template name (with customer_name)"
+        default=None,
+        description="Stored template name (with optional folder_name)",
     ),
     skip_validation: bool = Form(default=False),
     max_retries: int = Form(default=1),
@@ -354,7 +359,7 @@ async def create_document_job(
     Send JSON data in the form field ``data``, plus a template.
 
     The template is either uploaded inline or named from the admin library with
-    ``customer_name`` + ``template_name``.
+    ``template_name`` (optional ``folder_name``, default ``ipp_default_template``).
 
     Returns job_id immediately. Prefer long-poll:
     ``GET /documents/jobs/{job_id}?wait=true`` then download when completed.
@@ -381,7 +386,7 @@ async def create_document_job(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="JSON root must be an object")
 
-    stored_template = _resolve_stored_template(template, customer_name, template_name, templates)
+    stored_template = _resolve_stored_template(template, folder_name, template_name, templates)
     template_filename = (
         stored_template.template_name
         if stored_template is not None

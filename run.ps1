@@ -4,6 +4,11 @@
 #   .\run.ps1
 #   .\run.ps1 --api-only
 #   .\run.ps1 --ui-only
+#
+# SQL password from Key Vault: set AZURE_KEY_VAULT_NAME in .env, leave
+# AZURE_SQL_PASSWORD empty, then `az login`. This launcher's Python path
+# fetches the secret. For a session that does not use this script:
+#   . .\scripts\load_sql_password_from_keyvault.ps1
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot

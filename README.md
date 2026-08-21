@@ -158,7 +158,7 @@ See `.env.example` for the full matrix.
 | `voice_enable_mcp/.env.example` | Voice MCP — SQLite or Azure SQL; optional Redis HITL |
 | `central-agentic-flow/.env.example` | MAF — SQLite or Azure SQL (traces) |
 
-Storage default is **SQLite + local files**. Uncomment the Azure SQL / Blob blocks for cloud. Voice HITL checkpoints use that same SQL unless `LANGGRAPH_CHECKPOINT_BACKEND=redis`.
+Storage default is **SQLite + local files**. Uncomment the Azure SQL / Blob blocks for cloud. To take the SQL password from Key Vault locally, set `AZURE_KEY_VAULT_NAME` and leave `AZURE_SQL_PASSWORD` empty, then `az login`. `python run_all_components.py` and `.\run.ps1` fetch it. For a one-off session: `source scripts/load_sql_password_from_keyvault.sh` (macOS/Linux) or `. .\scripts\load_sql_password_from_keyvault.ps1` (Windows PowerShell). Voice HITL checkpoints use that same SQL unless `LANGGRAPH_CHECKPOINT_BACKEND=redis`.
 
 ## Sample files
 
@@ -341,18 +341,19 @@ uv run doc-api
 | `GET` | `/api/v1/voice/contracts/{id}` | Fetch one voice contract |
 | `GET` | `/api/v1/voice/contracts/{id}/download` | Download dummy `.txt` / `.docx` |
 
-Admin template library (requires the `X-Admin-Api-Key` header to match `ADMIN_API_KEY`):
+Admin template library (requires the `X-Admin-Api-Key` header to match `ADMIN_API_KEY`).
+Default folder is `ipp_default_template`:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/admin/templates` | Store a `.docx` at `{customer_name}/{template_name}` (form field) |
-| `POST` | `/api/v1/admin/templates/{customer_name}` | Dedicated upload into that customer's folder |
-| `GET` | `/api/v1/admin/templates` | List templates (optional `?customer_name=`) |
-| `GET` | `/api/v1/admin/templates/{customer_name}` | List templates for one customer |
-| `GET` | `/api/v1/admin/templates/customers` | Distinct customer names |
-| `GET` | `/api/v1/admin/templates/{customer_name}/{template_name}` | Template metadata |
-| `GET` | `/api/v1/admin/templates/{customer_name}/{template_name}/download` | Download stored `.docx` |
-| `DELETE` | `/api/v1/admin/templates/{customer_name}/{template_name}` | Delete row + file |
+| `POST` | `/api/v1/admin/templates` | Store a `.docx` at `{folder_name}/{template_name}` (default folder `ipp_default_template`) |
+| `POST` | `/api/v1/admin/templates/{folder_name}` | Dedicated upload; pass `ipp_default_template` |
+| `GET` | `/api/v1/admin/templates` | List templates (optional `?folder_name=`) |
+| `GET` | `/api/v1/admin/templates/{folder_name}` | List templates in that folder |
+| `GET` | `/api/v1/admin/templates/folders` | Distinct folder names |
+| `GET` | `/api/v1/admin/templates/{folder_name}/{template_name}` | Template metadata |
+| `GET` | `/api/v1/admin/templates/{folder_name}/{template_name}/download` | Download stored `.docx` |
+| `DELETE` | `/api/v1/admin/templates/{folder_name}/{template_name}` | Delete row + file |
 
 See [docs/LOCAL_AND_CLOUD_STORAGE.md](docs/LOCAL_AND_CLOUD_STORAGE.md) for the
 local-SQLite vs Azure setup and the full template API.
@@ -368,20 +369,20 @@ curl http://localhost:8000/api/v1/documents/jobs/{job_id}
 curl -O http://localhost:8000/api/v1/documents/jobs/{job_id}/download
 ```
 
-### Example: upload a customer template once, then reuse it
+### Example: upload a default template once, then reuse it
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/admin/templates/acme-corp \
+curl -X POST http://localhost:8000/api/v1/admin/templates/ipp_default_template \
   -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
   -F "template_name=supply-contract" \
   -F "file=@samples/templates/contract_template.docx"
 
 curl -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
-  http://localhost:8000/api/v1/admin/templates/acme-corp
+  http://localhost:8000/api/v1/admin/templates/ipp_default_template
 
 curl -X POST http://localhost:8000/api/v1/documents/jobs \
   -F "data=<samples/data/contract_full.json" \
-  -F "customer_name=acme-corp" \
+  -F "folder_name=ipp_default_template" \
   -F "template_name=supply-contract"
 ```
 

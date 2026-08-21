@@ -128,10 +128,11 @@ class CallLog(Base):
 
 
 class TemplateAsset(Base):
-    """One customer-specific Word template in the admin template library.
+    """One Word template in the admin library (default folder ``ipp_default_template``).
 
-    ``storage_ref`` is a local absolute path or a ``blob://`` ref, so the same
-    row works for local-filesystem and Azure Blob deployments.
+    ``customer_name`` stores the library folder name. ``storage_ref`` is a local
+    absolute path or a ``blob://`` ref, so the same row works for local-filesystem
+    and Azure Blob deployments.
     """
 
     __tablename__ = "template_library"

@@ -1,10 +1,9 @@
-"""Customer template library: ``{customer_name}/{template_name}``.
+"""Default template library: ``{folder_name}/{template_name}``.
 
-One API over both file backends. ``FILE_STORAGE_BACKEND=local`` writes under
-``{STORAGE_BASE_PATH}/templates``; ``azure_blob`` writes under the container's
-``AZURE_BLOB_TEMPLATE_PREFIX``. Either way the row in ``template_library``
-stores a ``storage_ref`` the document pipeline can already resolve, so a job can
-name a stored template instead of re-uploading the .docx.
+The library is not per-customer. The default folder is ``ipp_default_template``.
+``FILE_STORAGE_BACKEND=local`` writes under ``{STORAGE_BASE_PATH}/templates``;
+``azure_blob`` writes under ``AZURE_BLOB_TEMPLATE_PREFIX``. The SQL row still
+uses the ``customer_name`` column as the folder name (no schema migration).
 """
 
 from __future__ import annotations
@@ -33,8 +32,11 @@ TEMPLATE_CONTENT_TYPE = (
 _SEGMENT_ALLOWED = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+DEFAULT_TEMPLATE_FOLDER = "ipp_default_template"
+
+
 class TemplateNameError(ValueError):
-    """Raised when a customer or template name cannot be used as a path segment."""
+    """Raised when a folder or template name cannot be used as a path segment."""
 
 
 def _now_iso() -> str:
@@ -58,6 +60,12 @@ def sanitize_segment(raw: str, *, label: str) -> str:
     return slug
 
 
+def resolve_folder_name(raw: str | None) -> str:
+    """Use ``ipp_default_template`` when the folder is omitted."""
+    value = (raw or "").strip() or DEFAULT_TEMPLATE_FOLDER
+    return sanitize_segment(value, label="folder_name")
+
+
 def normalize_template_name(raw: str) -> str:
     """Sanitize and force the .docx suffix (Word templates only)."""
     name = sanitize_segment(raw, label="template_name")
@@ -68,7 +76,7 @@ def normalize_template_name(raw: str) -> str:
 
 @dataclass(frozen=True)
 class TemplateRecord:
-    customer_name: str
+    folder_name: str
     template_name: str
     storage_backend: str
     storage_ref: str
@@ -81,11 +89,11 @@ class TemplateRecord:
     @property
     def location(self) -> str:
         """Logical library path, independent of the backend."""
-        return f"{self.customer_name}/{self.template_name}"
+        return f"{self.folder_name}/{self.template_name}"
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "customer_name": self.customer_name,
+            "folder_name": self.folder_name,
             "template_name": self.template_name,
             "location": self.location,
             "storage_backend": self.storage_backend,
@@ -100,7 +108,7 @@ class TemplateRecord:
 
 def _to_record(row: TemplateAsset) -> TemplateRecord:
     return TemplateRecord(
-        customer_name=row.customer_name,
+        folder_name=row.customer_name,
         template_name=row.template_name,
         storage_backend=row.storage_backend,
         storage_ref=row.storage_ref,
@@ -113,7 +121,7 @@ def _to_record(row: TemplateAsset) -> TemplateRecord:
 
 
 class TemplateStore:
-    """Read/write customer templates and their metadata."""
+    """Read/write templates in the default library folder."""
 
     def __init__(self) -> None:
         self.cfg = settings()
@@ -136,26 +144,26 @@ class TemplateStore:
     def backend(self) -> str:
         return "azure_blob" if get_blob_store().enabled else "local"
 
-    def local_path(self, customer_name: str, template_name: str) -> Path:
-        return self.cfg.templates_root / customer_name / template_name
+    def local_path(self, folder_name: str, template_name: str) -> Path:
+        return self.cfg.templates_root / folder_name / template_name
 
     def save(
         self,
         *,
-        customer_name: str,
+        folder_name: str | None = None,
         template_name: str,
         content: bytes,
         uploaded_by: str | None = None,
     ) -> TemplateRecord:
-        """Store (or replace) one customer template and upsert its metadata row."""
-        customer = sanitize_segment(customer_name, label="customer_name")
+        """Store (or replace) one template and upsert its metadata row."""
+        folder = resolve_folder_name(folder_name)
         template = normalize_template_name(template_name)
         blob = get_blob_store()
         if blob.enabled:
-            ref = blob.upload_bytes(content, blob_name_for_template(customer, template))
+            ref = blob.upload_bytes(content, blob_name_for_template(folder, template))
             backend = "azure_blob"
         else:
-            dest = self.local_path(customer, template)
+            dest = self.local_path(folder, template)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(content)
             ref = str(dest)
@@ -166,14 +174,14 @@ class TemplateStore:
         with self._session() as session:
             row = session.scalars(
                 select(TemplateAsset).where(
-                    TemplateAsset.customer_name == customer,
+                    TemplateAsset.customer_name == folder,
                     TemplateAsset.template_name == template,
                 )
             ).first()
             if row is None:
                 row = TemplateAsset(
                     id=str(uuid.uuid4()),
-                    customer_name=customer,
+                    customer_name=folder,
                     template_name=template,
                     created_at=now,
                 )
@@ -188,30 +196,28 @@ class TemplateStore:
             session.flush()
             return _to_record(row)
 
-    def get(self, customer_name: str, template_name: str) -> TemplateRecord:
-        customer = sanitize_segment(customer_name, label="customer_name")
+    def get(self, folder_name: str | None, template_name: str) -> TemplateRecord:
+        folder = resolve_folder_name(folder_name)
         template = normalize_template_name(template_name)
         with self._session() as session:
             row = session.scalars(
                 select(TemplateAsset).where(
-                    TemplateAsset.customer_name == customer,
+                    TemplateAsset.customer_name == folder,
                     TemplateAsset.template_name == template,
                 )
             ).first()
             if row is None:
-                raise KeyError(f"Template not found: {customer}/{template}")
+                raise KeyError(f"Template not found: {folder}/{template}")
             return _to_record(row)
 
     def list(
-        self, *, customer_name: str | None = None, limit: int = 200
+        self, *, folder_name: str | None = None, limit: int = 200
     ) -> list[TemplateRecord]:
         capped = max(1, min(int(limit), 500))
         query = select(TemplateAsset)
-        if customer_name:
+        if folder_name:
             query = query.where(
-                TemplateAsset.customer_name == sanitize_segment(
-                    customer_name, label="customer_name"
-                )
+                TemplateAsset.customer_name == resolve_folder_name(folder_name)
             )
         query = query.order_by(
             TemplateAsset.customer_name.asc(), TemplateAsset.template_name.asc()
@@ -219,7 +225,7 @@ class TemplateStore:
         with self._session() as session:
             return [_to_record(row) for row in session.scalars(query).all()]
 
-    def list_customers(self) -> list[str]:
+    def list_folders(self) -> list[str]:
         with self._session() as session:
             rows = session.scalars(
                 select(TemplateAsset.customer_name).distinct().order_by(
@@ -244,8 +250,8 @@ class TemplateStore:
         dest.write_bytes(self.read_bytes(record))
         return dest
 
-    def delete(self, customer_name: str, template_name: str) -> TemplateRecord:
-        record = self.get(customer_name, template_name)
+    def delete(self, folder_name: str | None, template_name: str) -> TemplateRecord:
+        record = self.get(folder_name, template_name)
         if is_blob_ref(record.storage_ref):
             get_blob_store().delete_ref(record.storage_ref)
         else:
@@ -253,7 +259,7 @@ class TemplateStore:
         with self._session() as session:
             row = session.scalars(
                 select(TemplateAsset).where(
-                    TemplateAsset.customer_name == record.customer_name,
+                    TemplateAsset.customer_name == record.folder_name,
                     TemplateAsset.template_name == record.template_name,
                 )
             ).first()

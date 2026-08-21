@@ -1,12 +1,11 @@
-"""Admin routes for the customer template library.
+"""Admin routes for the default Word template library.
 
-Upload a Word template once to ``{customer_name}/{template_name}``, then submit
-document jobs against it by name instead of re-uploading the .docx. Storage
-follows ``FILE_STORAGE_BACKEND`` (local filesystem or Azure Blob).
+Upload a template once to ``{folder_name}/{template_name}``. The default folder
+is ``ipp_default_template``. Jobs can then name that template instead of
+re-uploading the .docx. Storage follows ``FILE_STORAGE_BACKEND``.
 
 Every route requires the ``X-Admin-Api-Key`` header to match ``ADMIN_API_KEY``.
-When that env var is unset the whole router refuses requests, so an unconfigured
-deployment cannot expose template writes.
+When that env var is unset the whole router refuses requests.
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from ip_api.api.schemas import (
 )
 from ip_api.core.settings import Settings
 from ip_api.storage.template_store import (
+    DEFAULT_TEMPLATE_FOLDER,
     TEMPLATE_CONTENT_TYPE,
     TEMPLATE_SUFFIX,
     TemplateNameError,
@@ -60,7 +60,7 @@ def _max_bytes(cfg: Settings) -> int:
 
 def _download_url(record: TemplateRecord) -> str:
     return (
-        f"/api/v1/admin/templates/{record.customer_name}/{record.template_name}/download"
+        f"/api/v1/admin/templates/{record.folder_name}/{record.template_name}/download"
     )
 
 
@@ -70,20 +70,20 @@ def _to_response(record: TemplateRecord) -> TemplateRecordResponse:
     )
 
 
-def _bad_name(exc: TemplateNameError) -> HTTPException:
-    return HTTPException(status_code=400, detail=str(exc))
+def _bad_name(error: TemplateNameError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(error))
 
 
 async def _save_uploaded_template(
     *,
-    customer_name: str,
+    folder_name: str | None,
     file: UploadFile,
     template_name: str | None,
     uploaded_by: str | None,
     store: TemplateStore,
     cfg: Settings,
 ) -> TemplateRecordResponse:
-    """Store a Word template at ``{customer_name}/{template_name}`` (local disk or blob)."""
+    """Store a Word template at ``{folder_name}/{template_name}``."""
     if not (file.filename or "").lower().endswith(TEMPLATE_SUFFIX):
         raise HTTPException(
             status_code=400,
@@ -100,25 +100,25 @@ async def _save_uploaded_template(
 
     try:
         record = store.save(
-            customer_name=customer_name,
+            folder_name=folder_name,
             template_name=template_name or file.filename or "",
             content=content,
             uploaded_by=uploaded_by,
         )
-    except TemplateNameError as exc:
-        raise _bad_name(exc) from exc
+    except TemplateNameError as error:
+        raise _bad_name(error) from error
     return _to_response(record)
 
 
-def _list_for_customer(
-    customer_name: str | None,
+def _list_for_folder(
+    folder_name: str | None,
     limit: int,
     store: TemplateStore,
 ) -> TemplateListResponse:
     try:
-        records = store.list(customer_name=customer_name, limit=limit)
-    except TemplateNameError as exc:
-        raise _bad_name(exc) from exc
+        records = store.list(folder_name=folder_name, limit=limit)
+    except TemplateNameError as error:
+        raise _bad_name(error) from error
     return TemplateListResponse(
         count=len(records),
         storage_backend=store.backend,
@@ -135,17 +135,20 @@ def _list_for_customer(
 async def upload_template(
     store: TemplateStoreDep,
     cfg: SettingsDep,
-    customer_name: str = Form(..., description="Customer folder, e.g. acme-corp"),
     file: UploadFile = File(..., description="Word .docx template"),
+    folder_name: str = Form(
+        default=DEFAULT_TEMPLATE_FOLDER,
+        description="Library folder. Default: ipp_default_template.",
+    ),
     template_name: str | None = Form(
         default=None,
         description="Stored name; defaults to the uploaded filename. '.docx' is enforced.",
     ),
     uploaded_by: str | None = Form(default=None),
 ) -> TemplateRecordResponse:
-    """Store a Word template at ``{customer_name}/{template_name}`` (re-upload replaces)."""
+    """Store a Word template at ``{folder_name}/{template_name}`` (re-upload replaces)."""
     return await _save_uploaded_template(
-        customer_name=customer_name,
+        folder_name=folder_name,
         file=file,
         template_name=template_name,
         uploaded_by=uploaded_by,
@@ -155,13 +158,13 @@ async def upload_template(
 
 
 @router.post(
-    "/templates/{customer_name}",
+    "/templates/{folder_name}",
     response_model=TemplateRecordResponse,
     status_code=201,
     dependencies=[Depends(require_admin_key)],
 )
-async def upload_customer_template(
-    customer_name: str,
+async def upload_folder_template(
+    folder_name: str,
     store: TemplateStoreDep,
     cfg: SettingsDep,
     file: UploadFile = File(..., description="Word .docx template"),
@@ -171,9 +174,9 @@ async def upload_customer_template(
     ),
     uploaded_by: str | None = Form(default=None),
 ) -> TemplateRecordResponse:
-    """Dedicated customer-folder upload: ``templates/{customer_name}/{template_name}``."""
+    """Upload into a library folder, e.g. ``/templates/ipp_default_template``."""
     return await _save_uploaded_template(
-        customer_name=customer_name,
+        folder_name=folder_name,
         file=file,
         template_name=template_name,
         uploaded_by=uploaded_by,
@@ -189,73 +192,76 @@ async def upload_customer_template(
 )
 def list_templates(
     store: TemplateStoreDep,
-    customer_name: str | None = Query(default=None, description="Filter to one customer"),
+    folder_name: str | None = Query(
+        default=None,
+        description="Filter to one folder (default library is ipp_default_template).",
+    ),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> TemplateListResponse:
-    return _list_for_customer(customer_name, limit, store)
+    return _list_for_folder(folder_name, limit, store)
 
 
 @router.get(
-    "/templates/customers",
+    "/templates/folders",
     response_model=list[str],
     dependencies=[Depends(require_admin_key)],
 )
-def list_template_customers(store: TemplateStoreDep) -> list[str]:
-    return store.list_customers()
+def list_template_folders(store: TemplateStoreDep) -> list[str]:
+    return store.list_folders()
 
 
 @router.get(
-    "/templates/{customer_name}",
+    "/templates/{folder_name}",
     response_model=TemplateListResponse,
     dependencies=[Depends(require_admin_key)],
 )
-def list_customer_templates(
-    customer_name: str,
+def list_folder_templates(
+    folder_name: str,
     store: TemplateStoreDep,
     limit: int = Query(default=200, ge=1, le=500),
 ) -> TemplateListResponse:
-    """List templates stored for one customer (local disk or blob)."""
-    return _list_for_customer(customer_name, limit, store)
+    """List templates in one library folder."""
+    return _list_for_folder(folder_name, limit, store)
 
 
 @router.get(
-    "/templates/{customer_name}/{template_name}",
+    "/templates/{folder_name}/{template_name}",
     response_model=TemplateRecordResponse,
     dependencies=[Depends(require_admin_key)],
 )
 def get_template(
-    customer_name: str,
+    folder_name: str,
     template_name: str,
     store: TemplateStoreDep,
 ) -> TemplateRecordResponse:
     try:
-        record = store.get(customer_name, template_name)
-    except TemplateNameError as exc:
-        raise _bad_name(exc) from exc
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        record = store.get(folder_name, template_name)
+    except TemplateNameError as error:
+        raise _bad_name(error) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     return _to_response(record)
 
 
 @router.get(
-    "/templates/{customer_name}/{template_name}/download",
+    "/templates/{folder_name}/{template_name}/download",
     dependencies=[Depends(require_admin_key)],
 )
 def download_template(
-    customer_name: str,
+    folder_name: str,
     template_name: str,
     store: TemplateStoreDep,
 ) -> Response:
     """Return the stored .docx bytes, from local disk or Azure Blob."""
     try:
-        record = store.get(customer_name, template_name)
+        record = store.get(folder_name, template_name)
         content = store.read_bytes(record)
-    except TemplateNameError as exc:
-        raise _bad_name(exc) from exc
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    except TemplateNameError as error:
+        raise _bad_name(error) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=410, detail=str(error)) from error
     return Response(
         content=content,
         media_type=TEMPLATE_CONTENT_TYPE,
@@ -266,23 +272,23 @@ def download_template(
 
 
 @router.delete(
-    "/templates/{customer_name}/{template_name}",
+    "/templates/{folder_name}/{template_name}",
     response_model=TemplateDeletedResponse,
     dependencies=[Depends(require_admin_key)],
 )
 def delete_template(
-    customer_name: str,
+    folder_name: str,
     template_name: str,
     store: TemplateStoreDep,
 ) -> TemplateDeletedResponse:
     try:
-        record = store.delete(customer_name, template_name)
-    except TemplateNameError as exc:
-        raise _bad_name(exc) from exc
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        record = store.delete(folder_name, template_name)
+    except TemplateNameError as error:
+        raise _bad_name(error) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     return TemplateDeletedResponse(
-        customer_name=record.customer_name,
+        folder_name=record.folder_name,
         template_name=record.template_name,
         location=record.location,
     )
