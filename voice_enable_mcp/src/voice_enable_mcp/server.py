@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import os
 
+from fastmcp.dependencies import Depends
+
+from voice_enable_mcp.core.context import build_application_context
+from voice_enable_mcp.core.dependencies import get_job_store, set_app_context
 from voice_enable_mcp.mcp.base import BaseAgentMCPServer
 from voice_enable_mcp.models.mcp_responses import (
     McpHealthResponse,
     VoiceContractListResponse,
     VoiceContractMcpResponse,
 )
+from voice_enable_mcp.storage.job_store import JobStore
 
 MCP_NAME = "voice_process_mcp"
 
@@ -19,6 +24,7 @@ class VoiceProcessMCP(BaseAgentMCPServer):
 
     def __init__(self, *, host: str | None = None, port: int | None = None) -> None:
         port = port if port is not None else int(os.getenv("VOICE_MCP_PORT", "8002"))
+        set_app_context(build_application_context())
         super().__init__(
             name=MCP_NAME,
             instructions=(
@@ -32,107 +38,113 @@ class VoiceProcessMCP(BaseAgentMCPServer):
         )
 
     def register_tools(self) -> None:
-        @self.tool
-        def health() -> McpHealthResponse:
-            """Liveness check for voice_process_mcp."""
-            return McpHealthResponse(
-                ok=True,
-                mcp=MCP_NAME,
-                agent="voice_process_mcp",
-                transport="http|stdio",
-                host=self.host,
-                port=self.port,
+        self.add_tool(self.health)
+        self.add_tool(self.start_voice_contract)
+        self.add_tool(self.confirm_voice_contract)
+        self.add_tool(self.list_voice_contracts)
+
+    def health(self) -> McpHealthResponse:
+        """Liveness check for voice_process_mcp."""
+        return McpHealthResponse(
+            ok=True,
+            mcp=MCP_NAME,
+            agent="voice_process_mcp",
+            transport="http|stdio",
+            host=self.host,
+            port=self.port,
+        )
+
+    def start_voice_contract(
+        self,
+        transcript: str,
+        auto_create: bool = False,
+        store: JobStore = Depends(get_job_store),
+    ) -> VoiceContractMcpResponse:
+        """Start the voice-contract LangGraph agent (may return needs_confirmation)."""
+        from voice_enable_mcp.flow_debug import flow_breakpoint
+        from voice_enable_mcp.services.voice_contract_workflow import (
+            run_voice_contract_workflow,
+        )
+
+        flow_breakpoint("mcp_start_voice_contract", transcript=transcript)
+        result = run_voice_contract_workflow(
+            transcript,
+            store=store,
+            auto_create=auto_create,
+        )
+        payload = VoiceContractMcpResponse.from_workflow(result, mcp=MCP_NAME)
+        if result.ok and result.status == "completed":
+            saved = store.save_voice_contract(
+                spoken_name=result.spoken_name or "",
+                spoken_number=result.spoken_number or "",
+                contact=result.contact or result.legal_entity,
+                legal_entity=result.legal_entity,
+                pricelist=result.pricelist,
+                contract_payload=result.contract_payload,
+                contract_file=result.contract_file,
+                transcript=result.transcript,
             )
+            payload = payload.model_copy(update={"contract_id": saved.get("contract_id")})
+        return payload
 
-        @self.tool
-        def start_voice_contract(
-            transcript: str,
-            auto_create: bool = False,
-        ) -> VoiceContractMcpResponse:
-            """Start the voice-contract LangGraph agent (may return needs_confirmation)."""
-            from voice_enable_mcp.services.voice_contract_workflow import (
-                run_voice_contract_workflow,
+    def confirm_voice_contract(
+        self,
+        legal_entity: str,
+        contract_reference_number: str,
+        thread_id: str | None = None,
+        user_text: str = "yes",
+        transcript: str | None = None,
+        store: JobStore = Depends(get_job_store),
+    ) -> VoiceContractMcpResponse:
+        """Resume HITL interrupt (preferred with thread_id) or finalize by entity/ref."""
+        from voice_enable_mcp.flow_debug import flow_breakpoint
+        from voice_enable_mcp.services.voice_contract_workflow import (
+            confirm_voice_contract as confirm_fn,
+        )
+
+        flow_breakpoint(
+            "mcp_confirm_voice_contract",
+            thread_id=thread_id,
+            legal_entity=legal_entity,
+        )
+        result = confirm_fn(
+            entity_code_or_name=legal_entity,
+            contract_reference_number=contract_reference_number,
+            store=store,
+            transcript=transcript,
+            thread_id=thread_id,
+            user_text=user_text,
+        )
+        payload = VoiceContractMcpResponse.from_workflow(result, mcp=MCP_NAME)
+        if result.ok and result.status == "completed":
+            saved = store.save_voice_contract(
+                spoken_name=result.spoken_name or "",
+                spoken_number=result.spoken_number or "",
+                contact=result.contact or result.legal_entity,
+                legal_entity=result.legal_entity,
+                pricelist=result.pricelist,
+                contract_payload=result.contract_payload,
+                contract_file=result.contract_file,
+                transcript=result.transcript,
             )
-            from voice_enable_mcp.storage.job_store import JobStore
-            from voice_enable_mcp.flow_debug import flow_breakpoint
-
-            flow_breakpoint("mcp_start_voice_contract", transcript=transcript)
-            store = JobStore()
-            result = run_voice_contract_workflow(
-                transcript,
-                store=store,
-                auto_create=auto_create,
+            payload = payload.model_copy(
+                update={
+                    "contract_id": saved.get("contract_id"),
+                    "message": (
+                        f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
+                    ),
+                }
             )
-            payload = VoiceContractMcpResponse.from_workflow(result, mcp=MCP_NAME)
-            if result.ok and result.status == "completed":
-                saved = store.save_voice_contract(
-                    spoken_name=result.spoken_name or "",
-                    spoken_number=result.spoken_number or "",
-                    contact=result.contact or result.legal_entity,
-                    legal_entity=result.legal_entity,
-                    pricelist=result.pricelist,
-                    contract_payload=result.contract_payload,
-                    contract_file=result.contract_file,
-                    transcript=result.transcript,
-                )
-                payload = payload.model_copy(update={"contract_id": saved.get("contract_id")})
-            return payload
+        return payload
 
-        @self.tool
-        def confirm_voice_contract(
-            legal_entity: str,
-            contract_reference_number: str,
-            thread_id: str | None = None,
-            user_text: str = "yes",
-            transcript: str | None = None,
-        ) -> VoiceContractMcpResponse:
-            """Resume HITL interrupt (preferred with thread_id) or finalize by entity/ref."""
-            from voice_enable_mcp.services.voice_contract_workflow import (
-                confirm_voice_contract as confirm_fn,
-            )
-            from voice_enable_mcp.storage.job_store import JobStore
-            from voice_enable_mcp.flow_debug import flow_breakpoint
-
-            flow_breakpoint("mcp_confirm_voice_contract", thread_id=thread_id, legal_entity=legal_entity)
-            store = JobStore()
-            result = confirm_fn(
-                entity_code_or_name=legal_entity,
-                contract_reference_number=contract_reference_number,
-                store=store,
-                transcript=transcript,
-                thread_id=thread_id,
-                user_text=user_text,
-            )
-            payload = VoiceContractMcpResponse.from_workflow(result, mcp=MCP_NAME)
-            if result.ok and result.status == "completed":
-                saved = store.save_voice_contract(
-                    spoken_name=result.spoken_name or "",
-                    spoken_number=result.spoken_number or "",
-                    contact=result.contact or result.legal_entity,
-                    legal_entity=result.legal_entity,
-                    pricelist=result.pricelist,
-                    contract_payload=result.contract_payload,
-                    contract_file=result.contract_file,
-                    transcript=result.transcript,
-                )
-                payload = payload.model_copy(
-                    update={
-                        "contract_id": saved.get("contract_id"),
-                        "message": (
-                            f"{result.message} Saved to SQLite as contract `{saved['contract_id']}`."
-                        ),
-                    }
-                )
-            return payload
-
-        @self.tool
-        def list_voice_contracts(limit: int = 20) -> VoiceContractListResponse:
-            """List saved voice contracts from SQLite."""
-            from voice_enable_mcp.storage.job_store import JobStore
-
-            store = JobStore()
-            rows = store.list_voice_contracts(limit=limit)
-            return VoiceContractListResponse(mcp=MCP_NAME, count=len(rows), contracts=rows)
+    def list_voice_contracts(
+        self,
+        limit: int = 20,
+        store: JobStore = Depends(get_job_store),
+    ) -> VoiceContractListResponse:
+        """List saved voice contracts from SQLite."""
+        rows = store.list_voice_contracts(limit=limit)
+        return VoiceContractListResponse(mcp=MCP_NAME, count=len(rows), contracts=rows)
 
 
 def main(argv: list[str] | None = None) -> int:

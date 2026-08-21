@@ -14,6 +14,9 @@ class BaseAgentMCPServer(FastMCP, ABC):
     Class-based FastMCP server.
 
     Subclasses call ``super().__init__(...)`` then implement ``register_tools``.
+    Register bound instance methods with ``self.add_tool(self.method)`` so
+    ``self`` is not exposed in the MCP tool schema. Inject stores with
+    ``fastmcp.dependencies.Depends`` (not FastAPI Depends).
     """
 
     def __init__(

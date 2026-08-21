@@ -14,6 +14,9 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "langchain-core>=0.3.0",
     "pyyaml>=6.0.0",
+    "sqlalchemy>=2.0.0",
+    "pymssql>=2.2.11",
+    "pyodbc>=5.0.0",
 ]
 
 [project.scripts]

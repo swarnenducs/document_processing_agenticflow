@@ -1,373 +1,151 @@
-"""SQLite job metadata + configurable filesystem paths for document blobs."""
+"""Voice contract + trace persistence through SQLAlchemy.
+
+Rows go to whatever backend ``storage/db.py`` resolves (local SQLite or Azure
+SQL). Generated contract files stay on the filesystem under STORAGE_BASE_PATH.
+
+The legal entity / pricelist catalog is dummy HITL reference data read from
+``samples/data/contract_catalog.json``, matching ip_api — it is deliberately not
+a SQL table, so nothing has to be seeded before the voice flow can run.
+"""
 
 from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from voice_enable_mcp.core.settings import settings
+from voice_enable_mcp.storage.db import ensure_schema, get_session_factory
+from voice_enable_mcp.storage.models import CallLog, VoiceContract
+
+_JSON_COLUMNS = ("request_json", "response_json", "meta_json")
 
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-@dataclass
-class JobRecord:
-    id: str
-    status: str
-    template_path: str
-    data_path: str
-    output_path: str | None
-    error_message: str | None
-    confidence_json: str | None
-    validation_json: str | None
-    mapper_llm: str | None
-    validator_llm: str | None
-    created_at: str
-    updated_at: str
-    completed_at: str | None
-    extraction_validation_json: str | None = None
-    result_json: str | None = None
-    xid: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "job_id": self.id,
-            "status": self.status,
-            "template_path": self.template_path,
-            "data_path": self.data_path,
-            "output_path": self.output_path,
-            "error_message": self.error_message,
-            "mapper_llm": self.mapper_llm,
-            "validator_llm": self.validator_llm,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "completed_at": self.completed_at,
-            "xid": self.xid,
-        }
-        if self.confidence_json:
-            out["confidence"] = json.loads(self.confidence_json)
-        if self.validation_json:
-            out["validation"] = json.loads(self.validation_json)
-        if self.extraction_validation_json:
-            out["extraction_validation"] = json.loads(self.extraction_validation_json)
-        if self.result_json:
-            out["result"] = json.loads(self.result_json)
-        return out
-
-
 class JobStore:
-    """Persist job metadata in SQLite; blobs live on disk under STORAGE_BASE_PATH."""
+    """Persist voice contracts and call logs; blobs live on disk."""
 
     def __init__(self, db_path: Path | None = None) -> None:
         cfg = settings()
-        self.db_path = db_path or cfg.sqlite_database_path
         self.cfg = cfg
-        self._init_db()
+        self.db_path = db_path or cfg.sqlite_database_path
+        # An explicit path pins SQLite; otherwise the configured backend wins.
+        self._sqlite_override = db_path
+        self._catalog: dict[str, Any] | None = None
+        ensure_schema(sqlite_path=self._sqlite_override)
 
     @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+    def _session(self) -> Iterator[Session]:
+        factory = get_session_factory(sqlite_path=self._sqlite_override)
+        session = factory()
         try:
-            yield conn
-            conn.commit()
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
         finally:
-            conn.close()
+            session.close()
 
-    def _init_db(self) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS document_jobs (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    template_path TEXT NOT NULL,
-                    data_path TEXT NOT NULL,
-                    output_path TEXT,
-                    error_message TEXT,
-                    confidence_json TEXT,
-                    validation_json TEXT,
-                    mapper_llm TEXT,
-                    validator_llm TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    completed_at TEXT
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS transcription_jobs (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    audio_path TEXT NOT NULL,
-                    transcript TEXT,
-                    provider TEXT,
-                    model TEXT,
-                    error_message TEXT,
-                    created_at TEXT NOT NULL,
-                    completed_at TEXT
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS voice_contracts (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    spoken_name TEXT NOT NULL,
-                    spoken_number TEXT NOT NULL,
-                    contact_name TEXT,
-                    contact_json TEXT,
-                    legal_entity_json TEXT,
-                    pricelist_json TEXT,
-                    contract_payload_json TEXT,
-                    contract_file TEXT,
-                    transcript TEXT,
-                    transcription_id TEXT,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS legal_entities (
-                    code TEXT PRIMARY KEY,
-                    legal_name TEXT NOT NULL,
-                    address TEXT,
-                    city TEXT,
-                    country TEXT,
-                    postal_code TEXT,
-                    email TEXT,
-                    phone TEXT,
-                    registration_number TEXT,
-                    entity_json TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS pricelists (
-                    contract_reference_number TEXT PRIMARY KEY,
-                    legal_entity_code TEXT NOT NULL,
-                    currency TEXT,
-                    effective_date TEXT,
-                    pricelist_json TEXT NOT NULL
-                )
-                """
-            )
-            # Backward-compatible columns if an older voice_contracts table exists
-            existing = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(voice_contracts)").fetchall()
-            }
-            for col, typ in (
-                ("legal_entity_json", "TEXT"),
-                ("pricelist_json", "TEXT"),
-                ("contract_payload_json", "TEXT"),
-                ("contract_file", "TEXT"),
-            ):
-                if col not in existing:
-                    conn.execute(f"ALTER TABLE voice_contracts ADD COLUMN {col} {typ}")
+    # ------------------------------------------------------------------
+    # Voice contracts
+    # ------------------------------------------------------------------
 
-            # Persist full document job report details (scores, extraction, summary snapshot)
-            job_cols = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(document_jobs)").fetchall()
-            }
-            for col, typ in (
-                ("extraction_validation_json", "TEXT"),
-                ("result_json", "TEXT"),
-                ("xid", "TEXT"),
-            ):
-                if col not in job_cols:
-                    conn.execute(f"ALTER TABLE document_jobs ADD COLUMN {col} {typ}")
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS call_logs (
-                    id TEXT PRIMARY KEY,
-                    xid TEXT NOT NULL,
-                    job_id TEXT,
-                    kind TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    provider TEXT,
-                    model TEXT,
-                    request_json TEXT,
-                    response_json TEXT,
-                    error_message TEXT,
-                    latency_ms REAL,
-                    meta_json TEXT,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_call_logs_xid ON call_logs(xid)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_call_logs_job_id ON call_logs(job_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_document_jobs_xid ON document_jobs(xid)"
-            )
-
-    def create_job_paths(
+    def save_voice_contract(
         self,
-        job_id: str | None = None,
         *,
-        template_filename: str | None = None,
-    ) -> tuple[str, Path, Path, Path, Path]:
-        """Return (job_id, job_dir, template_path, data_path, output_path).
-
-        Output file is named ``{job_id_last_block}_{template_stem}.docx``.
-        """
-        from voice_enable_mcp.services.naming import build_contract_output_filename
-
-        jid = job_id or str(uuid.uuid4())
-        job_dir = self.cfg.job_dir(jid)
-        job_dir.mkdir(parents=True, exist_ok=True)
-        template_path = job_dir / "template.docx"
-        data_path = job_dir / "data.json"
-        output_name = build_contract_output_filename(
-            jid, template_filename or "template.docx"
-        )
-        output_path = job_dir / output_name
-        return jid, job_dir, template_path, data_path, output_path
-
-    def insert_job(
-        self,
-        job_id: str,
-        template_path: Path,
-        data_path: Path,
-        output_path: Path,
-        *,
-        xid: str | None = None,
-    ) -> JobRecord:
-        now = _now_iso()
-        with self._conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO document_jobs (
-                    id, status, template_path, data_path, output_path,
-                    error_message, confidence_json, validation_json,
-                    mapper_llm, validator_llm, created_at, updated_at, completed_at, xid
-                ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
-                """,
-                (
-                    job_id,
-                    "pending",
-                    str(template_path),
-                    str(data_path),
-                    str(output_path),
-                    now,
-                    now,
-                    xid,
-                ),
+        spoken_name: str,
+        spoken_number: str,
+        contact: dict[str, Any] | None = None,
+        legal_entity: dict[str, Any] | None = None,
+        pricelist: dict[str, Any] | None = None,
+        contract_payload: dict[str, Any] | None = None,
+        contract_file: str | None = None,
+        transcript: str | None = None,
+        transcription_id: str | None = None,
+        contract_id: str | None = None,
+        status: str = "accepted",
+    ) -> dict[str, Any]:
+        cid = contract_id or str(uuid.uuid4())
+        entity = legal_entity or contact
+        contact_name = None
+        if entity:
+            contact_name = (
+                str(entity.get("legalName") or entity.get("name") or entity.get("code") or "")
+                or None
             )
-        return self.get_job(job_id)
-
-    def update_status(self, job_id: str, status: str, error: str | None = None) -> None:
-        now = _now_iso()
-        with self._conn() as conn:
-            conn.execute(
-                """
-                UPDATE document_jobs
-                SET status = ?, updated_at = ?, error_message = COALESCE(?, error_message)
-                WHERE id = ?
-                """,
-                (status, now, error, job_id),
+        with self._session() as session:
+            session.add(
+                VoiceContract(
+                    id=cid,
+                    status=status,
+                    spoken_name=spoken_name,
+                    spoken_number=spoken_number,
+                    contact_name=contact_name,
+                    contact_json=json.dumps(entity) if entity else None,
+                    legal_entity_json=json.dumps(legal_entity) if legal_entity else None,
+                    pricelist_json=json.dumps(pricelist) if pricelist else None,
+                    contract_payload_json=(
+                        json.dumps(contract_payload) if contract_payload else None
+                    ),
+                    contract_file=contract_file,
+                    transcript=transcript,
+                    transcription_id=transcription_id,
+                    created_at=_now_iso(),
+                )
             )
+        return self.get_voice_contract(cid)
 
-    def complete_job(
-        self,
-        job_id: str,
-        *,
-        confidence: dict[str, Any] | None = None,
-        validation: dict[str, Any] | None = None,
-        extraction_validation: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-        mapper_llm: str | None = None,
-        validator_llm: str | None = None,
-        error: str | None = None,
-    ) -> None:
-        now = _now_iso()
-        status = "failed" if error else "completed"
-        with self._conn() as conn:
-            conn.execute(
-                """
-                UPDATE document_jobs SET
-                    status = ?,
-                    updated_at = ?,
-                    completed_at = ?,
-                    error_message = ?,
-                    confidence_json = ?,
-                    validation_json = ?,
-                    extraction_validation_json = ?,
-                    result_json = ?,
-                    mapper_llm = ?,
-                    validator_llm = ?
-                WHERE id = ?
-                """,
-                (
-                    status,
-                    now,
-                    now,
-                    error,
-                    json.dumps(confidence) if confidence else None,
-                    json.dumps(validation) if validation else None,
-                    json.dumps(extraction_validation) if extraction_validation else None,
-                    json.dumps(result) if result else None,
-                    mapper_llm,
-                    validator_llm,
-                    job_id,
-                ),
-            )
+    def get_voice_contract(self, contract_id: str) -> dict[str, Any]:
+        with self._session() as session:
+            row = session.get(VoiceContract, contract_id)
+            if row is None:
+                raise KeyError(f"Voice contract not found: {contract_id}")
+            return self._voice_to_dict(row)
 
-    def get_job(self, job_id: str) -> JobRecord:
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM document_jobs WHERE id = ?", (job_id,)
-            ).fetchone()
-        if row is None:
-            raise KeyError(f"Job not found: {job_id}")
-        data = dict(row)
-        # Older DBs may lack newer columns until migration; keep JobRecord happy.
-        data.setdefault("extraction_validation_json", None)
-        data.setdefault("result_json", None)
-        data.setdefault("xid", None)
-        return JobRecord(**data)
+    def list_voice_contracts(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        capped = max(1, min(int(limit), 200))
+        with self._session() as session:
+            rows = session.scalars(
+                select(VoiceContract).order_by(VoiceContract.created_at.desc()).limit(capped)
+            ).all()
+            return [self._voice_to_dict(row) for row in rows]
 
-    def list_document_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        """Return recent document jobs (newest first) with parsed JSON details."""
-        limit = max(1, min(int(limit), 200))
-        with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM document_jobs
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            data = dict(row)
-            data.setdefault("extraction_validation_json", None)
-            data.setdefault("result_json", None)
-            data.setdefault("xid", None)
-            out.append(JobRecord(**data).to_dict())
-        return out
+    @staticmethod
+    def _voice_to_dict(row: VoiceContract) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "contract_id": row.id,
+            "status": row.status,
+            "spoken_name": row.spoken_name,
+            "spoken_number": row.spoken_number,
+            "contact_name": row.contact_name,
+            "contract_file": row.contract_file,
+            "transcript": row.transcript,
+            "transcription_id": row.transcription_id,
+            "created_at": row.created_at,
+        }
+        for src, dst in (
+            (row.contact_json, "contact"),
+            (row.legal_entity_json, "legal_entity"),
+            (row.pricelist_json, "pricelist"),
+            (row.contract_payload_json, "contract_payload"),
+        ):
+            data[dst] = json.loads(src) if src else None
+        return data
+
+    # ------------------------------------------------------------------
+    # Call logs (xid trace)
+    # ------------------------------------------------------------------
 
     def insert_call_log(
         self,
@@ -387,314 +165,101 @@ class JobStore:
         log_id: str | None = None,
     ) -> str:
         lid = log_id or str(uuid.uuid4())
-        now = _now_iso()
-        with self._conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO call_logs (
-                    id, xid, job_id, kind, name, status, provider, model,
-                    request_json, response_json, error_message, latency_ms,
-                    meta_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    lid,
-                    xid,
-                    job_id,
-                    kind,
-                    name,
-                    status,
-                    provider,
-                    model,
-                    request_json,
-                    response_json,
-                    error_message,
-                    latency_ms,
-                    meta_json,
-                    now,
-                ),
+        with self._session() as session:
+            session.add(
+                CallLog(
+                    id=lid,
+                    xid=xid,
+                    job_id=job_id,
+                    kind=kind,
+                    name=name,
+                    status=status,
+                    provider=provider,
+                    model=model,
+                    request_json=request_json,
+                    response_json=response_json,
+                    error_message=error_message,
+                    latency_ms=latency_ms,
+                    meta_json=meta_json,
+                    created_at=_now_iso(),
+                )
             )
         return lid
 
     def list_call_logs_by_xid(self, xid: str, *, limit: int = 200) -> list[dict[str, Any]]:
-        limit = max(1, min(int(limit), 500))
-        with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM call_logs
-                WHERE xid = ?
-                ORDER BY created_at ASC
-                LIMIT ?
-                """,
-                (xid, limit),
-            ).fetchall()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            data = dict(row)
-            for key in ("request_json", "response_json", "meta_json"):
-                raw = data.get(key)
-                if raw:
-                    try:
-                        data[key.replace("_json", "")] = json.loads(raw)
-                    except json.JSONDecodeError:
-                        data[key.replace("_json", "")] = raw
-                else:
-                    data[key.replace("_json", "")] = None
-            data["log_id"] = data.pop("id")
-            out.append(data)
-        return out
+        capped = max(1, min(int(limit), 500))
+        with self._session() as session:
+            rows = session.scalars(
+                select(CallLog)
+                .where(CallLog.xid == xid)
+                .order_by(CallLog.created_at.asc())
+                .limit(capped)
+            ).all()
+            return [self._call_log_to_dict(row) for row in rows]
 
-    def get_trace_by_xid(self, xid: str) -> dict[str, Any]:
-        """Aggregate jobs + call logs for one correlation id."""
-        with self._conn() as conn:
-            job_rows = conn.execute(
-                "SELECT * FROM document_jobs WHERE xid = ? ORDER BY created_at DESC",
-                (xid,),
-            ).fetchall()
-        jobs: list[dict[str, Any]] = []
-        for row in job_rows:
-            data = dict(row)
-            data.setdefault("extraction_validation_json", None)
-            data.setdefault("result_json", None)
-            data.setdefault("xid", None)
-            jobs.append(JobRecord(**data).to_dict())
-        logs = self.list_call_logs_by_xid(xid)
-        return {
-            "xid": xid,
-            "job_count": len(jobs),
-            "log_count": len(logs),
-            "jobs": jobs,
-            "logs": logs,
+    @staticmethod
+    def _call_log_to_dict(row: CallLog) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "log_id": row.id,
+            "xid": row.xid,
+            "job_id": row.job_id,
+            "kind": row.kind,
+            "name": row.name,
+            "status": row.status,
+            "provider": row.provider,
+            "model": row.model,
+            "error_message": row.error_message,
+            "latency_ms": row.latency_ms,
+            "created_at": row.created_at,
         }
-
-    def delete_job(self, job_id: str) -> None:
-        with self._conn() as conn:
-            conn.execute("DELETE FROM document_jobs WHERE id = ?", (job_id,))
-        job_dir = self.cfg.job_dir(job_id)
-        if job_dir.exists():
-            for p in job_dir.iterdir():
-                p.unlink(missing_ok=True)
-            job_dir.rmdir()
-
-    def save_transcription(
-        self,
-        transcription_id: str,
-        audio_path: Path,
-        transcript: str,
-        provider: str,
-        model: str,
-    ) -> None:
-        now = _now_iso()
-        with self._conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO transcription_jobs (
-                    id, status, audio_path, transcript, provider, model,
-                    error_message, created_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
-                """,
-                (
-                    transcription_id,
-                    "completed",
-                    str(audio_path),
-                    transcript,
-                    provider,
-                    model,
-                    now,
-                    now,
-                ),
-            )
-
-    def get_transcription(self, transcription_id: str) -> dict[str, Any]:
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM transcription_jobs WHERE id = ?", (transcription_id,)
-            ).fetchone()
-        if row is None:
-            raise KeyError(f"Transcription not found: {transcription_id}")
-        return dict(row)
-
-    def save_voice_contract(
-        self,
-        *,
-        spoken_name: str,
-        spoken_number: str,
-        contact: dict[str, Any] | None = None,
-        legal_entity: dict[str, Any] | None = None,
-        pricelist: dict[str, Any] | None = None,
-        contract_payload: dict[str, Any] | None = None,
-        contract_file: str | None = None,
-        transcript: str | None = None,
-        transcription_id: str | None = None,
-        contract_id: str | None = None,
-        status: str = "accepted",
-    ) -> dict[str, Any]:
-        """Persist an accepted voice create-contract request in SQLite."""
-        cid = contract_id or str(uuid.uuid4())
-        now = _now_iso()
-        entity = legal_entity or contact
-        contact_name = None
-        if entity:
-            contact_name = str(
-                entity.get("legalName") or entity.get("name") or entity.get("code") or ""
-            ) or None
-
-        with self._conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO voice_contracts (
-                    id, status, spoken_name, spoken_number, contact_name,
-                    contact_json, legal_entity_json, pricelist_json,
-                    contract_payload_json, contract_file, transcript,
-                    transcription_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    cid,
-                    status,
-                    spoken_name,
-                    spoken_number,
-                    contact_name,
-                    json.dumps(entity) if entity else None,
-                    json.dumps(legal_entity) if legal_entity else None,
-                    json.dumps(pricelist) if pricelist else None,
-                    json.dumps(contract_payload) if contract_payload else None,
-                    contract_file,
-                    transcript,
-                    transcription_id,
-                    now,
-                ),
-            )
-        return self.get_voice_contract(cid)
-
-    def get_voice_contract(self, contract_id: str) -> dict[str, Any]:
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM voice_contracts WHERE id = ?", (contract_id,)
-            ).fetchone()
-        if row is None:
-            raise KeyError(f"Voice contract not found: {contract_id}")
-        data = dict(row)
-        for src, dst in (
-            ("contact_json", "contact"),
-            ("legal_entity_json", "legal_entity"),
-            ("pricelist_json", "pricelist"),
-            ("contract_payload_json", "contract_payload"),
-        ):
-            raw = data.get(src)
-            data[dst] = json.loads(raw) if raw else None
-        data["contract_id"] = data.pop("id")
+        for column in _JSON_COLUMNS:
+            raw = getattr(row, column)
+            data[column] = raw
+            key = column.removesuffix("_json")
+            if not raw:
+                data[key] = None
+                continue
+            try:
+                data[key] = json.loads(raw)
+            except json.JSONDecodeError:
+                data[key] = raw
         return data
 
-    def list_voice_contracts(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        limit = max(1, min(int(limit), 200))
-        with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM voice_contracts
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            data = dict(row)
-            for src, dst in (
-                ("contact_json", "contact"),
-                ("legal_entity_json", "legal_entity"),
-                ("pricelist_json", "pricelist"),
-                ("contract_payload_json", "contract_payload"),
-            ):
-                raw = data.get(src)
-                data[dst] = json.loads(raw) if raw else None
-            data["contract_id"] = data.pop("id")
-            out.append(data)
-        return out
+    # ------------------------------------------------------------------
+    # Contract catalog (JSON reference data, not SQL)
+    # ------------------------------------------------------------------
 
-    def ensure_contract_catalog_seeded(self) -> None:
-        """Load sample legal entities + pricelists into SQLite once."""
-        catalog_path = None
+    def _catalog_path(self) -> Path | None:
         here = Path(__file__).resolve()
         for parent in here.parents:
             candidate = parent / "samples" / "data" / "contract_catalog.json"
             if candidate.is_file():
-                catalog_path = candidate
-                break
-        if catalog_path is None:
-            catalog_path = (
-                here.parents[min(5, len(here.parents) - 1)]
-                / "samples"
-                / "data"
-                / "contract_catalog.json"
-            )
-        with self._conn() as conn:
-            entity_count = conn.execute("SELECT COUNT(*) FROM legal_entities").fetchone()[0]
-            list_count = conn.execute("SELECT COUNT(*) FROM pricelists").fetchone()[0]
-            if entity_count and list_count:
-                return
-            if not catalog_path.is_file():
-                return
-            payload = json.loads(catalog_path.read_text(encoding="utf-8"))
-            for entity in payload.get("legal_entities") or []:
-                if not isinstance(entity, dict):
-                    continue
-                code = str(entity.get("code") or "").strip()
-                if not code:
-                    continue
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO legal_entities (
-                        code, legal_name, address, city, country, postal_code,
-                        email, phone, registration_number, entity_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        code,
-                        str(entity.get("legalName") or code),
-                        entity.get("address"),
-                        entity.get("city"),
-                        entity.get("country"),
-                        entity.get("postalCode"),
-                        entity.get("email"),
-                        entity.get("phone"),
-                        entity.get("registrationNumber"),
-                        json.dumps(entity),
-                    ),
-                )
-            for pricelist in payload.get("pricelists") or []:
-                if not isinstance(pricelist, dict):
-                    continue
-                ref = str(pricelist.get("contractReferenceNumber") or "").strip()
-                if not ref:
-                    continue
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO pricelists (
-                        contract_reference_number, legal_entity_code, currency,
-                        effective_date, pricelist_json
-                    ) VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        ref,
-                        str(pricelist.get("legalEntityCode") or ""),
-                        pricelist.get("currency"),
-                        pricelist.get("effectiveDate"),
-                        json.dumps(pricelist),
-                    ),
-                )
+                return candidate
+        return None
+
+    def _load_contract_catalog(self) -> dict[str, Any]:
+        if self._catalog is not None:
+            return self._catalog
+        path = self._catalog_path()
+        if path is None:
+            self._catalog = {"legal_entities": [], "pricelists": []}
+        else:
+            self._catalog = json.loads(path.read_text(encoding="utf-8"))
+        return self._catalog
+
+    def ensure_contract_catalog_seeded(self) -> None:
+        """Warm the JSON catalog cache. Kept so callers need no backend knowledge."""
+        self._load_contract_catalog()
 
     def find_legal_entity(self, name_or_code: str) -> dict[str, Any] | None:
         needle = " ".join((name_or_code or "").lower().split())
         if not needle:
             return None
-        self.ensure_contract_catalog_seeded()
-        with self._conn() as conn:
-            rows = conn.execute("SELECT entity_json FROM legal_entities").fetchall()
         exact: dict[str, Any] | None = None
         partial: dict[str, Any] | None = None
-        for row in rows:
-            entity = json.loads(row["entity_json"])
+        for entity in self._load_contract_catalog().get("legal_entities") or []:
+            if not isinstance(entity, dict):
+                continue
             candidates = [
                 str(entity.get("code") or "").lower(),
                 str(entity.get("legalName") or "").lower(),
@@ -720,19 +285,14 @@ class JobStore:
         needle = re.sub(r"[\s\-_]+", "", (contract_reference_number or "").upper())
         if not needle:
             return []
-        self.ensure_contract_catalog_seeded()
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT contract_reference_number, legal_entity_code, pricelist_json "
-                "FROM pricelists"
-            ).fetchall()
-
         scored: list[tuple[int, dict[str, Any]]] = []
         wanted_code = (legal_entity_code or "").strip().upper() or None
-        for row in rows:
-            ref = str(row["contract_reference_number"] or "")
+        for pricelist in self._load_contract_catalog().get("pricelists") or []:
+            if not isinstance(pricelist, dict):
+                continue
+            ref = str(pricelist.get("contractReferenceNumber") or "")
             compact = re.sub(r"[\s\-_]+", "", ref.upper())
-            code = str(row["legal_entity_code"] or "").upper()
+            code = str(pricelist.get("legalEntityCode") or "").upper()
             if wanted_code and code and code != wanted_code:
                 continue
             score = 0
@@ -743,6 +303,6 @@ class JobStore:
             elif compact.startswith(needle) or needle.startswith(compact):
                 score = 60
             if score:
-                scored.append((score, json.loads(row["pricelist_json"])))
+                scored.append((score, pricelist))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [item[1] for item in scored]

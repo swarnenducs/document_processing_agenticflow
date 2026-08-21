@@ -17,7 +17,7 @@ Client
 |---|---|
 | MAF | NL understanding, tool selection, answer synthesis |
 | Document MCP | Word pipeline LangGraph |
-| Voice MCP | Voice/HITL LangGraph + MemorySaver |
+| Voice MCP | Voice/HITL LangGraph + SQLAlchemy checkpointer |
 | ip_api | Jobs, auth edge, proxies, WebSockets |
 | UI | UX |
 

@@ -53,9 +53,9 @@ def _safe_json(value: Any, *, max_chars: int | None = None) -> str:
 
 
 def _store():
-    from voice_enable_mcp.storage.job_store import JobStore
+    from voice_enable_mcp.core.dependencies import get_job_store
 
-    return JobStore()
+    return get_job_store()
 
 
 def log_event(

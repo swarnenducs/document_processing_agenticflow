@@ -30,7 +30,7 @@ Use this table so you don’t confuse the two in interviews.
 | Mental model | **Chains / runnables** (mostly DAG-ish pipelines) | **Stateful graph** (nodes, edges, cycles, interrupts) | LCEL inside nodes; graphs own control flow |
 | Best for | Prompt → parse → RAG → tools | Multi-step agents, retries, HITL | Document fill + voice confirm |
 | Core APIs to know | `ChatModel`, LCEL `|`, retrievers, tools, agents | `StateGraph`, `add_node`, `add_edge`, `interrupt`, checkpointer | See interview-prep folders below |
-| Memory | Chat history / buffers / summaries | **Checkpoint + `thread_id`** across requests | Voice `MemorySaver`; MAF session (Phase 1+) |
+| Memory | Chat history / buffers / summaries | **Checkpoint + `thread_id`** across requests | Voice SQL checkpointer; MAF session (Phase 1+) |
 | RAG | Retriever + chain | Can wrap RAG as a node | Document mapping is LLM+rules, not classic vector RAG |
 | When to stop LC and start LG | Linear “do A then B” | Need loops, branching, pause for human | Voice needs HITL → LangGraph |
 | Study order | **First** | **Second** (after LCEL basics) | [langchain-basic/](langchain-basic/) → [langgraph-basic/](langgraph-basic/) |
@@ -53,7 +53,7 @@ Use this table so you don’t confuse the two in interviews.
 | Nodes & edges | Conditional routing | Playlist / Eden Marco LG modules | Validate → retry loop |
 | Cycles / retries | Loop until pass or max | LangGraph mastery content | Document validation retries |
 | HITL | `interrupt` / wait for human | Official how-tos | Voice contract confirm |
-| Checkpointer | `MemorySaver` / Postgres | Official + Udemy | Voice `thread_id` |
+| Checkpointer | Official: MemorySaver / Postgres; **this repo: SQLAlchemy SQLite/Azure SQL** | Official + Udemy | Voice `thread_id` |
 | Multi-agent (optional) | Supervisor / handoffs | Advanced Udemy / Foundry | Compare to MAF orchestrating MCPs |
 
 ---

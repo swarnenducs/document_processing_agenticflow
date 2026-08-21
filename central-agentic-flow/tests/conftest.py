@@ -1,8 +1,22 @@
-"""Clear live provider keys so unit tests never call external LLMs."""
+"""Keep unit tests off external LLMs and off Azure SQL."""
 
 from __future__ import annotations
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def local_sqlite_only(tmp_path, monkeypatch):
+    """Pin storage and the SQLAlchemy engine to tmp_path SQLite, never Azure SQL."""
+    from central_agentic_flow.core.settings import reload_settings
+
+    monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
+    for key in ("AZURE_SQL_SERVER", "AZURE_SQL_PASSWORD", "SQLALCHEMY_DATABASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    reload_settings()
+    yield
+    reload_settings()
 
 
 @pytest.fixture(autouse=True)

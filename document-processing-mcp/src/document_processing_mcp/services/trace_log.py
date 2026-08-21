@@ -53,9 +53,9 @@ def _safe_json(value: Any, *, max_chars: int | None = None) -> str:
 
 
 def _store():
-    from document_processing_mcp.storage.job_store import JobStore
+    from document_processing_mcp.core.dependencies import get_call_log_store
 
-    return JobStore()
+    return get_call_log_store()
 
 
 def log_event(

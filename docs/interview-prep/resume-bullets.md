@@ -66,7 +66,7 @@ Built a **separately deployable** agentic GenAI stack for **auto contract pricin
 |---|---|
 | Separately deployable | Folders + ports 7860/8000/8001/8002/8003 + compose |
 | Dual LLM | Mapper vs validator; why not one model |
-| HITL | Voice interrupt / confirm; why MemorySaver ≠ MAF session |
+| HITL | Voice interrupt / confirm; why SQL checkpointer ≠ MAF session |
 | MCP | Tools as public API; prefixes `document_` / `voice_` |
 | MAF | Orchestrator only; no business logic inside agent |
 | Session / xid | Correlation vs conversation memory |

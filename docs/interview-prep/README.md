@@ -23,7 +23,7 @@ docs/interview-prep/
   resume-bullets.md        # Resume / LinkedIn bullets for this project
   fastapi-basic/           # API gateway, async, jobs, WebSockets
   langchain-basic/         # core LCEL + RAG (full) + agents + repo mapping + Q&A
-  langgraph-basic/         # graphs + HITL + MemorySaver + memory types
+  langgraph-basic/         # graphs + HITL + SQL checkpointer + memory types
   maf-basic/               # MAF agent+MCP code + sessions/memory
   mcp-basic/               # Model Context Protocol + FastMCP
   memory/                  # → see langgraph-basic/04-memory-management.md (canonical)

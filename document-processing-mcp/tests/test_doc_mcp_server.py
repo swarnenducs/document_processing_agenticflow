@@ -16,6 +16,9 @@ def test_document_mcp_lists_tools() -> None:
 
 
 def test_document_mcp_health() -> None:
+    from document_processing_mcp.core.dependencies import get_app_context
+    from document_processing_mcp.storage.blob_store import BlobStore
+
     server = DocumentProcessMCP(host="127.0.0.1", port=18001)
     payload = asyncio.run(call_tool(server, "health"))
     assert isinstance(payload, dict)
@@ -26,3 +29,27 @@ def test_document_mcp_health() -> None:
     assert payload["mcp"] == "document_process_mcp"
     assert payload["agent"] == "document_process_mcp"
     assert "blob_enabled" in payload
+    assert isinstance(get_app_context().blob_store, BlobStore)
+
+
+def test_document_mcp_hides_injected_context() -> None:
+    """Class methods + Depends must not expose self or app_context to the client."""
+    from fastmcp import Client
+
+    server = DocumentProcessMCP(host="127.0.0.1", port=18001)
+
+    async def _schema() -> dict[str, object]:
+        async with Client(server) as client:
+            tools = await client.list_tools()
+            health = next(t for t in tools if t.name == "health")
+            generate = next(t for t in tools if t.name == "generate_document")
+            return {
+                "health": set((health.inputSchema or {}).get("properties") or {}),
+                "generate": set((generate.inputSchema or {}).get("properties") or {}),
+            }
+
+    schemas = asyncio.run(_schema())
+    assert "self" not in schemas["health"]
+    assert "app_context" not in schemas["health"]
+    assert "self" not in schemas["generate"]
+    assert "template_path" in schemas["generate"]

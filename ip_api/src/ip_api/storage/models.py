@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Float, Index, Unicode, UnicodeText
+from sqlalchemy import BigInteger, Float, Index, Integer, LargeBinary, Unicode, UnicodeText, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 DOCUMENT_MCP = "document_process_mcp"
@@ -127,6 +127,35 @@ class CallLog(Base):
     )
 
 
+class TemplateAsset(Base):
+    """One customer-specific Word template in the admin template library.
+
+    ``storage_ref`` is a local absolute path or a ``blob://`` ref, so the same
+    row works for local-filesystem and Azure Blob deployments.
+    """
+
+    __tablename__ = "template_library"
+
+    id: Mapped[str] = mapped_column(Unicode(64), primary_key=True)
+    customer_name: Mapped[str] = mapped_column(Unicode(128), nullable=False)
+    template_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    storage_backend: Mapped[str] = mapped_column(Unicode(32), nullable=False)
+    storage_ref: Mapped[str] = mapped_column(Unicode(1024), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(Unicode(64), nullable=True)
+    uploaded_by: Mapped[str | None] = mapped_column(Unicode(256), nullable=True)
+    created_at: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "customer_name", "template_name", name="uq_template_library_customer_template"
+        ),
+        Index("idx_template_library_customer", "customer_name"),
+    )
+
+
 class SessionRow(Base):
     __tablename__ = "sessions"
 
@@ -153,3 +182,49 @@ class SessionRequest(Base):
     created_at: Mapped[str] = mapped_column(Unicode(64), nullable=False)
 
     __table_args__ = (Index("idx_session_requests_session", "session_id"),)
+
+
+class LgCheckpoint(Base):
+    """LangGraph HITL snapshot — same tables as voice_enable_mcp."""
+
+    __tablename__ = "lg_checkpoints"
+
+    thread_id: Mapped[str] = mapped_column(Unicode(128), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(Unicode(256), primary_key=True, default="")
+    checkpoint_id: Mapped[str] = mapped_column(Unicode(128), primary_key=True)
+    parent_checkpoint_id: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
+    checkpoint_type: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+    checkpoint_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    metadata_type: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+    metadata_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+    __table_args__ = (Index("idx_lg_checkpoints_thread", "thread_id"),)
+
+
+class LgCheckpointBlob(Base):
+    __tablename__ = "lg_checkpoint_blobs"
+
+    thread_id: Mapped[str] = mapped_column(Unicode(128), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(Unicode(256), primary_key=True, default="")
+    channel: Mapped[str] = mapped_column(Unicode(256), primary_key=True)
+    version: Mapped[str] = mapped_column(Unicode(64), primary_key=True)
+    blob_type: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+    blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+
+    __table_args__ = (Index("idx_lg_checkpoint_blobs_thread", "thread_id"),)
+
+
+class LgCheckpointWrite(Base):
+    __tablename__ = "lg_checkpoint_writes"
+
+    thread_id: Mapped[str] = mapped_column(Unicode(128), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(Unicode(256), primary_key=True, default="")
+    checkpoint_id: Mapped[str] = mapped_column(Unicode(128), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Unicode(128), primary_key=True)
+    idx: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    blob_type: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+    blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    task_path: Mapped[str] = mapped_column(Unicode(512), nullable=False, default="")
+
+    __table_args__ = (Index("idx_lg_checkpoint_writes_thread", "thread_id"),)

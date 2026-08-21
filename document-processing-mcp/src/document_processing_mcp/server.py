@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
+import time
 
+from fastmcp.dependencies import Depends
+
+from document_processing_mcp.core.context import ApplicationContext, build_application_context
+from document_processing_mcp.core.dependencies import get_app_context, set_app_context
 from document_processing_mcp.mcp.base import BaseAgentMCPServer
 from document_processing_mcp.models.mcp_responses import GenerateDocumentResponse, McpHealthResponse
-from document_processing_mcp.storage.blob_store import get_blob_store
 from document_processing_mcp.storage.db import build_database_url, engine_uses_mssql
 
 MCP_NAME = "document_process_mcp"
@@ -17,6 +21,7 @@ class DocumentProcessMCP(BaseAgentMCPServer):
 
     def __init__(self, *, host: str | None = None, port: int | None = None) -> None:
         port = port if port is not None else int(os.getenv("DOCUMENT_MCP_PORT", "8001"))
+        set_app_context(build_application_context())
         super().__init__(
             name=MCP_NAME,
             instructions=(
@@ -31,97 +36,99 @@ class DocumentProcessMCP(BaseAgentMCPServer):
         )
 
     def register_tools(self) -> None:
-        @self.tool
-        def health() -> McpHealthResponse:
-            """Liveness check for document_process_mcp."""
-            blobs = get_blob_store()
-            db_url = build_database_url()
-            return McpHealthResponse(
-                ok=True,
-                mcp=MCP_NAME,
-                agent="document_process_mcp",
-                transport="http|stdio",
-                host=self.host,
-                port=self.port,
-                blob_enabled=blobs.enabled,
-                blob_container=blobs.container_name if blobs.enabled else None,
-                azure_sql=engine_uses_mssql(db_url),
-            )
+        self.add_tool(self.health)
+        self.add_tool(self.generate_document)
 
-        @self.tool
-        def generate_document(
-            template_path: str,
-            data_path: str | None = None,
-            data_json: str | None = None,
-            output_path: str | None = None,
-            job_id: str | None = None,
-            xid: str | None = None,
-            skip_validation: bool = False,
-            skip_extraction_validation: bool = False,
-            max_retries: int = 1,
-            validation_threshold: float = 0.7,
-        ) -> GenerateDocumentResponse:
-            """
-            Run the LangGraph document pipeline (extract → map → generate → validate).
+    def health(
+        self,
+        app_context: ApplicationContext = Depends(get_app_context),
+    ) -> McpHealthResponse:
+        """Liveness check for document_process_mcp."""
+        blobs = app_context.blob_store
+        db_url = build_database_url()
+        return McpHealthResponse(
+            ok=True,
+            mcp=MCP_NAME,
+            agent="document_process_mcp",
+            transport="http|stdio",
+            host=self.host,
+            port=self.port,
+            blob_enabled=blobs.enabled,
+            blob_container=blobs.container_name if blobs.enabled else None,
+            azure_sql=engine_uses_mssql(db_url),
+        )
 
-            ``template_path`` / ``data_path`` / ``output_path`` may be local files or
-            Azure Blob refs (``blob://container/jobs/{job_id}/upload|download/...``).
-            When ``job_id`` is set, MCP downloads, processes, uploads the .docx, and
-            updates ``document_jobs`` + ``document_accuracy_reports``.
-            Provide either ``data_path`` or ``data_json``.
-            """
-            import time
+    def generate_document(
+        self,
+        template_path: str,
+        data_path: str | None = None,
+        data_json: str | None = None,
+        output_path: str | None = None,
+        job_id: str | None = None,
+        xid: str | None = None,
+        skip_validation: bool = False,
+        skip_extraction_validation: bool = False,
+        max_retries: int = 1,
+        validation_threshold: float = 0.7,
+    ) -> GenerateDocumentResponse:
+        """
+        Run the LangGraph document pipeline (extract → map → generate → validate).
 
-            from document_processing_mcp.core.request_context import bind_xid, require_xid
-            from document_processing_mcp.services.document_job import run_generate_document
-            from document_processing_mcp.services.trace_log import log_event
+        ``template_path`` / ``data_path`` / ``output_path`` may be local files or
+        Azure Blob refs (``blob://container/jobs/{job_id}/upload|download/...``).
+        When ``job_id`` is set, MCP downloads, processes, uploads the .docx, and
+        updates ``document_jobs`` + ``document_accuracy_reports``.
+        Provide either ``data_path`` or ``data_json``.
+        """
+        from document_processing_mcp.core.request_context import bind_xid, require_xid
+        from document_processing_mcp.flow_debug import flow_breakpoint
+        from document_processing_mcp.services.document_job import run_generate_document
+        from document_processing_mcp.services.trace_log import log_event
 
-            from document_processing_mcp.flow_debug import flow_breakpoint
-
-            corr = (xid or "").strip() or require_xid()
-            started = time.perf_counter()
-            flow_breakpoint(
-                "mcp_generate_document",
+        corr = (xid or "").strip() or require_xid()
+        started = time.perf_counter()
+        flow_breakpoint(
+            "mcp_generate_document",
+            template_path=template_path,
+            data_path=data_path,
+            job_id=job_id,
+            xid=corr,
+        )
+        with bind_xid(corr, job_id=job_id):
+            payload_out = run_generate_document(
                 template_path=template_path,
                 data_path=data_path,
+                data_json=data_json,
+                output_path=output_path,
                 job_id=job_id,
                 xid=corr,
+                skip_validation=skip_validation,
+                skip_extraction_validation=skip_extraction_validation,
+                max_retries=max_retries,
+                validation_threshold=validation_threshold,
             )
-            with bind_xid(corr, job_id=job_id):
-                payload_out = run_generate_document(
-                    template_path=template_path,
-                    data_path=data_path,
-                    data_json=data_json,
-                    output_path=output_path,
-                    job_id=job_id,
-                    xid=corr,
-                    skip_validation=skip_validation,
-                    skip_extraction_validation=skip_extraction_validation,
-                    max_retries=max_retries,
-                    validation_threshold=validation_threshold,
-                )
-                log_event(
-                    kind="mcp_tool",
-                    name="generate_document",
-                    request_payload={
-                        "template_path": template_path,
-                        "data_path": data_path,
-                        "output_path": output_path,
-                        "job_id": job_id,
-                    },
-                    response_payload={
-                        "ok": payload_out.ok,
-                        "status": payload_out.status,
-                        "errors": payload_out.errors,
-                        "output_path": payload_out.output_path,
-                        "db_updated": payload_out.db_updated,
-                    },
-                    status="ok" if payload_out.ok else "error",
-                    latency_ms=(time.perf_counter() - started) * 1000.0,
-                    xid=corr,
-                    job_id=job_id,
-                )
-                return payload_out.model_copy(update={"mcp": MCP_NAME})
+            log_event(
+                kind="mcp_tool",
+                name="generate_document",
+                request_payload={
+                    "template_path": template_path,
+                    "data_path": data_path,
+                    "output_path": output_path,
+                    "job_id": job_id,
+                },
+                response_payload={
+                    "ok": payload_out.ok,
+                    "status": payload_out.status,
+                    "errors": payload_out.errors,
+                    "output_path": payload_out.output_path,
+                    "db_updated": payload_out.db_updated,
+                },
+                status="ok" if payload_out.ok else "error",
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                xid=corr,
+                job_id=job_id,
+            )
+            return payload_out.model_copy(update={"mcp": MCP_NAME})
 
 
 def main(argv: list[str] | None = None) -> int:

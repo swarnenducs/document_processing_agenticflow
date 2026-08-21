@@ -119,7 +119,7 @@ If voice confirm:
 ```text
 Session.last_flows has thread_id
 → MAF calls voice_confirm_voice_contract(thread_id=...)
-→ Voice MemorySaver resumes graph (unchanged)
+→ Voice SQL checkpointer resumes graph (unchanged)
 → New flow fact written into session
 ```
 
@@ -157,7 +157,7 @@ Owned by **MAF `window_policy`**, not by MCP:
 |---|---|
 | Separate MCP processes | Specialists stay independently deployable |
 | Document one-shot LangGraph | No MAF memory inside document graph |
-| Voice `MemorySaver` + `thread_id` | Different memory for HITL |
+| Voice SQL checkpointer + `thread_id` | Different memory for HITL |
 | Direct UI → `/api/v1/...` tabs | Optional parallel path; session is for Central Agent |
 
 ---

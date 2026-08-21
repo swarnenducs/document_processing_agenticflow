@@ -35,6 +35,9 @@ services:
       VOICE_PROMPTS_DIR: /app/prompts
       STORAGE_BASE_PATH: /home/data/storage
       SQLITE_DATABASE_PATH: /home/data/app.db
+      # HITL checkpoints: sql (default, shared SQLite volume) or redis:
+      # LANGGRAPH_CHECKPOINT_BACKEND: redis
+      # REDIS_URL: redis://redis:6379/0
     volumes:
       - app-data:/home/data
       - ./voice_enable_mcp/prompts:/app/prompts:ro
@@ -55,7 +58,10 @@ services:
       MAF_MCP_REGISTRY_FILE: /app/config/mcp_registry.yml
       DOCUMENT_MCP_URL: http://document-processing-mcp:8001/mcp
       VOICE_MCP_URL: http://voice-enable-mcp:8002/mcp
+      STORAGE_BASE_PATH: /home/data/storage
+      SQLITE_DATABASE_PATH: /home/data/app.db
     volumes:
+      - app-data:/home/data
       - ./central-agentic-flow/prompts:/app/prompts:ro
       - ./central-agentic-flow/config:/app/config:ro
     depends_on:
@@ -96,6 +102,12 @@ services:
       API_BASE_URL: http://ip-api:8000
     depends_on:
       - ip-api
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    profiles: ["redis"]
 
 volumes:
   app-data:

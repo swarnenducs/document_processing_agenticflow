@@ -22,6 +22,13 @@ def _path_from_env(key: str, default: str) -> Path:
     return Path(raw).expanduser().resolve()
 
 
+def _optional_int(key: str) -> int | None:
+    raw = (os.getenv(key) or "").strip()
+    if not raw:
+        return None
+    return int(raw)
+
+
 @dataclass(frozen=True)
 class Settings:
     """Central config — storage paths and API behaviour."""
@@ -31,8 +38,17 @@ class Settings:
     jobs_subdirectory: str
     audio_subdirectory: str
 
-    # SQLite database file path (job metadata)
+    # SQLite fallback when Azure SQL is not configured
     sqlite_database_path: Path
+
+    # SQLAlchemy / Azure SQL
+    sqlalchemy_database_url: str | None
+    azure_sql_server: str | None
+    azure_sql_user: str
+    azure_sql_password: str | None
+    azure_sql_database: str
+    azure_sql_dialect: str
+    azure_sql_odbc_driver: str
 
     # API
     api_host: str
@@ -50,6 +66,18 @@ class Settings:
     openai_whisper_model: str
     groq_whisper_model: str
 
+    # LangGraph HITL checkpointer: sql (SQLite / Azure SQL) or redis
+    checkpoint_backend: str
+    redis_url: str | None
+    checkpoint_redis_prefix: str
+    checkpoint_redis_ttl_seconds: int | None
+
+    @property
+    def uses_azure_sql(self) -> bool:
+        return bool(self.sqlalchemy_database_url) or bool(
+            self.azure_sql_server and self.azure_sql_password
+        )
+
     @property
     def jobs_root(self) -> Path:
         return self.storage_base_path / self.jobs_subdirectory
@@ -65,7 +93,8 @@ class Settings:
         self.storage_base_path.mkdir(parents=True, exist_ok=True)
         self.jobs_root.mkdir(parents=True, exist_ok=True)
         self.audio_root.mkdir(parents=True, exist_ok=True)
-        self.sqlite_database_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.uses_azure_sql:
+            self.sqlite_database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_settings() -> Settings:
@@ -76,6 +105,15 @@ def get_settings() -> Settings:
         jobs_subdirectory=os.getenv("JOBS_SUBDIRECTORY", "jobs"),
         audio_subdirectory=os.getenv("AUDIO_SUBDIRECTORY", "audio"),
         sqlite_database_path=_path_from_env("SQLITE_DATABASE_PATH", sqlite_default),
+        sqlalchemy_database_url=(os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip() or None,
+        azure_sql_server=(os.getenv("AZURE_SQL_SERVER") or "").strip() or None,
+        azure_sql_user=(
+            os.getenv("AZURE_SQL_USER") or os.getenv("AZURE_SQL_ADMIN") or "adminsql"
+        ).strip(),
+        azure_sql_password=(os.getenv("AZURE_SQL_PASSWORD") or "").strip() or None,
+        azure_sql_database=(os.getenv("AZURE_SQL_DATABASE") or "ipp-app-db").strip(),
+        azure_sql_dialect=(os.getenv("AZURE_SQL_DIALECT") or "pyodbc").strip().lower(),
+        azure_sql_odbc_driver=os.getenv("AZURE_SQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("API_PORT", "8000")),
         api_base_url=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
@@ -86,6 +124,11 @@ def get_settings() -> Settings:
         speech_provider=os.getenv("SPEECH_PROVIDER", "groq").lower(),
         openai_whisper_model=os.getenv("OPENAI_WHISPER_MODEL", "whisper-1"),
         groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
+        checkpoint_backend=(os.getenv("LANGGRAPH_CHECKPOINT_BACKEND") or "sql").strip().lower(),
+        redis_url=(os.getenv("REDIS_URL") or "").strip() or None,
+        checkpoint_redis_prefix=(os.getenv("LANGGRAPH_CHECKPOINT_REDIS_PREFIX") or "lg").strip()
+        or "lg",
+        checkpoint_redis_ttl_seconds=_optional_int("LANGGRAPH_CHECKPOINT_REDIS_TTL_SECONDS"),
     )
 
 
@@ -104,4 +147,22 @@ def reload_settings() -> Settings:
     """Re-read env (useful in tests)."""
     global _settings
     _settings = None
+    try:
+        from voice_enable_mcp.storage.db import reset_engines
+
+        reset_engines()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from voice_enable_mcp.core.dependencies import reset_app_context
+
+        reset_app_context()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from voice_enable_mcp.graph import reset_voice_graph
+
+        reset_voice_graph()
+    except Exception:  # noqa: BLE001
+        pass
     return settings()

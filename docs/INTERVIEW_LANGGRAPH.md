@@ -180,7 +180,7 @@ A: Env + `llm_factory` → LangChain `init_chat_model`. Prefer `MAPPER_MODEL_ID=
 A: Yes — all built-in providers go through it; the factory still handles dual roles, Foundry endpoints, and custom `register_llm_provider`.
 
 **Q: Streaming / human-in-the-loop?**  
-A: Document Word pipeline is mostly batch. Voice → contract uses LangGraph `interrupt()` + `Command(resume=...)` with a `MemorySaver` thread id before generating files (see `voice_graph.py`).
+A: Document Word pipeline is mostly batch. Voice → contract uses LangGraph `interrupt()` + `Command(resume=...)` with a SQLAlchemy checkpointer `thread_id` before generating files (see `graph.py`).
 
 **Q: Parallel nodes?**  
 A: Not needed here (linear dependency). Would use fan-out if extract + enrich were independent.

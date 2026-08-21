@@ -163,15 +163,15 @@ def _llm_validation(
         result: _LLMValidationPayload = traced_invoke(
             chain,
             {
-                "template_text": _clip(template_text, 1200),
-                "generated_text": _clip(generated_text, 1200),
-                "key_snippets": _key_value_snippets(generated_text, mapping, limit=1500),
-                "data_json": _dumps_compact(json_data, 2000),
-                "mappings_json": _dumps_compact(mapping_summary, 2000),
+                "template_text": _clip(template_text, 700),
+                "generated_text": _clip(generated_text, 700),
+                "key_snippets": _key_value_snippets(generated_text, mapping, limit=900),
+                "data_json": _dumps_compact(json_data, 900),
+                "mappings_json": _dumps_compact(mapping_summary, 1200),
                 "unmapped_placeholders_json": _dumps_compact(
-                    mapping.unmapped_placeholders, 500
+                    mapping.unmapped_placeholders, 300
                 ),
-                "leftovers_json": _dumps_compact(leftovers, 500),
+                "leftovers_json": _dumps_compact(leftovers, 300),
             },
             role="validator",
             provider=config.provider,

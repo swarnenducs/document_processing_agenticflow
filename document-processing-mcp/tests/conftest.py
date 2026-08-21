@@ -28,3 +28,26 @@ def no_llm_api_keys_in_tests(monkeypatch):
         "MAF_MODEL_ID",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def local_sqlite_only(tmp_path, monkeypatch):
+    """Pin storage and the SQLAlchemy engine to tmp_path SQLite, never Azure SQL."""
+    from document_processing_mcp.core.settings import reload_settings
+
+    monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FILE_STORAGE_BACKEND", "local")
+    for key in (
+        "AZURE_SQL_SERVER",
+        "AZURE_SQL_PASSWORD",
+        "SQLALCHEMY_DATABASE_URL",
+        "AZURE_STORAGE_CONNECTION_STRING",
+        "AZURE_STORAGE_ACCOUNT_KEY",
+        "AZURE_STORAGE_SAS_TOKEN",
+        "AZURE_STORAGE_SAS_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    reload_settings()
+    yield
+    reload_settings()

@@ -2,10 +2,12 @@
 
 LangGraph workspace (managed with **UV**) that turns a Word `.docx` template + JSON data into a new Word document while preserving the original Word XML styles — with **tool-wrapped steps**, **generator confidence scores**, and **two separate LLMs**.
 
-**Docs index:** [docs/README.md](docs/README.md).  
+**Docs index:** [docs/INDEX.md](docs/INDEX.md) (every document with a short description).  
+**Docs landing:** [docs/README.md](docs/README.md).  
 **Interview / architecture walkthrough:** see [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md).  
 **LangGraph interview prep (state, edges, dynamic models):** see [docs/INTERVIEW_LANGGRAPH.md](docs/INTERVIEW_LANGGRAPH.md).  
 **How voice → contract works (LangGraph agent + HITL):** see [docs/VOICE_CONTRACT_FLOW.md](docs/VOICE_CONTRACT_FLOW.md).  
+**Estimated LLM tokens per component:** see [docs/TOKEN_CONSUMPTION.md](docs/TOKEN_CONSUMPTION.md).  
 **Deploy to Azure Web Apps (GitHub Actions CI/CD):** see [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
 
 ## Two separate LLMs (provider-injectable)
@@ -101,6 +103,13 @@ uv sync
 cp .env.example .env   # add your OPENAI_API_KEY + GROQ_API_KEY
 ```
 
+**Windows (one script):** installs uv + Python, syncs every workspace package, and copies `.env.example` files if they are missing. It does not overwrite an existing `.env`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+.\install.ps1 -Run    # same, then start all components
+```
+
 Each component also has its own `.env.example` for a future split repo (`document-processing-mcp/`, `voice_enable_mcp/`, `central-agentic-flow/`, `ip_api/`, `UI/`). Copy that file to `.env` in the same folder; it is loaded first. The root `.env` fills any keys the component file does not set.
 
 For plain `pip` installs (Azure zip deploy, CI without UV), use the exported lock files:
@@ -137,6 +146,19 @@ GROQ_API_KEY=gsk-...
 ```
 
 See `.env.example` for the full matrix.
+
+**Run all vs standalone**
+
+| File | When |
+|------|------|
+| Root `.env` (from `.env.example`) | `python run_all_components.py` — shared keys + storage + one section per process |
+| `UI/.env.example` | Gradio only (no SQL) |
+| `ip_api/.env.example` | Gateway — SQLite or Azure SQL + Blob |
+| `document-processing-mcp/.env.example` | Document MCP — SQLite or Azure SQL + Blob |
+| `voice_enable_mcp/.env.example` | Voice MCP — SQLite or Azure SQL; optional Redis HITL |
+| `central-agentic-flow/.env.example` | MAF — SQLite or Azure SQL (traces) |
+
+Storage default is **SQLite + local files**. Uncomment the Azure SQL / Blob blocks for cloud. Voice HITL checkpoints use that same SQL unless `LANGGRAPH_CHECKPOINT_BACKEND=redis`.
 
 ## Sample files
 
@@ -306,7 +328,7 @@ uv run doc-api
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/health` | Health + configured storage paths |
-| `POST` | `/api/v1/documents/jobs` | Upload `.docx` + JSON form field `data` → async job (`202`) |
+| `POST` | `/api/v1/documents/jobs` | Upload `.docx` (or name a stored template) + JSON form field `data` → async job (`202`) |
 | `GET` | `/api/v1/documents/jobs/{job_id}` | Job status, confidence, validation |
 | `GET` | `/api/v1/documents/jobs/{job_id}/download` | Download generated `.docx` |
 | `DELETE` | `/api/v1/documents/jobs/{job_id}` | Delete job + files |
@@ -319,6 +341,22 @@ uv run doc-api
 | `GET` | `/api/v1/voice/contracts/{id}` | Fetch one voice contract |
 | `GET` | `/api/v1/voice/contracts/{id}/download` | Download dummy `.txt` / `.docx` |
 
+Admin template library (requires the `X-Admin-Api-Key` header to match `ADMIN_API_KEY`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/admin/templates` | Store a `.docx` at `{customer_name}/{template_name}` (form field) |
+| `POST` | `/api/v1/admin/templates/{customer_name}` | Dedicated upload into that customer's folder |
+| `GET` | `/api/v1/admin/templates` | List templates (optional `?customer_name=`) |
+| `GET` | `/api/v1/admin/templates/{customer_name}` | List templates for one customer |
+| `GET` | `/api/v1/admin/templates/customers` | Distinct customer names |
+| `GET` | `/api/v1/admin/templates/{customer_name}/{template_name}` | Template metadata |
+| `GET` | `/api/v1/admin/templates/{customer_name}/{template_name}/download` | Download stored `.docx` |
+| `DELETE` | `/api/v1/admin/templates/{customer_name}/{template_name}` | Delete row + file |
+
+See [docs/LOCAL_AND_CLOUD_STORAGE.md](docs/LOCAL_AND_CLOUD_STORAGE.md) for the
+local-SQLite vs Azure setup and the full template API.
+
 ### Example: generate document
 
 ```bash
@@ -328,6 +366,23 @@ curl -X POST http://localhost:8000/api/v1/documents/jobs \
 
 curl http://localhost:8000/api/v1/documents/jobs/{job_id}
 curl -O http://localhost:8000/api/v1/documents/jobs/{job_id}/download
+```
+
+### Example: upload a customer template once, then reuse it
+
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/templates/acme-corp \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
+  -F "template_name=supply-contract" \
+  -F "file=@samples/templates/contract_template.docx"
+
+curl -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
+  http://localhost:8000/api/v1/admin/templates/acme-corp
+
+curl -X POST http://localhost:8000/api/v1/documents/jobs \
+  -F "data=<samples/data/contract_full.json" \
+  -F "customer_name=acme-corp" \
+  -F "template_name=supply-contract"
 ```
 
 ### Example: voice → text

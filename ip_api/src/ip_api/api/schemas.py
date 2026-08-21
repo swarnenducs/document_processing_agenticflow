@@ -61,6 +61,35 @@ class JobListResponse(BaseModel):
     jobs: list[JobStatusResponse]
 
 
+class TemplateRecordResponse(BaseModel):
+    """One customer template in the admin library."""
+
+    customer_name: str
+    template_name: str
+    location: str = Field(description="Library path: customer_name/template_name")
+    storage_backend: Literal["local", "azure_blob"]
+    storage_ref: str = Field(description="Local absolute path or blob:// reference")
+    size_bytes: int | None = None
+    checksum_sha256: str | None = None
+    uploaded_by: str | None = None
+    created_at: str
+    updated_at: str
+    download_url: str | None = None
+
+
+class TemplateListResponse(BaseModel):
+    count: int
+    storage_backend: Literal["local", "azure_blob"]
+    templates: list[TemplateRecordResponse]
+
+
+class TemplateDeletedResponse(BaseModel):
+    deleted: bool = True
+    customer_name: str
+    template_name: str
+    location: str
+
+
 class TraceByXidResponse(BaseModel):
     xid: str
     job_count: int

@@ -321,6 +321,7 @@ IF NOT EXISTS (
 def ensure_schema(*, sqlite_path: Path | None = None) -> None:
     from document_processing_mcp.storage.sql_models import (
         Base,
+        CallLog,
         DocumentAccuracyReport,
         DocumentJob,
     )
@@ -330,7 +331,7 @@ def ensure_schema(*, sqlite_path: Path | None = None) -> None:
         _prepare_mssql_schema(engine)
     Base.metadata.create_all(
         engine,
-        tables=[DocumentJob.__table__, DocumentAccuracyReport.__table__],
+        tables=[DocumentJob.__table__, DocumentAccuracyReport.__table__, CallLog.__table__],
     )
     if engine_uses_mssql(str(engine.url)):
         _migrate_mssql_document_tables(engine)

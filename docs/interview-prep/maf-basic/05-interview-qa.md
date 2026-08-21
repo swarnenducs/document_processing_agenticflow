@@ -10,7 +10,7 @@ A: LangGraph runs specialist pipelines (document/voice). MAF is the NL orchestra
 A: Standard tool interface; same servers usable by API proxies, MAF, or other hosts.
 
 **Q: Does MAF keep chat memory today?**  
-A: No — each `/ask` is independent. Voice HITL memory is in the voice graph’s `MemorySaver`.
+A: No — each `/ask` is independent. Voice HITL memory is in the voice graph’s SQLAlchemy checkpointer.
 
 **Q: How would you add multi-turn MAF memory?**  
 A: Agent session or persist message history per user/conversation id; still keep specialist HITL in LangGraph checkpoints.

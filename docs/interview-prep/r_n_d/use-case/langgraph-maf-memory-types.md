@@ -24,7 +24,7 @@ This repo has:
 ### 2) Checkpointer / thread-based checkpointing (durable graph memory)
 **What it is:** LangGraph checkpoint storage that persists node execution state so you can resume later.
 
-**Where it lives:** external storage used by the checkpointer (in this repo, it’s `MemorySaver`, and in production you’d use Postgres/other durable backends).
+**Where it lives:** external storage used by the checkpointer (in this repo, SQLAlchemy on SQLite / Azure SQL — not in-process `MemorySaver`).
 
 **Why it matters:** this is the correct memory for **interrupt / HITL** workflows.
 
@@ -33,7 +33,7 @@ This repo has:
 - “Resume conversation after an interrupt without re-running the whole graph”
 
 **In this repo:**
-- Voice contract HITL uses `MemorySaver` + `thread_id`.
+- Voice contract HITL uses SQLAlchemy checkpointer + `thread_id`.
 - MAF calls `voice_start_voice_contract(...)`, and when the graph interrupts, you get back a `thread_id`.
 - Later, MAF (or UI) calls `voice_confirm_voice_contract(thread_id=...)` to resume.
 

@@ -53,9 +53,9 @@ def _safe_json(value: Any, *, max_chars: int | None = None) -> str:
 
 
 def _store():
-    from ip_api.storage.job_store import JobStore
+    from ip_api.api.dependencies import get_app_context
 
-    return JobStore()
+    return get_app_context().job_store
 
 
 def log_event(

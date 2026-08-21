@@ -9,9 +9,9 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from ip_api.api.schemas import (
@@ -26,18 +26,31 @@ from ip_api.api.schemas import (
     VoiceContractRequest,
     VoiceContractResponse,
 )
+from ip_api.api.dependencies import get_blob_store_dep, get_job_store, get_settings_dependency, get_template_store_dep
 from ip_api.core.request_context import require_xid
-from ip_api.core.settings import settings
+from ip_api.core.settings import Settings, settings
 from ip_api.services.job_events import get_job_event_hub, publish_job_stage
 from ip_api.services.pipeline_runner import run_document_job
 from ip_api.services.session_service import ensure_request_session
 from ip_api.services.speech_to_text import transcribe_audio
-from ip_api.storage.blob_store import is_blob_ref
+from ip_api.storage.blob_store import BlobStore, is_blob_ref
 from ip_api.storage.job_store import JobRecord, JobStore
+from ip_api.storage.template_store import TemplateStore
 
 router = APIRouter()
-_store: JobStore | None = None
 logger = logging.getLogger(__name__)
+
+JobStoreDep = Annotated[JobStore, Depends(get_job_store)]
+TemplateStoreDep = Annotated[TemplateStore, Depends(get_template_store_dep)]
+BlobStoreDep = Annotated[BlobStore, Depends(get_blob_store_dep)]
+SettingsDep = Annotated[Settings, Depends(get_settings_dependency)]
+
+
+def get_store() -> JobStore:
+    """Resolve JobStore from the application context (background tasks / helpers)."""
+    from ip_api.api.dependencies import get_app_context
+
+    return get_app_context().job_store
 
 
 def _attach_session(payload: dict[str, Any], session) -> dict[str, Any]:
@@ -137,13 +150,6 @@ def _job_elapsed(
     return None, None
 
 
-def get_store() -> JobStore:
-    global _store
-    if _store is None:
-        _store = JobStore()
-    return _store
-
-
 def _download_ready(status: str | None, output_path: str | None) -> bool:
     if status != "completed" or not output_path:
         return False
@@ -152,11 +158,17 @@ def _download_ready(status: str | None, output_path: str | None) -> bool:
 ALLOWED_AUDIO = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".flac"}
 
 
-def _max_bytes() -> int:
-    return settings().max_upload_mb * 1024 * 1024
+def _max_bytes(cfg: Settings | None = None) -> int:
+    return (cfg or settings()).max_upload_mb * 1024 * 1024
 
 
-async def _save_upload(upload: UploadFile, dest: Path, allowed_suffixes: set[str] | None = None) -> None:
+async def _save_upload(
+    upload: UploadFile,
+    dest: Path,
+    allowed_suffixes: set[str] | None = None,
+    *,
+    cfg: Settings | None = None,
+) -> None:
     suffix = Path(upload.filename or "").suffix.lower()
     if allowed_suffixes and suffix not in allowed_suffixes:
         raise HTTPException(
@@ -164,17 +176,62 @@ async def _save_upload(upload: UploadFile, dest: Path, allowed_suffixes: set[str
             detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(allowed_suffixes)}",
         )
     content = await upload.read()
-    if len(content) > _max_bytes():
+    limit = _max_bytes(cfg)
+    if len(content) > limit:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Max {settings().max_upload_mb} MB",
+            detail=f"File too large. Max {(cfg or settings()).max_upload_mb} MB",
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(content)
 
 
+def _resolve_stored_template(
+    template: UploadFile | None,
+    customer_name: str | None,
+    template_name: str | None,
+    templates: TemplateStore,
+):
+    """Pick the template source: inline upload or a row in the admin library."""
+    from ip_api.storage.template_store import TemplateNameError
+
+    named = bool((customer_name or "").strip() and (template_name or "").strip())
+    has_upload = template is not None and bool(template.filename)
+    if has_upload and named:
+        raise HTTPException(
+            status_code=400,
+            detail="Send either a template upload or customer_name + template_name, not both",
+        )
+    if not has_upload and not named:
+        raise HTTPException(
+            status_code=400,
+            detail="A template is required: upload one, or pass customer_name + template_name",
+        )
+    if not named:
+        return None
+    try:
+        return templates.get(customer_name or "", template_name or "")
+    except TemplateNameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _materialize_stored_template(record, dest: Path, templates: TemplateStore) -> None:
+    try:
+        templates.materialize(record, dest)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=410,
+            detail=f"Stored template '{record.location}' is no longer available: {exc}",
+        ) from exc
+
+
 @router.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
+async def health(
+    cfg: SettingsDep,
+    blob: BlobStoreDep,
+) -> HealthResponse:
     from ip_api.services.llm_factory import (
         is_mapper_available,
         is_validator_available,
@@ -184,11 +241,8 @@ async def health() -> HealthResponse:
     from ip_api.services.speech_to_text import resolve_speech_provider
 
     from ip_api.services.maf_client import maf_health, maf_base_url
-    from ip_api.storage.blob_store import get_blob_store
     from ip_api.storage.db import build_database_url, engine_uses_mssql
 
-    cfg = settings()
-    blob = get_blob_store()
     db_url = build_database_url()
     sql_ok: bool | None = None
     if cfg.uses_azure_sql:
@@ -273,10 +327,21 @@ async def health() -> HealthResponse:
 @router.post("/documents/jobs", response_model=JobAcceptedResponse, status_code=202)
 async def create_document_job(
     background_tasks: BackgroundTasks,
-    template: UploadFile = File(..., description="Word .docx template"),
+    store: JobStoreDep,
+    templates: TemplateStoreDep,
+    cfg: SettingsDep,
     data: str = Form(
         ...,
         description="JSON object sent as a request form field (not a file upload)",
+    ),
+    template: UploadFile | None = File(
+        default=None, description="Word .docx template (omit to use a stored template)"
+    ),
+    customer_name: str | None = Form(
+        default=None, description="Stored template customer (with template_name)"
+    ),
+    template_name: str | None = Form(
+        default=None, description="Stored template name (with customer_name)"
     ),
     skip_validation: bool = Form(default=False),
     max_retries: int = Form(default=1),
@@ -286,7 +351,10 @@ async def create_document_job(
     user_email: str | None = Form(default=None),
 ) -> JobAcceptedResponse:
     """
-    Upload a Word template and send JSON data in the request (form field ``data``).
+    Send JSON data in the form field ``data``, plus a template.
+
+    The template is either uploaded inline or named from the admin library with
+    ``customer_name`` + ``template_name``.
 
     Returns job_id immediately. Prefer long-poll:
     ``GET /documents/jobs/{job_id}?wait=true`` then download when completed.
@@ -313,15 +381,25 @@ async def create_document_job(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="JSON root must be an object")
 
-    job_id, _job_dir, template_path, data_path, output_path = get_store().create_job_paths(
-        template_filename=template.filename or "template.docx",
+    stored_template = _resolve_stored_template(template, customer_name, template_name, templates)
+    template_filename = (
+        stored_template.template_name
+        if stored_template is not None
+        else (template.filename if template else None) or "template.docx"
     )
 
-    await _save_upload(template, template_path, allowed_suffixes={".docx"})
+    job_id, _job_dir, template_path, data_path, output_path = store.create_job_paths(
+        template_filename=template_filename,
+    )
+
+    if stored_template is not None:
+        _materialize_stored_template(stored_template, template_path, templates)
+    else:
+        await _save_upload(template, template_path, allowed_suffixes={".docx"}, cfg=cfg)
     data_path.parent.mkdir(parents=True, exist_ok=True)
     data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    get_store().insert_job(job_id, template_path, data_path, output_path, xid=require_xid())
+    store.insert_job(job_id, template_path, data_path, output_path, xid=require_xid())
 
     options = JobCreateOptions(
         skip_validation=skip_validation,
@@ -337,7 +415,7 @@ async def create_document_job(
         skip_validation=options.skip_validation,
         max_retries=options.max_retries,
         validation_threshold=options.validation_threshold,
-        store=get_store(),
+        store=store,
         xid=corr,
     )
 
@@ -356,9 +434,9 @@ async def create_document_job(
 
 
 @router.get("/documents/jobs", response_model=JobListResponse)
-def list_document_jobs(limit: int = 50) -> JobListResponse:
+def list_document_jobs(store: JobStoreDep, limit: int = 50) -> JobListResponse:
     """List recent document jobs persisted in SQLite (newest first)."""
-    rows = get_store().list_document_jobs(limit=limit)
+    rows = store.list_document_jobs(limit=limit)
     jobs: list[JobStatusResponse] = []
     for row in rows:
         confidence = row.get("confidence")
@@ -406,7 +484,7 @@ def list_document_jobs(limit: int = 50) -> JobListResponse:
     return JobListResponse(count=len(jobs), jobs=jobs)
 
 
-def _job_status_response(job: JobRecord) -> JobStatusResponse:
+def _job_status_response(job: JobRecord, store: JobStore | None = None) -> JobStatusResponse:
     download_url = None
     if _download_ready(job.status, job.output_path):
         download_url = f"/api/v1/documents/jobs/{job.id}/download"
@@ -456,13 +534,14 @@ def _job_status_response(job: JobRecord) -> JobStatusResponse:
         elapsed=elapsed,
         download_url=download_url,
         sqlite_persisted=True,
-        accuracy_report=get_store().get_accuracy_report(job.id),
+        accuracy_report=(store or get_store()).get_accuracy_report(job.id),
     )
 
 
 @router.get("/documents/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_document_job(
     job_id: str,
+    store: JobStoreDep,
     wait: bool = Query(
         default=False,
         description="Long-poll: hold until status is completed/failed (or timeout).",
@@ -475,14 +554,13 @@ async def get_document_job(
     ),
 ) -> JobStatusResponse:
     """Return job status. With ``wait=true``, block until terminal status (no client polling)."""
-    store = get_store()
     try:
         job = store.get_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     if not wait or job.status in {"completed", "failed"}:
-        return _job_status_response(job)
+        return _job_status_response(job, store)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -492,29 +570,28 @@ async def get_document_job(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if job.status in {"completed", "failed"}:
-            return _job_status_response(job)
+            return _job_status_response(job, store)
 
-    return _job_status_response(job)
+    return _job_status_response(job, store)
 
 
 @router.get("/documents/jobs/{job_id}/accuracy")
-def get_document_accuracy(job_id: str) -> dict[str, Any]:
+def get_document_accuracy(job_id: str, store: JobStoreDep) -> dict[str, Any]:
     """Accuracy / confidence report persisted for this document job."""
     try:
-        get_store().get_job(job_id)
+        store.get_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    report = get_store().get_accuracy_report(job_id)
+    report = store.get_accuracy_report(job_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"No accuracy report for job {job_id}")
     return report
 
 
 @router.websocket("/documents/jobs/{job_id}/ws")
-async def document_job_progress_ws(websocket: WebSocket, job_id: str) -> None:
+async def document_job_progress_ws(websocket: WebSocket, job_id: str, store: JobStoreDep) -> None:
     """Push live pipeline stages (extraction done, mapped, validated, …). No Redis/Kafka."""
     await websocket.accept()
-    store = get_store()
     try:
         job = store.get_job(job_id)
     except KeyError:
@@ -576,23 +653,23 @@ async def document_job_progress_ws(websocket: WebSocket, job_id: str) -> None:
 
 
 @router.get("/traces/{xid}", response_model=TraceByXidResponse)
-def get_trace_by_xid(xid: str) -> TraceByXidResponse:
+def get_trace_by_xid(xid: str, store: JobStoreDep) -> TraceByXidResponse:
     """Fetch all HTTP/tool/LLM call logs + jobs for one correlation xid."""
-    payload = get_store().get_trace_by_xid(xid.strip())
+    payload = store.get_trace_by_xid(xid.strip())
     return TraceByXidResponse(**payload)
 
 
 @router.get("/documents/jobs/{job_id}/download")
-def download_document(job_id: str) -> FileResponse:
+def download_document(job_id: str, store: JobStoreDep) -> FileResponse:
     try:
-        job = get_store().get_job(job_id)
+        job = store.get_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     if job.status != "completed":
         raise HTTPException(status_code=409, detail=f"Job not ready. Status: {job.status}")
     try:
-        output = get_store().resolve_output_file(job)
+        output = store.resolve_output_file(job)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -604,9 +681,9 @@ def download_document(job_id: str) -> FileResponse:
 
 
 @router.delete("/documents/jobs/{job_id}", status_code=204)
-def delete_document_job(job_id: str) -> None:
+def delete_document_job(job_id: str, store: JobStoreDep) -> None:
     try:
-        get_store().delete_job(job_id)
+        store.delete_job(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -618,6 +695,8 @@ def delete_document_job(job_id: str) -> None:
 
 @router.post("/audio/transcribe", response_model=TranscriptionResponse)
 async def transcribe_voice(
+    store: JobStoreDep,
+    cfg: SettingsDep,
     audio: UploadFile = File(..., description="Audio file (mp3, wav, m4a, webm, …)"),
     language: str | None = Form(
         default=None,
@@ -642,18 +721,18 @@ async def transcribe_voice(
             detail=f"Unsupported audio type '{suffix}'. Allowed: {sorted(ALLOWED_AUDIO)}",
         )
 
-    audio_dir = settings().audio_root / transcription_id
+    audio_dir = cfg.audio_root / transcription_id
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"input{suffix}"
 
-    await _save_upload(audio, audio_path, allowed_suffixes=ALLOWED_AUDIO)
+    await _save_upload(audio, audio_path, allowed_suffixes=ALLOWED_AUDIO, cfg=cfg)
 
     try:
         result = transcribe_audio(audio_path, language=language, provider=provider)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
 
-    get_store().save_transcription(
+    store.save_transcription(
         transcription_id,
         audio_path,
         result.text,
@@ -671,9 +750,9 @@ async def transcribe_voice(
 
 
 @router.get("/audio/transcriptions/{transcription_id}")
-def get_transcription(transcription_id: str) -> dict[str, Any]:
+def get_transcription(transcription_id: str, store: JobStoreDep) -> dict[str, Any]:
     try:
-        return get_store().get_transcription(transcription_id)
+        return store.get_transcription(transcription_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -746,6 +825,8 @@ async def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceCont
 
 @router.post("/voice/contract/from-audio", response_model=VoiceContractResponse)
 async def voice_contract_from_audio(
+    store: JobStoreDep,
+    cfg: SettingsDep,
     audio: UploadFile = File(..., description="Audio file (mp3, wav, m4a, webm, …)"),
     language: str | None = Form(default=None),
     provider: str | None = Form(default=None),
@@ -772,17 +853,17 @@ async def voice_contract_from_audio(
             detail=f"Unsupported audio type '{suffix}'. Allowed: {sorted(ALLOWED_AUDIO)}",
         )
 
-    audio_dir = settings().audio_root / transcription_id
+    audio_dir = cfg.audio_root / transcription_id
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"input{suffix}"
-    await _save_upload(audio, audio_path, allowed_suffixes=ALLOWED_AUDIO)
+    await _save_upload(audio, audio_path, allowed_suffixes=ALLOWED_AUDIO, cfg=cfg)
 
     try:
         transcription = transcribe_audio(audio_path, language=language, provider=provider)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
 
-    get_store().save_transcription(
+    store.save_transcription(
         transcription_id,
         audio_path,
         transcription.text,
@@ -806,7 +887,7 @@ async def voice_contract_from_audio(
     return VoiceContractResponse(**_attach_session(payload, session))
 
 
-async def _voice_contract_row(contract_id: str) -> dict[str, Any]:
+async def _voice_contract_row(contract_id: str, store: JobStore) -> dict[str, Any]:
     from ip_api.services.maf_client import invoke_tool
 
     try:
@@ -818,19 +899,24 @@ async def _voice_contract_row(contract_id: str) -> dict[str, Any]:
         if str(row.get("contract_id") or row.get("id") or "") == contract_id:
             return row
     try:
-        return get_store().get_voice_contract(contract_id)
+        return store.get_voice_contract(contract_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/voice/contracts/{contract_id}")
-async def get_voice_contract(contract_id: str) -> dict[str, Any]:
-    return await _voice_contract_row(contract_id)
+async def get_voice_contract(contract_id: str, store: JobStoreDep) -> dict[str, Any]:
+    return await _voice_contract_row(contract_id, store)
 
 
 @router.get("/voice/contracts/{contract_id}/download")
-async def download_voice_contract(contract_id: str, format: str = "docx") -> FileResponse:
-    row = await _voice_contract_row(contract_id)
+async def download_voice_contract(
+    contract_id: str,
+    store: JobStoreDep,
+    cfg: SettingsDep,
+    format: str = "docx",
+) -> FileResponse:
+    row = await _voice_contract_row(contract_id, store)
 
     path = row.get("contract_file")
     if format.lower() == "txt":
@@ -843,7 +929,7 @@ async def download_voice_contract(contract_id: str, format: str = "docx") -> Fil
             if payload:
                 from ip_api.services.contract_text import render_contract_text
 
-                tmp = settings().storage_base_path / "voice_contracts" / f"{contract_id}.txt"
+                tmp = cfg.storage_base_path / "voice_contracts" / f"{contract_id}.txt"
                 tmp.parent.mkdir(parents=True, exist_ok=True)
                 tmp.write_text(render_contract_text(payload), encoding="utf-8")
                 path = str(tmp)

@@ -53,9 +53,9 @@ def _safe_json(value: Any, *, max_chars: int | None = None) -> str:
 
 
 def _store():
-    from central_agentic_flow.storage.job_store import JobStore
+    from central_agentic_flow.core.dependencies import get_app_context
 
-    return JobStore()
+    return get_app_context().call_log_store
 
 
 def log_event(

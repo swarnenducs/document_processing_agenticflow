@@ -32,17 +32,14 @@ def api_client(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
-    import ip_api.api.routes as routes_mod
     from ip_api.core.settings import reload_settings
 
     reload_settings()
-    routes_mod._store = None
 
     app = create_app()
     with TestClient(app) as client:
         yield client, storage, db_path
 
-    routes_mod._store = None
     reload_settings()
 
 

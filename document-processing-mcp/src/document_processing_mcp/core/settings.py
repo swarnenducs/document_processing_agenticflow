@@ -174,4 +174,10 @@ def reload_settings() -> Settings:
         reset_blob_store()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from document_processing_mcp.core.dependencies import reset_app_context
+
+        reset_app_context()
+    except Exception:  # noqa: BLE001
+        pass
     return settings()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ip_api.api.dependencies import get_app_context
 from ip_api.core.request_context import (
     get_session_id,
     get_user_email,
@@ -13,7 +14,7 @@ from ip_api.core.request_context import (
     set_user_email,
     set_user_id,
 )
-from ip_api.storage.session_store import SessionRecord, get_session_store
+from ip_api.storage.session_store import SessionRecord
 
 
 def ensure_request_session(
@@ -34,7 +35,7 @@ def ensure_request_session(
     uid = (user_id or "").strip() or get_user_id()
     email = (user_email or "").strip() or get_user_email()
 
-    record = get_session_store().ensure(
+    record = get_app_context().session_store.ensure(
         session_id=sid,
         user_id=uid,
         user_email=email,

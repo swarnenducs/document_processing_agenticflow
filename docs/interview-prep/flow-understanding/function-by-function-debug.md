@@ -168,7 +168,7 @@ MCP/MAF path: `start_voice_contract` / `confirm_voice_contract` in `voice_enable
 | 8 | `start_voice_contract` (tool) | `voice_enable_mcp/.../server.py` | `mcp_start_voice_contract` | MCP entry |
 | 9 | `confirm_voice_contract` (tool) | same | `mcp_confirm_voice_contract` | MCP resume |
 
-HITL only resumes if you debug the **same process** that started the graph (`MemorySaver` is in-memory). Restarting Voice MCP drops pending `thread_id`s.
+HITL resumes from SQL (`lg_checkpoints`) using `thread_id`. Restarting Voice MCP does **not** drop a pending confirmation as long as SQLite / Azure SQL is intact.
 
 ---
 

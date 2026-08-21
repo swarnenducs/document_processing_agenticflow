@@ -10,7 +10,7 @@
 
 If the user says “do that again” without repeating details, MAF **won’t** remember the previous ask unless the client resends context.
 
-Voice HITL memory lives **inside voice MCP** (`MemorySaver`), not inside MAF.  
+Voice HITL memory lives **inside voice MCP** (SQLAlchemy checkpointer), not inside MAF.  
 Flow: MAF may call `voice_start_voice_contract` → gets `thread_id` → later `voice_confirm_voice_contract(thread_id=...)`.
 
 ```text
@@ -18,7 +18,7 @@ MAF (stateless turns)
    │
    │ tool call
    ▼
-Voice MCP (stateful HITL via MemorySaver + thread_id)
+Voice MCP (stateful HITL via SQL checkpointer + thread_id)
 ```
 
 ---
@@ -59,7 +59,7 @@ await agent.run(history + [new_user_message])
 | Layer | Memory now | Production upgrade |
 |---|---|---|
 | MAF | None (per-request) | Session / message store |
-| Voice graph | `MemorySaver` + thread_id | Postgres checkpointer |
+| Voice graph | SQLAlchemy checkpointer + thread_id | Official PostgresSaver if you already run Postgres |
 | Document graph | None | N/A (batch) |
 | Contracts / jobs | SQLite | Postgres + object storage |
 
@@ -91,7 +91,7 @@ Today this repo does **not** persist MAF chat context across `/api/ask` calls �
 |---|---|---|---|
 | **A. Working / turn memory** | In-process message list for one `agent.run` | Current user text + tool results in that turn | Already happens inside one MAF turn |
 | **B. Session (short-term) memory** | Conversation buffer keyed by `session_id` / `user_id` | Prior user/assistant turns + **compact tool outcomes** | Multi-turn Central Agent chat (“prompt over that result”) |
-| **C. Specialist checkpoint memory** | LangGraph `MemorySaver` / Postgres checkpointer | Voice HITL graph state (`thread_id`) | Resume confirm — **not** a substitute for MAF chat memory |
+| **C. Specialist checkpoint memory** | LangGraph SQLAlchemy checkpointer | Voice HITL graph state (`thread_id`) | Resume confirm — **not** a substitute for MAF chat memory |
 | **D. Artifact / result memory** | DB or object store (jobs, contracts, file paths) | Canonical outputs (`job_id`, `output_path`, `contract_id`) | Source of truth; session only keeps **pointers + short summaries** |
 | **E. Long-term / semantic (optional)** | Vector store + metadata | “Past invoice runs for Acme” | Only if you need retrieval across many old jobs (RAG-style) |
 

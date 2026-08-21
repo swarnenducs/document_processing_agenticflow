@@ -17,6 +17,9 @@ def test_voice_mcp_lists_tools() -> None:
 
 
 def test_voice_mcp_health() -> None:
+    from voice_enable_mcp.core.dependencies import get_job_store
+    from voice_enable_mcp.storage.job_store import JobStore
+
     server = VoiceProcessMCP(host="127.0.0.1", port=18002)
     payload = asyncio.run(call_tool(server, "health"))
     assert isinstance(payload, dict)
@@ -26,3 +29,28 @@ def test_voice_mcp_health() -> None:
     McpHealthResponse.model_validate(payload)
     assert payload["mcp"] == "voice_process_mcp"
     assert payload["agent"] == "voice_process_mcp"
+    assert isinstance(get_job_store(), JobStore)
+
+
+def test_voice_mcp_hides_injected_store() -> None:
+    """Bound methods + Depends must not expose self or store to the client."""
+    from fastmcp import Client
+
+    server = VoiceProcessMCP(host="127.0.0.1", port=18002)
+
+    async def _schema() -> dict[str, object]:
+        async with Client(server) as client:
+            tools = await client.list_tools()
+            start = next(t for t in tools if t.name == "start_voice_contract")
+            listed = next(t for t in tools if t.name == "list_voice_contracts")
+            return {
+                "start": set((start.inputSchema or {}).get("properties") or {}),
+                "list": set((listed.inputSchema or {}).get("properties") or {}),
+            }
+
+    schemas = asyncio.run(_schema())
+    assert "self" not in schemas["start"]
+    assert "store" not in schemas["start"]
+    assert "transcript" in schemas["start"]
+    assert "self" not in schemas["list"]
+    assert "store" not in schemas["list"]

@@ -7,12 +7,16 @@ Routes: GET /health, POST /ask, GET /ask/health, POST /invoke, GET /tools, GET /
 from __future__ import annotations
 
 import os
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Annotated, Any
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+from central_agentic_flow.core.context import ApplicationContext, build_application_context
+from central_agentic_flow.core.dependencies import get_app_context, set_app_context
 
 
 def _env_int(key: str, default: int) -> int:
@@ -54,19 +58,30 @@ class InvokeRequest(BaseModel):
     xid: str | None = None
 
 
+AppContextDep = Annotated[ApplicationContext, Depends(get_app_context)]
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    load_dotenv()
+    set_app_context(build_application_context())
+    yield
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Document Processing MAF Orchestrator",
         description="Microsoft Agent Framework — sole caller of MCP servers (document, voice, extras)",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     @app.get("/health")
-    async def health() -> dict[str, Any]:
+    async def health(_ctx: AppContextDep) -> dict[str, Any]:
         return {"ok": True, "service": "maf"}
 
     @app.get("/ask/health")
-    async def ask_health() -> dict[str, Any]:
+    async def ask_health(_ctx: AppContextDep) -> dict[str, Any]:
         try:
             from central_agentic_flow.mcp_bridge import catalog_mcp_servers
             from central_agentic_flow.orchestrator import resolve_maf_chat_client
@@ -84,7 +99,7 @@ def create_app() -> FastAPI:
             return {"ok": False, "orchestrator": "maf", "service": "maf", "error": str(exc)}
 
     @app.get("/mcps")
-    async def list_mcps() -> dict[str, Any]:
+    async def list_mcps(_ctx: AppContextDep) -> dict[str, Any]:
         from central_agentic_flow.mcp_bridge import catalog_mcp_servers
 
         try:
@@ -93,7 +108,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail=f"MCP catalog failed: {exc}") from exc
 
     @app.get("/tools")
-    async def list_tools() -> dict[str, Any]:
+    async def list_tools(_ctx: AppContextDep) -> dict[str, Any]:
         from central_agentic_flow.mcp_bridge import catalog_mcp_servers
 
         try:
@@ -102,7 +117,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail=f"MCP catalog failed: {exc}") from exc
 
     @app.post("/invoke")
-    async def invoke(body: InvokeRequest) -> dict[str, Any]:
+    async def invoke(body: InvokeRequest, _ctx: AppContextDep) -> dict[str, Any]:
         from central_agentic_flow.mcp_bridge import invoke_mcp_tool
 
         try:
@@ -119,7 +134,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail=f"MCP invoke failed: {exc}") from exc
 
     @app.post("/ask", response_model=AskResponse)
-    async def ask(body: AskRequest) -> AskResponse:
+    async def ask(body: AskRequest, _ctx: AppContextDep) -> AskResponse:
         from central_agentic_flow.orchestrator import ask_maf
         from central_agentic_flow.flow_debug import flow_breakpoint
 

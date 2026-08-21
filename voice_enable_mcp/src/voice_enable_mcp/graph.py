@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
@@ -21,13 +21,25 @@ from voice_enable_mcp.nodes.voice_contract import (
     route_after_parse,
 )
 from voice_enable_mcp.services.voice_contract_workflow import VoiceContractResult
+from voice_enable_mcp.storage.checkpointer import get_checkpointer as _build_checkpointer
 
-# Process-local checkpointer so HITL resume works across chat turns.
-_CHECKPOINTER = MemorySaver()
+# Compiled graph is cached; the checkpointer follows LANGGRAPH_CHECKPOINT_BACKEND
+# (sql = SQLite/Azure SQL, redis = REDIS_URL).
 _GRAPH = None
 
 
-def build_voice_contract_graph(*, checkpointer: MemorySaver | None = None):
+def get_checkpointer() -> BaseCheckpointSaver:
+    """HITL state: SQL by default, Redis when LANGGRAPH_CHECKPOINT_BACKEND=redis."""
+    return _build_checkpointer()
+
+
+def reset_voice_graph() -> None:
+    """Drop the compiled graph (tests / reload_settings). Checkpoints stay in SQL or Redis."""
+    global _GRAPH
+    _GRAPH = None
+
+
+def build_voice_contract_graph(*, checkpointer: BaseCheckpointSaver | None = None):
     """
     Voice contract LangGraph agent:
 
@@ -35,8 +47,9 @@ def build_voice_contract_graph(*, checkpointer: MemorySaver | None = None):
             → await_confirmation (interrupt HITL)
             → generate_contract → END
 
-    Lookups use SQLite today (nodes can swap to HTTP APIs). Persist to
-    SQLite/files is done by the API layer after the graph completes.
+    Lookups use the JSON catalog today (nodes can swap to HTTP APIs).
+    HITL checkpoints persist in SQL (default) or Redis — see
+    LANGGRAPH_CHECKPOINT_BACKEND.
     """
     graph = StateGraph(VoiceContractState)
 
@@ -69,7 +82,7 @@ def build_voice_contract_graph(*, checkpointer: MemorySaver | None = None):
     )
     graph.add_edge("generate_contract", END)
 
-    return graph.compile(checkpointer=checkpointer or _CHECKPOINTER)
+    return graph.compile(checkpointer=checkpointer or get_checkpointer())
 
 
 def get_voice_contract_graph():
@@ -193,5 +206,8 @@ def resume_voice_contract_agent(
     return result
 
 
-# Module-level compiled graph for LangGraph Studio / langgraph.dev
-app = build_voice_contract_graph()
+# LangGraph Studio reads `app`. PEP 562 so import does not compile the graph.
+def __getattr__(name: str):
+    if name == "app":
+        return get_voice_contract_graph()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

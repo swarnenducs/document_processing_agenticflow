@@ -10,4 +10,4 @@ MAF sessions:
 
 ### Voice in this repo
 
-**Yes — memory is used:** `MemorySaver` + `thread_id` for HITL resume in `voice_enable_mcp`.
+**Yes — memory is used:** SQLAlchemy checkpointer + `thread_id` for HITL resume in `voice_enable_mcp`.

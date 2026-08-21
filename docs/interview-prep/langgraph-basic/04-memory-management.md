@@ -74,7 +74,7 @@ Vector index of documents — retrieval, not dialogue.
 | Component | Memory? | Implementation |
 |---|---|---|
 | Document LangGraph | No cross-request memory | In-run `retry_count` in state only |
-| **Voice LangGraph** | **Yes** | `MemorySaver` + `thread_id` + `interrupt()` |
+| **Voice LangGraph** | **Yes** | SQLAlchemy checkpointer + `thread_id` + `interrupt()` |
 | Voice completed contracts | Durable business data | SQLite (`JobStore`) |
 | MAF `/ask` | **Stateless per call today** | Each ask is a new `agent.run(message)` — no session store yet |
 | API jobs | Job rows | SQLite + files |
@@ -83,9 +83,9 @@ Vector index of documents — retrieval, not dialogue.
 
 ```python
 # voice_enable_mcp/graph.py
-_CHECKPOINTER = MemorySaver()
-graph.compile(checkpointer=_CHECKPOINTER)
+graph.compile(checkpointer=SqlAlchemyCheckpointSaver())
 # start/resume with config={"configurable": {"thread_id": tid}}
+# rows: lg_checkpoints / lg_checkpoint_blobs / lg_checkpoint_writes
 ```
 
 ### Document
@@ -109,14 +109,15 @@ await agent.run(message, session=session)
 
 | Saver | When |
 |---|---|
-| `MemorySaver` | Local, single process, demos |
-| Sqlite/Postgres checkpointer | Multi-replica, survive restarts |
-| Redis | Low-latency shared state |
+| `MemorySaver` | Local, single process, demos (we no longer use this for voice) |
+| SQLAlchemy checkpointer (default) | SQLite locally, Azure SQL in cloud — same engine as jobs |
+| Redis checkpointer | `LANGGRAPH_CHECKPOINT_BACKEND=redis` + `REDIS_URL` |
+| Sqlite/Postgres checkpointer | Official LangGraph extras if you already run those databases |
 
 ---
 
 ## Interview one-liners
 
-> “Voice needs memory because HITL pauses mid-graph; we use LangGraph `MemorySaver` keyed by `thread_id`. Document jobs don’t — they’re one-shot. MAF asks are currently stateless; we’d add a session if we wanted multi-turn orchestration.”
+> “Voice needs memory because HITL pauses mid-graph; we persist LangGraph checkpoints in SQLite / Azure SQL keyed by `thread_id`. Document jobs don’t — they’re one-shot. MAF asks are currently stateless; we’d add a session if we wanted multi-turn orchestration.”
 
 Next: [05-interview-qa.md](05-interview-qa.md)

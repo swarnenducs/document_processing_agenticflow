@@ -44,6 +44,15 @@ def blob_name_for_job(
     return f"{root}/{kind}/{name}"
 
 
+def blob_template_prefix() -> str:
+    return (settings().azure_blob_template_prefix or "templates").strip().strip("/")
+
+
+def blob_name_for_template(customer_name: str, template_name: str) -> str:
+    """Customer template library: ``templates/{customer_name}/{template_name}``."""
+    return f"{blob_template_prefix()}/{customer_name}/{template_name}"
+
+
 def _normalize_sas_token(raw: str) -> str:
     token = raw.strip()
     if token.startswith("?"):
@@ -167,18 +176,26 @@ class BlobStore:
             return path
         return raw
 
-    def upload_file(self, local_path: Path, blob_name: str) -> str:
-        data = Path(local_path).read_bytes()
+    def upload_bytes(self, data: bytes, blob_name: str) -> str:
         self._container_client().upload_blob(name=blob_name, data=data, overwrite=True)
         return self.to_ref(blob_name)
 
-    def download_file(self, ref_or_name: str, dest: Path) -> Path:
+    def upload_file(self, local_path: Path, blob_name: str) -> str:
+        return self.upload_bytes(Path(local_path).read_bytes(), blob_name)
+
+    def download_bytes(self, ref_or_name: str) -> bytes:
         blob_name = self.parse_ref(ref_or_name)
+        return self._container_client().download_blob(blob_name).readall()
+
+    def download_file(self, ref_or_name: str, dest: Path) -> Path:
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        downloader = self._container_client().download_blob(blob_name)
-        dest.write_bytes(downloader.readall())
+        dest.write_bytes(self.download_bytes(ref_or_name))
         return dest
+
+    def delete_ref(self, ref_or_name: str) -> None:
+        blob_name = self.parse_ref(ref_or_name)
+        self._container_client().delete_blob(blob_name)
 
     def delete_prefix(self, prefix: str) -> None:
         if not self.enabled:

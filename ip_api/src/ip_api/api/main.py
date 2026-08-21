@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from ip_api.api.admin_routes import router as admin_router
 from ip_api.api.ask_routes import router as ask_router
 from ip_api.api.mcp_routes import router as mcp_router
 from ip_api.api.routes import router
@@ -29,7 +30,6 @@ from ip_api.core.request_context import (
     set_user_id,
     set_xid,
 )
-from ip_api.core.settings import settings
 from ip_api.services.trace_log import log_event
 
 
@@ -96,13 +96,11 @@ class XidMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     load_dotenv()
-    cfg = settings()
-    cfg.ensure_directories()
-    from ip_api.storage.db import ensure_schema
-    from ip_api.storage.session_store import get_session_store
+    from ip_api.api.dependencies import set_app_context
+    from ip_api.core.context import build_application_context
 
-    ensure_schema()
-    get_session_store()
+    context = build_application_context()
+    set_app_context(context)
     yield
 
 
@@ -122,6 +120,7 @@ def create_app() -> FastAPI:
     app.add_middleware(XidMiddleware)
     app.include_router(router, prefix="/api/v1")
     app.include_router(mcp_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
     app.include_router(ask_router, prefix="/api")
 
     @app.get("/", include_in_schema=False)

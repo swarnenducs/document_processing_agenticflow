@@ -30,6 +30,7 @@ class Settings:
     storage_base_path: Path
     jobs_subdirectory: str
     audio_subdirectory: str
+    templates_subdirectory: str
 
     # SQLite fallback when Azure SQL is not configured
     sqlite_database_path: Path
@@ -52,6 +53,7 @@ class Settings:
     azure_storage_sas_url: str | None
     azure_blob_container: str
     azure_blob_prefix: str
+    azure_blob_template_prefix: str
 
     # API
     api_host: str
@@ -59,6 +61,9 @@ class Settings:
     api_base_url: str
     max_upload_mb: int
     job_ttl_hours: int
+
+    # Admin template library (shared secret; unset disables the admin routes)
+    admin_api_key: str | None
 
     # Gradio UI
     gradio_host: str
@@ -83,6 +88,11 @@ class Settings:
     def audio_root(self) -> Path:
         return self.storage_base_path / self.audio_subdirectory
 
+    @property
+    def templates_root(self) -> Path:
+        """Local customer template library: ``{base}/templates/{customer}/{template}``."""
+        return self.storage_base_path / self.templates_subdirectory
+
     def job_dir(self, job_id: str) -> Path:
         return self.jobs_root / job_id
 
@@ -90,6 +100,7 @@ class Settings:
         self.storage_base_path.mkdir(parents=True, exist_ok=True)
         self.jobs_root.mkdir(parents=True, exist_ok=True)
         self.audio_root.mkdir(parents=True, exist_ok=True)
+        self.templates_root.mkdir(parents=True, exist_ok=True)
         if not self.uses_azure_sql:
             self.sqlite_database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +129,7 @@ def get_settings() -> Settings:
         storage_base_path=storage_base,
         jobs_subdirectory=os.getenv("JOBS_SUBDIRECTORY", "jobs"),
         audio_subdirectory=os.getenv("AUDIO_SUBDIRECTORY", "audio"),
+        templates_subdirectory=os.getenv("TEMPLATES_SUBDIRECTORY", "templates"),
         sqlite_database_path=_path_from_env("SQLITE_DATABASE_PATH", sqlite_default),
         sqlalchemy_database_url=(os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip() or None,
         azure_sql_server=(os.getenv("AZURE_SQL_SERVER") or "").strip() or None,
@@ -134,6 +146,10 @@ def get_settings() -> Settings:
         azure_storage_sas_url=(os.getenv("AZURE_STORAGE_SAS_URL") or "").strip() or None,
         azure_blob_container=(os.getenv("AZURE_BLOB_CONTAINER") or "docuploadsolution").strip(),
         azure_blob_prefix=(os.getenv("AZURE_BLOB_PREFIX") or "jobs").strip(),
+        azure_blob_template_prefix=(
+            os.getenv("AZURE_BLOB_TEMPLATE_PREFIX") or "templates"
+        ).strip(),
+        admin_api_key=(os.getenv("ADMIN_API_KEY") or "").strip() or None,
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("API_PORT", "8000")),
         api_base_url=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
@@ -178,6 +194,18 @@ def reload_settings() -> Settings:
         from ip_api.storage.session_store import reset_session_store
 
         reset_session_store()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ip_api.storage.template_store import reset_template_store
+
+        reset_template_store()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ip_api.api.dependencies import reset_app_context
+
+        reset_app_context()
     except Exception:  # noqa: BLE001
         pass
     return settings()

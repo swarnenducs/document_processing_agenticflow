@@ -62,7 +62,10 @@ Env: `SPEECH_PROVIDER=groq` (default in `.env.example`), or `openai` / `azure_op
 
 Compiled graph: `voice_graph.py` + nodes in `nodes/voice_contract.py`.  
 State: `VoiceContractState` (`models/voice_state.py`).  
-Checkpointer: process-local `MemorySaver` keyed by `thread_id`.
+Checkpointer: SQLAlchemy (`SqlAlchemyCheckpointSaver`) on the same SQLite /
+Azure SQL database as voice contracts by default, keyed by `thread_id`. Set
+`LANGGRAPH_CHECKPOINT_BACKEND=redis` + `REDIS_URL` to persist HITL state in Redis
+instead. Survives process restart; any replica that can see the store can resume.
 
 | Node | Responsibility | Data source |
 |------|----------------|-------------|
@@ -201,12 +204,12 @@ Files land under `STORAGE_BASE_PATH` (voice drafts / `voice_contracts`).
 
 | File | Role |
 |------|------|
-| `voice_graph.py` | StateGraph, MemorySaver, `start_` / `resume_voice_contract_agent` |
+| `graph.py` | StateGraph, SQL or Redis checkpointer, `start_` / `resume_voice_contract_agent` |
 | `nodes/voice_contract.py` | Node implementations + `interrupt()` |
 | `models/voice_state.py` | Shared TypedDict state |
 | `services/voice_contract_workflow.py` | Parse/fuzzy helpers + thin wrappers over the graph |
 | `services/speech_to_text.py` | Audio → transcript |
-| `storage/job_store.py` | SQLite catalog + voice contract rows |
+| `storage/job_store.py` | Voice contract + call-log rows via SQLAlchemy; JSON catalog lookups |
 | `api/routes.py` | REST endpoints + persist after graph completes |
 | `ui/gradio_app.py` | Chat UI + `thread_id` across turns |
 
@@ -216,7 +219,7 @@ Files land under `STORAGE_BASE_PATH` (voice drafts / `voice_contracts`).
 
 - **LangGraph owns the flow**; SQLite/HTTP are just tools inside nodes.
 - **HITL before side effects:** `interrupt()` until confirm, then generate files.
-- **`thread_id` + MemorySaver:** pause/resume across chat or API calls (process-local; multi-worker needs a shared checkpointer).
+- **`thread_id` + checkpointer:** pause/resume across chat or API calls (SQL by default; Redis when `LANGGRAPH_CHECKPOINT_BACKEND=redis`).
 - **Fuzzy refs:** spoken `CR 1001` → `CR-1001`.
 - **Same agent** behind Gradio and REST.
 

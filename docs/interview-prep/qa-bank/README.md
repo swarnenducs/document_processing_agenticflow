@@ -19,7 +19,7 @@ A: Per component — document YAML under `document-processing-mcp/prompts/`, MAF
 ## Memory
 
 **Q: Are we using any memory in voice?**  
-A: **Yes.** Voice LangGraph uses `MemorySaver` (checkpointer) + `thread_id` so HITL `interrupt()` can pause and resume. Completed contracts are also stored in SQLite. This is workflow checkpoint memory, not a full chat-history buffer.
+A: **Yes.** Voice LangGraph uses a SQLAlchemy checkpointer + `thread_id` so HITL `interrupt()` can pause and resume (SQLite locally, Azure SQL in cloud). Completed contracts are also stored in SQL. This is workflow checkpoint memory, not a full chat-history buffer.
 
 **Q: Document graph memory?**  
 A: No checkpointer — one-shot job; retries use in-run `retry_count`.

@@ -22,14 +22,11 @@ from document_processing_mcp.services.trace_log import traced_invoke
 class _LLMFieldMapping(BaseModel):
     """Azure/OpenAI-compatible schema — no Any / untyped fields."""
 
-    json_path: str = Field(description="Dot path into JSON, e.g. customer.name")
-    placeholder: str = Field(description="Exact placeholder key from the template")
-    value: str = Field(
-        default="",
-        description="Resolved value as a string (numbers/bools as text)",
-    )
+    json_path: str = Field(description="Dot path in JSON")
+    placeholder: str = Field(description="Exact template key")
+    value: str = Field(default="", description="JSON value as text")
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
-    rationale: str = Field(default="", description="Short reason for the match")
+    rationale: str = Field(default="", description="≤12 words")
 
 
 class _LLMTableColumnMap(BaseModel):
@@ -42,7 +39,7 @@ class _LLMTableFillPlan(BaseModel):
     table_index: int = Field(ge=0)
     array_json_path: str
     columns: list[_LLMTableColumnMap] = Field(default_factory=list)
-    rationale: str = Field(default="")
+    rationale: str = Field(default="", description="≤12 words")
 
 
 class _LLMMappingPayload(BaseModel):
@@ -96,6 +93,35 @@ def _resolve_path(data: dict[str, Any], path: str) -> Any:
     return current
 
 
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 24)] + f"...<truncated:{len(text)}>"
+
+
+def _dumps_compact(obj: Any, limit: int) -> str:
+    return _clip(json.dumps(obj, separators=(",", ":"), default=str), limit)
+
+
+def _summarize_json_for_mapper(data: Any, *, array_samples: int = 2) -> Any:
+    """Keep keys and a few array rows; drop repeated product-line clones."""
+    if isinstance(data, dict):
+        return {key: _summarize_json_for_mapper(value, array_samples=array_samples) for key, value in data.items()}
+    if isinstance(data, list):
+        if data and isinstance(data[0], dict):
+            sample = [
+                _summarize_json_for_mapper(row, array_samples=array_samples)
+                for row in data[:array_samples]
+            ]
+            if len(data) <= array_samples:
+                return sample
+            return {"_n": len(data), "_keys": list(data[0].keys()), "_sample": sample}
+        return data[:array_samples]
+    if isinstance(data, str) and len(data) > 240:
+        return data[:240] + "…"
+    return data
+
+
 def _table_summaries(template: ExtractedTemplate) -> list[dict[str, Any]]:
     """Build table header summaries from extracted blocks for the LLM."""
     by_table: dict[int, dict[int, dict[int, str]]] = defaultdict(
@@ -114,15 +140,11 @@ def _table_summaries(template: ExtractedTemplate) -> list[dict[str, Any]]:
         if 0 not in rows:
             continue
         headers = [rows[0][c] for c in sorted(rows[0])]
-        body_preview = []
-        for r in sorted(rows)[1:3]:
-            body_preview.append([rows[r].get(c, "") for c in sorted(rows[0])])
         summaries.append(
             {
-                "table_index": t_idx,
-                "headers": headers,
-                "body_row_count": max(0, len(rows) - 1),
-                "body_preview": body_preview,
+                "i": t_idx,
+                "h": headers,
+                "rows": max(0, len(rows) - 1),
             }
         )
     return summaries
@@ -140,10 +162,9 @@ def _placeholder_occurrences(template: ExtractedTemplate) -> list[dict[str, Any]
         for key in b.placeholder_keys:
             occurrences.append(
                 {
-                    "placeholder": key,
-                    "block_id": b.block_id,
-                    "block_type": b.block_type,
-                    "context": text[:600],
+                    "p": key,
+                    "t": b.block_type,
+                    "ctx": text[:180],
                 }
             )
     return occurrences
@@ -184,16 +205,13 @@ def _llm_mapping(
 
     block_summaries = [
         {
-            "block_id": b.block_id,
-            "block_type": b.block_type,
-            "text": b.text,
-            "placeholders": b.placeholder_keys,
-            "table_index": b.table_index,
-            "row_index": b.row_index,
-            "cell_index": b.cell_index,
+            "id": b.block_id,
+            "t": b.block_type,
+            "ph": b.placeholder_keys,
+            "ti": b.table_index,
         }
         for b in template.blocks
-        if b.text.strip()
+        if b.text.strip() and b.placeholder_keys
     ]
     tables = _table_summaries(template)
     occurrences = _placeholder_occurrences(template)
@@ -203,13 +221,11 @@ def _llm_mapping(
         result: _LLMMappingPayload = traced_invoke(
             chain,
             {
-                "placeholders_json": json.dumps(
-                    template.placeholders, separators=(",", ":")
-                )[:3000],
-                "occurrences_json": json.dumps(occurrences, separators=(",", ":"))[:5000],
-                "tables_json": json.dumps(tables, separators=(",", ":"))[:4000],
-                "blocks_json": json.dumps(block_summaries, separators=(",", ":"))[:6000],
-                "data_json": json.dumps(data, separators=(",", ":"), default=str)[:8000],
+                "placeholders_json": _dumps_compact(template.placeholders, 1500),
+                "occurrences_json": _dumps_compact(occurrences, 2800),
+                "tables_json": _dumps_compact(tables, 1500),
+                "blocks_json": _dumps_compact(block_summaries, 1200),
+                "data_json": _dumps_compact(_summarize_json_for_mapper(data), 4000),
             },
             role="mapper",
             provider=config.provider,

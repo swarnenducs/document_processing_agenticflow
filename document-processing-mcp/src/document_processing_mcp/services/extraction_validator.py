@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -107,15 +108,13 @@ def validate_extraction(
             for b in template.blocks
             if (b.text or "").strip() and b not in prioritized
         ]
-        prioritized.extend(extras[: max(0, 12 - len(prioritized))])
+        prioritized.extend(extras[: max(0, 8 - len(prioritized))])
 
     block_summaries = [
         {
-            "id": b.block_id,
             "t": b.block_type,
-            "text": b.text[:180],
+            "text": (b.text or "")[:120],
             "ph": b.placeholder_keys,
-            "ti": b.table_index,
         }
         for b in prioritized
     ]
@@ -123,10 +122,10 @@ def validate_extraction(
     result: _LLMExtractionPayload = traced_invoke(
         chain,
         {
-            "template_path": template.template_path,
-            "placeholders_json": _dumps_compact(template.placeholders, 1500),
-            "blocks_json": _dumps_compact(block_summaries, 3000),
-            "tables_json": _dumps_compact(_table_summaries(template), 1200),
+            "template_path": Path(template.template_path).name if template.template_path else "",
+            "placeholders_json": _dumps_compact(template.placeholders, 800),
+            "blocks_json": _dumps_compact(block_summaries, 1800),
+            "tables_json": _dumps_compact(_table_summaries(template), 800),
         },
         role="extraction_validator",
         provider=config.provider,

@@ -4,22 +4,23 @@
 
 **Yes.** Voice uses LangGraph **checkpoint memory**:
 
-- `MemorySaver` (in-process checkpointer)
+- SQLAlchemy checkpointer (`SqlAlchemyCheckpointSaver`) on the same SQLite / Azure SQL database as the rest of the voice MCP
 - `thread_id` in `config["configurable"]`
 - `interrupt()` in `await_confirmation` for human-in-the-loop
 - Resume with same `thread_id` via `Command(resume=...)`
 
-It is **not** full chat-history RAG memory — it is **workflow state persistence** so HITL can pause and continue.
+It is **not** full chat-history RAG memory — it is **workflow state persistence** so HITL can pause and continue after a restart or on another replica that shares the database.
 
 ---
 
 ## Code (from `voice_enable_mcp/.../graph.py`)
 
 ```python
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
+from voice_enable_mcp.storage.checkpoint_store import SqlAlchemyCheckpointSaver
 
-_CHECKPOINTER = MemorySaver()
+def get_checkpointer():
+    return SqlAlchemyCheckpointSaver()  # SQLite locally, Azure SQL in cloud
 
 def build_voice_contract_graph(*, checkpointer=None):
     graph = StateGraph(VoiceContractState)
@@ -29,8 +30,10 @@ def build_voice_contract_graph(*, checkpointer=None):
     graph.add_node("await_confirmation", await_confirmation_node)  # interrupt()
     graph.add_node("generate_contract", generate_contract_node)
     # ... edges ...
-    return graph.compile(checkpointer=checkpointer or _CHECKPOINTER)
+    return graph.compile(checkpointer=checkpointer or get_checkpointer())
 ```
+
+Tables: `lg_checkpoints`, `lg_checkpoint_blobs`, `lg_checkpoint_writes`.
 
 ### Start turn
 
@@ -70,25 +73,28 @@ def await_confirmation_node(state):
 ```text
 User: "create contract AVC CR 1001"
   → parse → lookup entity/pricelist
-  -> interrupt (pause); state is saved in MemorySaver under thread_id
+  -> interrupt (pause); state is saved in SQL under thread_id
   → API returns needs_confirmation + thread_id
 
 User: "yes" / confirm
-  → resume same thread_id
+  → resume same thread_id (even after MCP restart)
   → generate_contract → save → END
 ```
 
 ---
 
-## Limits of `MemorySaver` (say this in interviews)
+## Why SQLAlchemy instead of Postgres/Redis (say this in interviews)
 
-| Pros | Cons |
+LangGraph's official durable savers are `PostgresSaver` and `SqliteSaver` (sqlite3, not SQLAlchemy). This repo already standardizes on **SQLite locally + Azure SQL in cloud**, so the default path implements `BaseCheckpointSaver` on SQLAlchemy.
+
+Set `LANGGRAPH_CHECKPOINT_BACKEND=redis` + `REDIS_URL` to swap HITL checkpoints onto Redis (vanilla Redis / Azure Cache; no RediSearch). Completed contracts stay in SQL either way.
+
+| Pros | Still true |
 |---|---|
-| Zero infra, great for local/HITL demo | **Lost on process restart** |
-| Fast | Not shared across multiple MCP replicas |
+| Same engine as contracts / call logs | No extra datastore |
+| Survives process restart | Multi-replica as long as they share the DB |
+| Azure SQL works (no official MSSQL saver) | Not LangGraph's Postgres wire format |
 
-**Production:** swap to `PostgresSaver` / Redis checkpointer so any replica can resume the thread.
-
-Also: completed contracts are saved to **SQLite** (durable business data) — that’s separate from graph checkpoint memory.
+Completed contracts in `voice_contracts` are **business data** (always SQL). Checkpoint rows are **workflow snapshots** (SQL by default, Redis when `LANGGRAPH_CHECKPOINT_BACKEND=redis`).
 
 Next: [04-memory-management.md](04-memory-management.md)
