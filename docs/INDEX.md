@@ -16,13 +16,16 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | See ports and package layout | [COMPONENTS.md](COMPONENTS.md) |
 | Understand the architecture | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) |
 | Call HTTP / WS / MCP APIs | [api-details-information.md](api-details-information.md) |
+| Hit APIs from Postman | [POSTMAN.md](POSTMAN.md) |
 | Local vs Azure SQL/Blob + admin templates | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) |
 | See every env variable (tables by component) | [ENVIRONMENT.md](ENVIRONMENT.md) |
+| Dynaconf later + Azure Web App JSON + Key Vault | [DYNACONF.md](DYNACONF.md) |
 | Estimate LLM tokens / STT cost | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) |
 | Route cheap vs strong document mappers | [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) |
 | Voice → contract HITL | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) |
 | Deploy Azure Web Apps | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) |
 | Deploy Foundry-hosted MAF | [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md) |
+| Add a chat or metadata MCP to MAF | [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md) |
 | Prepare for interviews | [interview-prep/README.md](interview-prep/README.md) |
 
 ---
@@ -49,7 +52,9 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice/text → intent → catalog lookup → HITL confirm → contract file |
 | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) | SQLite + local files vs Azure SQL + Blob; default admin template library (`ipp_default_template`) |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | Env variables in tables: what each does and which process reads it (`DEBUG_FLOW` included) |
+| [DYNACONF.md](DYNACONF.md) | Env overlay for Dynaconf later; Key Vault; Azure Web App example JSON per component |
 | [api-details-information.md](api-details-information.md) | Catalogue of gateway, MAF, document MCP, and voice MCP APIs |
+| [POSTMAN.md](POSTMAN.md) | Import Postman collection; gateway REST + MAF `/invoke` |
 | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) | Estimated tokens (and Whisper minutes) per component, with cost knobs |
 | [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) | Optional optimized mapper flow: JSON config, complexity + retry cascade |
 | [MCP_AGENTS.md](MCP_AGENTS.md) | Class-based FastMCP servers for document (`:8001`) and voice (`:8002`) |
@@ -59,6 +64,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [CICD_AZURE.md](CICD_AZURE.md) | Short pointer to `DEPLOYMENT_GUIDE.md` |
 | [AZURE_DEPLOY_MAF.md](AZURE_DEPLOY_MAF.md) | Full MAF deploy: Foundry model, hosted agent, five Web Apps |
 | [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md) | Focused runbook for Foundry-hosted MAF (chat only; jobs stay on Web App) |
+| [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md) | Attach optional chat (ask) and metadata (jobs) MCPs via config URLs |
 
 ### Component READMEs
 

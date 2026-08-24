@@ -19,6 +19,21 @@ from typing import Any
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
+# Preferred hop names first; older names stay as aliases (existing .env still works).
+_URL_ENV_ALIASES: dict[str, tuple[str, ...]] = {
+    "TEMPLATE_PROCESSING_END_POINT": ("TEMPLATE_PROCESSING_END_POINT", "DOCUMENT_MCP_URL"),
+    "DOCUMENT_MCP_URL": ("TEMPLATE_PROCESSING_END_POINT", "DOCUMENT_MCP_URL"),
+    "VOICE_PROCESSING_END_POINT": ("VOICE_PROCESSING_END_POINT", "VOICE_MCP_URL"),
+    "VOICE_MCP_URL": ("VOICE_PROCESSING_END_POINT", "VOICE_MCP_URL"),
+    "CHAT_MCP_END_POINT": ("CHAT_MCP_END_POINT", "CHAT_MCP_URL"),
+    "CHAT_MCP_URL": ("CHAT_MCP_END_POINT", "CHAT_MCP_URL"),
+    "METADATA_EXTRACTION_END_POINT": (
+        "METADATA_EXTRACTION_END_POINT",
+        "METADATA_MCP_URL",
+    ),
+    "METADATA_MCP_URL": ("METADATA_EXTRACTION_END_POINT", "METADATA_MCP_URL"),
+}
+
 _registry_cache: list[McpServerSpec] | None = None
 _registry_mtime: float | None = None
 _registry_path: Path | None = None
@@ -85,16 +100,56 @@ def _env(*names: str, default: str | None = None) -> str | None:
 
 
 def document_mcp_url() -> str:
-    return (_env("DOCUMENT_MCP_URL", default="http://127.0.0.1:8001/mcp") or "").rstrip("/")
+    """MAF → document MCP. ``TEMPLATE_PROCESSING_END_POINT`` then ``DOCUMENT_MCP_URL``."""
+    return (
+        _env(
+            "TEMPLATE_PROCESSING_END_POINT",
+            "DOCUMENT_MCP_URL",
+            default="http://127.0.0.1:8001/mcp",
+        )
+        or ""
+    ).rstrip("/")
 
 
 def voice_mcp_url() -> str:
-    return (_env("VOICE_MCP_URL", default="http://127.0.0.1:8002/mcp") or "").rstrip("/")
+    """MAF → voice MCP. ``VOICE_PROCESSING_END_POINT`` then ``VOICE_MCP_URL``."""
+    return (
+        _env(
+            "VOICE_PROCESSING_END_POINT",
+            "VOICE_MCP_URL",
+            default="http://127.0.0.1:8002/mcp",
+        )
+        or ""
+    ).rstrip("/")
 
 
 def business_mcp_url() -> str:
     """Chat-path MCP. Empty until a business MCP is configured."""
     return (_env("BUSINESS_MCP_URL", default="") or "").rstrip("/")
+
+
+def chat_mcp_url() -> str:
+    """Optional ask-mode chat MCP. ``CHAT_MCP_END_POINT`` then ``CHAT_MCP_URL``.
+
+    Sibling of ``BUSINESS_MCP_URL`` — both can be set. Empty until configured.
+    """
+    return (
+        _env("CHAT_MCP_END_POINT", "CHAT_MCP_URL", default="") or ""
+    ).rstrip("/")
+
+
+def metadata_mcp_url() -> str:
+    """Optional jobs-mode metadata MCP. ``METADATA_EXTRACTION_END_POINT`` then
+    ``METADATA_MCP_URL``. Empty until configured.
+    """
+    return (
+        _env(
+            "METADATA_EXTRACTION_END_POINT",
+            "METADATA_MCP_URL",
+            default="",
+        )
+        or ""
+    ).rstrip("/")
 
 
 def _component_root() -> Path:
@@ -109,13 +164,19 @@ def registry_file() -> Path:
 
 
 def expand_env(text: str) -> str:
-    """Replace ``${VAR}`` and ``${VAR:-default}``."""
+    """Replace ``${VAR}`` and ``${VAR:-default}``.
+
+    Document/voice/chat/metadata MCP URL vars share an alias chain so YAML
+    ``${DOCUMENT_MCP_URL}`` still picks up ``TEMPLATE_PROCESSING_END_POINT``
+    (and the reverse). Same for chat and metadata preferred/alias pairs.
+    """
 
     def _repl(match: re.Match[str]) -> str:
         name, default = match.group(1), match.group(2)
-        value = os.getenv(name)
-        if value is not None and value != "":
-            return value
+        for candidate in _URL_ENV_ALIASES.get(name, (name,)):
+            value = os.getenv(candidate)
+            if value is not None and value != "":
+                return value
         if default is not None:
             return default
         return match.group(0)
@@ -194,6 +255,19 @@ def _spec_from_mapping(item: dict[str, Any], *, base: Path) -> McpServerSpec | N
         aliases = tuple(p.strip().lower() for p in raw_aliases.split(",") if p.strip())
     else:
         aliases = tuple(str(a).strip().lower() for a in raw_aliases if str(a).strip())
+    env_url: str | None = None
+    if name in {"contract-autocreation-mcp", "document"} or any(
+        a in {"document", "template-auto-creation"} for a in aliases
+    ):
+        env_url = _env("TEMPLATE_PROCESSING_END_POINT", "DOCUMENT_MCP_URL")
+    elif name in {"voice-agent", "voice"} or "voice" in aliases:
+        env_url = _env("VOICE_PROCESSING_END_POINT", "VOICE_MCP_URL")
+    elif name in {"chat-agent", "chat"} or "chat" in aliases:
+        env_url = _env("CHAT_MCP_END_POINT", "CHAT_MCP_URL")
+    elif name in {"metadata-agent", "metadata"} or "metadata" in aliases:
+        env_url = _env("METADATA_EXTRACTION_END_POINT", "METADATA_MCP_URL")
+    if env_url:
+        url = env_url.rstrip("/")
     key = str(item.get("mcp") or item.get("key") or "").strip() or None
     prefix_safe = prefix.replace("-", "_") if "-" in prefix else prefix
     return McpServerSpec(
@@ -288,6 +362,37 @@ def _builtin_servers() -> list[McpServerSpec]:
             if business_mcp_url()
             else []
         ),
+        *(
+            [
+                McpServerSpec(
+                    name="chat-agent",
+                    url=chat_mcp_url(),
+                    prefix="chat",
+                    description="General chat MCP — conversational tools for /ask (not jobs).",
+                    invoke_modes=("ask",),
+                    aliases=("chat",),
+                    key="chat_process_mcp",
+                )
+            ]
+            if chat_mcp_url()
+            else []
+        ),
+        *(
+            [
+                McpServerSpec(
+                    name="metadata-agent",
+                    url=metadata_mcp_url(),
+                    prefix="metadata",
+                    description="Metadata extraction — structured metadata from a document (jobs).",
+                    invoke_modes=("jobs",),
+                    default_tool="extract_metadata",
+                    aliases=("metadata",),
+                    key="metadata_process_mcp",
+                )
+            ]
+            if metadata_mcp_url()
+            else []
+        ),
     ]
 
 
@@ -344,9 +449,15 @@ def _extras_fingerprint() -> str:
         [
             os.getenv("MAF_EXTRA_MCPS") or "",
             os.getenv("MAF_MCP_SERVERS") or "",
+            os.getenv("TEMPLATE_PROCESSING_END_POINT") or "",
             os.getenv("DOCUMENT_MCP_URL") or "",
+            os.getenv("VOICE_PROCESSING_END_POINT") or "",
             os.getenv("VOICE_MCP_URL") or "",
             os.getenv("BUSINESS_MCP_URL") or "",
+            os.getenv("CHAT_MCP_END_POINT") or "",
+            os.getenv("CHAT_MCP_URL") or "",
+            os.getenv("METADATA_EXTRACTION_END_POINT") or "",
+            os.getenv("METADATA_MCP_URL") or "",
             os.getenv("MAF_MCP_REGISTRY_FILE") or "",
         ]
     )

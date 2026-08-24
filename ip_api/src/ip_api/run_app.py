@@ -45,8 +45,9 @@ def _api_url() -> str:
 
 
 def _maf_health_url() -> str:
-    base = (os.getenv("MAF_BASE_URL") or os.getenv("MAF_URL") or "http://127.0.0.1:8003").rstrip("/")
-    return f"{base}/health"
+    from ip_api.services.maf_client import central_agent_endpoint
+
+    return f"{central_agent_endpoint()}/health"
 
 
 def wait_for_http(
@@ -230,7 +231,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-maf",
         action="store_true",
-        help="Do not start MAF service (API /api/ask needs MAF at MAF_BASE_URL)",
+        help="Do not start MAF service (API /api/ask needs MAF at CENTRAL_AGENT_END_POINT)",
     )
     parser.add_argument(
         "--mcp-transport",
@@ -291,7 +292,16 @@ def main(argv: list[str] | None = None) -> int:
     gradio_port = _env_int("GRADIO_PORT", 7860)
     maf_host = os.getenv("MAF_HOST", "0.0.0.0")
     maf_port = _env_int("MAF_PORT", 8003)
-    maf_base = (os.getenv("MAF_BASE_URL") or os.getenv("MAF_URL") or f"http://127.0.0.1:{maf_port}").rstrip("/")
+    from ip_api.services.maf_client import central_agent_endpoint
+
+    if not (
+        (os.getenv("CENTRAL_AGENT_END_POINT") or "").strip()
+        or (os.getenv("MAF_BASE_URL") or "").strip()
+        or (os.getenv("MAF_URL") or "").strip()
+    ):
+        os.environ.setdefault("MAF_BASE_URL", f"http://127.0.0.1:{maf_port}")
+    maf_base = central_agent_endpoint()
+    os.environ.setdefault("CENTRAL_AGENT_END_POINT", maf_base)
     os.environ.setdefault("MAF_BASE_URL", maf_base)
 
     doc_mcp_host = os.getenv("DOCUMENT_MCP_HOST", "127.0.0.1")

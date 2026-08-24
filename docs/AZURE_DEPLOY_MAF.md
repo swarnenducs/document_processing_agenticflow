@@ -152,7 +152,7 @@ Enable ACR pull (admin user or managed identity). Set **WEBSITES_PORT** per app.
 
 ### 2.5 App settings (HTTPS URLs, not localhost)
 
-Replace hostnames with yours.
+Committed example JSON (placeholders + Key Vault references, no real secrets): [DYNACONF.md](DYNACONF.md#apply-azure-web-app-json). Replace hostnames with yours.
 
 **document MCP (`doc-mcp-dev`)**
 
@@ -234,11 +234,12 @@ GitHub Actions in [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) currently describe 
 For a focused operational checklist, use
 [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md).
 
-Scope: this hosts **chat only**. Document generation and voice contracts stay on
-the Web App `POST /invoke` job path and are declared `modes: [jobs]` in
-`central-agentic-flow/config/mcp_registry.yml`, so no chat host exposes them as
-tools. Chat tools come from a separate business MCP, which is configured through
-`BUSINESS_MCP_URL` (Web App) or a Toolbox (Foundry) and is optional.
+Scope: this hosts **chat only**. Document generation, voice contracts, and
+metadata extraction stay on the Web App `POST /invoke` job path and are
+declared `modes: [jobs]` in `central-agentic-flow/config/mcp_registry.yml`, so
+no chat host exposes them as tools. Chat tools come from optional ask-mode
+MCPs (`BUSINESS_MCP_URL` and/or `CHAT_MCP_END_POINT`) on the Web App, or a
+Toolbox (Foundry). See [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md).
 
 Implemented assets:
 

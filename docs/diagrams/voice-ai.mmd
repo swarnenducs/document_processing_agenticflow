@@ -1,0 +1,65 @@
+%% Voice AI — paste into draw.io:
+%%   Arrange > Insert > Advanced > Mermaid
+%% Or open docs/diagrams/voice-ai.drawio
+
+%% ============================================================
+%% Page 1 — Surfaces (UI / API / MCP)
+%% ============================================================
+flowchart LR
+  subgraph user [User]
+    mic[Mic or audio file]
+    type[Typed chat]
+  end
+
+  subgraph ui [Gradio UI :7860]
+    tab[Voice Contract tab]
+  end
+
+  subgraph api [ip_api :8000]
+    stt["POST /audio/transcribe"]
+    start["POST /voice/contract"]
+    confirm["POST /voice/contract/confirm"]
+    persist[Save voice_contracts + files]
+  end
+
+  subgraph mcp [voice_enable_mcp :8002]
+    graph[LangGraph voice agent]
+    ckpt[Checkpointer SQL or Redis]
+  end
+
+  subgraph store [Storage]
+    sql[(SQLite / Azure SQL)]
+    files[.txt + .docx]
+  end
+
+  mic --> tab
+  type --> tab
+  tab -->|audio| stt
+  stt -->|transcript| start
+  tab -->|text| start
+  start --> graph
+  graph --> ckpt
+  ckpt --> sql
+  graph -->|needs_confirmation + thread_id| tab
+  tab -->|yes / CR-1001| confirm
+  confirm --> graph
+  graph -->|completed| persist
+  persist --> sql
+  persist --> files
+
+%% ============================================================
+%% Page 2 — LangGraph nodes (HITL)
+%% ============================================================
+flowchart TD
+  startN([START]) --> parse[parse_intent]
+  parse -->|not create-contract| endReject([END rejected])
+  parse -->|ok| entity[fetch_legal_entity]
+  entity -->|not found| endReject
+  entity -->|ok| price[fetch_pricelist]
+  price -->|no match| endReject
+  price -->|ok| hitl[await_confirmation interrupt]
+  hitl -->|paused thread_id| wait[User confirms]
+  wait -->|Command resume| hitl
+  hitl -->|confirmed| gen[generate_contract]
+  hitl -->|reject| endReject
+  gen --> endOk([END completed])

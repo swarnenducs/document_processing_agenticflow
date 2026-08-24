@@ -6,6 +6,41 @@ End-to-end guide for the **Voice → Contract** feature: speech (optional) → t
 
 ---
 
+**draw.io (step-by-step invoke):** page **API to MAF to Voice MCP** in [diagrams/voice-ai.drawio](diagrams/voice-ai.drawio), or paste [diagrams/voice-api-invoke.mmd](diagrams/voice-api-invoke.mmd) via **Arrange → Insert → Advanced → Mermaid**.
+
+## API → MAF → Voice MCP (which call, in order)
+
+Voice jobs never go through `POST /api/ask`. Every start/confirm is `ip_api` → `POST {MAF_BASE_URL}/invoke` → Voice MCP tool.
+
+### Turn 1 — typed start
+
+| # | Who | Call |
+|---|-----|------|
+| 1 | UI `:7860` | `POST http://127.0.0.1:8000/api/v1/voice/contract` body `{ "transcript": "create contract AVC CR 1001" }` |
+| 2 | ip_api `voice_contract_from_text` | `POST http://127.0.0.1:8003/invoke` body `{ "server": "voice", "tool": "start_voice_contract", "arguments": { "transcript", "auto_create" } }` |
+| 3 | MAF `invoke_mcp_tool` | HTTP MCP `http://127.0.0.1:8002/mcp` tool `start_voice_contract` |
+| 4 | Voice MCP | `start_voice_contract_agent` → LangGraph: `parse_intent` → `fetch_legal_entity` → `fetch_pricelist` → `await_confirmation` `interrupt()` |
+| 5 | Back the same path | `status=needs_confirmation` + `thread_id` → MAF → ip_api → UI |
+
+Same hop 2–5 if you use the thin proxy `POST /api/v1/agents/voice/contract` instead of `/api/v1/voice/contract`.
+
+### Turn 2 — confirm
+
+| # | Who | Call |
+|---|-----|------|
+| 6 | UI | `POST /api/v1/voice/contract/confirm` body `{ legal_entity, contract_reference_number, thread_id, user_text: "yes" }` |
+| 7 | ip_api `voice_contract_confirm` | `POST :8003/invoke` `{ "server": "voice", "tool": "confirm_voice_contract", "arguments": { ... } }` |
+| 8 | MAF | Voice MCP `confirm_voice_contract` |
+| 9 | Voice MCP | resume same `thread_id` → `generate_contract` → persist `.txt`/`.docx` + SQL `voice_contracts` |
+| 10 | Back the same path | `status=completed` + file paths → UI |
+
+### Audio variant (only extra steps)
+
+| # | Who | Call |
+|---|-----|------|
+| A | UI | `POST /api/v1/voice/contract/from-audio` multipart audio |
+| B | ip_api | STT inside the API (`transcribe_audio`), then same as Turn 1 hop 2 (`start_voice_contract`) |
+
 ## Overview (one picture)
 
 ```text

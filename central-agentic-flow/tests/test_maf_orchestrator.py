@@ -84,7 +84,9 @@ def test_resolve_maf_chat_client_missing_key(monkeypatch):
 
 
 def test_mcp_urls_defaults(monkeypatch):
+    monkeypatch.delenv("TEMPLATE_PROCESSING_END_POINT", raising=False)
     monkeypatch.delenv("DOCUMENT_MCP_URL", raising=False)
+    monkeypatch.delenv("VOICE_PROCESSING_END_POINT", raising=False)
     monkeypatch.delenv("VOICE_MCP_URL", raising=False)
 
     from central_agentic_flow.mcp_registry import (
@@ -97,11 +99,60 @@ def test_mcp_urls_defaults(monkeypatch):
     assert "8002" in voice_mcp_url()
 
 
+def test_template_processing_end_point_wins_over_document_mcp_url(monkeypatch):
+    monkeypatch.setenv(
+        "TEMPLATE_PROCESSING_END_POINT",
+        "https://doc-preferred.example.net/mcp/",
+    )
+    monkeypatch.setenv("DOCUMENT_MCP_URL", "http://127.0.0.1:8001/mcp")
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+
+    from central_agentic_flow.mcp_registry import (
+        document_mcp_url,
+        expand_env,
+        get_mcp_server,
+        reset_mcp_registry,
+    )
+
+    assert document_mcp_url() == "https://doc-preferred.example.net/mcp"
+    assert (
+        expand_env("${DOCUMENT_MCP_URL:-http://127.0.0.1:8001/mcp}")
+        == "https://doc-preferred.example.net/mcp/"
+    )
+    reset_mcp_registry()
+    assert get_mcp_server("document").url == "https://doc-preferred.example.net/mcp"
+    reset_mcp_registry()
+
+
+def test_voice_processing_end_point_wins_over_voice_mcp_url(monkeypatch):
+    monkeypatch.setenv(
+        "VOICE_PROCESSING_END_POINT",
+        "https://voice-preferred.example.net/mcp",
+    )
+    monkeypatch.setenv("VOICE_MCP_URL", "http://127.0.0.1:8002/mcp")
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+
+    from central_agentic_flow.mcp_registry import (
+        get_mcp_server,
+        reset_mcp_registry,
+        voice_mcp_url,
+    )
+
+    assert voice_mcp_url() == "https://voice-preferred.example.net/mcp"
+    reset_mcp_registry()
+    assert get_mcp_server("voice").url == "https://voice-preferred.example.net/mcp"
+    reset_mcp_registry()
+
+
 def test_yaml_registry_loads_document_and_voice(monkeypatch):
     monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
     monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
     monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
     monkeypatch.delenv("BUSINESS_MCP_URL", raising=False)
+    monkeypatch.delenv("CHAT_MCP_END_POINT", raising=False)
+    monkeypatch.delenv("CHAT_MCP_URL", raising=False)
+    monkeypatch.delenv("METADATA_EXTRACTION_END_POINT", raising=False)
+    monkeypatch.delenv("METADATA_MCP_URL", raising=False)
 
     from central_agentic_flow.mcp_registry import (
         ask_mcp_servers,
@@ -115,6 +166,8 @@ def test_yaml_registry_loads_document_and_voice(monkeypatch):
     names = [s.name for s in load_mcp_registry()]
     assert names[:2] == ["contract-autocreation-mcp", "voice-agent"]
     assert "fabric-sql-agent" not in names
+    assert "chat-agent" not in names
+    assert "metadata-agent" not in names
     document = next(s for s in load_mcp_registry() if s.name == "contract-autocreation-mcp")
     assert document.allows_jobs()
     assert document.default_tool == "generate_document"
@@ -141,6 +194,8 @@ def test_business_mcp_is_ask_only_when_configured(monkeypatch):
     monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
     monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
     monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("CHAT_MCP_END_POINT", raising=False)
+    monkeypatch.delenv("CHAT_MCP_URL", raising=False)
     monkeypatch.setenv("BUSINESS_MCP_URL", "https://business.example.net/mcp")
 
     from central_agentic_flow.mcp_registry import (
@@ -158,6 +213,162 @@ def test_business_mcp_is_ask_only_when_configured(monkeypatch):
     assert business.prefix == "business"
     with pytest.raises(ValueError, match="not allowed for /invoke"):
         assert_jobs_invoke(business, "anything")
+    reset_mcp_registry()
+
+
+def test_optional_chat_and_metadata_mcp_absent_when_url_unset(monkeypatch):
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("BUSINESS_MCP_URL", raising=False)
+    monkeypatch.delenv("CHAT_MCP_END_POINT", raising=False)
+    monkeypatch.delenv("CHAT_MCP_URL", raising=False)
+    monkeypatch.delenv("METADATA_EXTRACTION_END_POINT", raising=False)
+    monkeypatch.delenv("METADATA_MCP_URL", raising=False)
+
+    from central_agentic_flow.mcp_registry import (
+        chat_mcp_url,
+        load_mcp_registry,
+        metadata_mcp_url,
+        reset_mcp_registry,
+    )
+
+    assert chat_mcp_url() == ""
+    assert metadata_mcp_url() == ""
+    reset_mcp_registry()
+    names = [s.name for s in load_mcp_registry()]
+    assert "chat-agent" not in names
+    assert "metadata-agent" not in names
+    reset_mcp_registry()
+
+
+def test_chat_mcp_is_ask_only_when_configured(monkeypatch):
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("BUSINESS_MCP_URL", raising=False)
+    monkeypatch.delenv("CHAT_MCP_URL", raising=False)
+    monkeypatch.setenv("CHAT_MCP_END_POINT", "https://chat.example.net/mcp")
+
+    from central_agentic_flow.mcp_registry import (
+        ask_mcp_servers,
+        assert_jobs_invoke,
+        chat_mcp_url,
+        get_mcp_server,
+        reset_mcp_registry,
+    )
+
+    assert chat_mcp_url() == "https://chat.example.net/mcp"
+    reset_mcp_registry()
+    assert [s.name for s in ask_mcp_servers()] == ["chat-agent"]
+    chat = get_mcp_server("chat")
+    assert chat.name == "chat-agent"
+    assert chat.url == "https://chat.example.net/mcp"
+    assert chat.prefix == "chat"
+    assert chat.allows_ask()
+    assert not chat.allows_jobs()
+    with pytest.raises(ValueError, match="not allowed for /invoke"):
+        assert_jobs_invoke(chat, "anything")
+    reset_mcp_registry()
+
+
+def test_metadata_mcp_is_jobs_only_when_configured(monkeypatch):
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("METADATA_MCP_URL", raising=False)
+    monkeypatch.setenv(
+        "METADATA_EXTRACTION_END_POINT",
+        "https://metadata.example.net/mcp",
+    )
+
+    from central_agentic_flow.mcp_registry import (
+        ask_mcp_servers,
+        assert_jobs_invoke,
+        get_mcp_server,
+        metadata_mcp_url,
+        reset_mcp_registry,
+    )
+
+    assert metadata_mcp_url() == "https://metadata.example.net/mcp"
+    reset_mcp_registry()
+    metadata = get_mcp_server("metadata")
+    assert metadata.name == "metadata-agent"
+    assert metadata.url == "https://metadata.example.net/mcp"
+    assert metadata.prefix == "metadata"
+    assert metadata.allows_jobs()
+    assert not metadata.allows_ask()
+    assert metadata.default_tool == "extract_metadata"
+    assert metadata.tool_rule("extract_metadata") is not None
+    assert_jobs_invoke(metadata, "extract_metadata")
+    assert metadata.name not in [s.name for s in ask_mcp_servers()]
+    reset_mcp_registry()
+
+
+def test_chat_mcp_end_point_wins_over_chat_mcp_url(monkeypatch):
+    monkeypatch.setenv("CHAT_MCP_END_POINT", "https://chat-preferred.example.net/mcp/")
+    monkeypatch.setenv("CHAT_MCP_URL", "http://127.0.0.1:8004/mcp")
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+
+    from central_agentic_flow.mcp_registry import (
+        chat_mcp_url,
+        expand_env,
+        get_mcp_server,
+        reset_mcp_registry,
+    )
+
+    assert chat_mcp_url() == "https://chat-preferred.example.net/mcp"
+    assert (
+        expand_env("${CHAT_MCP_URL:-}") == "https://chat-preferred.example.net/mcp/"
+    )
+    reset_mcp_registry()
+    assert get_mcp_server("chat").url == "https://chat-preferred.example.net/mcp"
+    reset_mcp_registry()
+
+
+def test_metadata_extraction_end_point_wins_over_metadata_mcp_url(monkeypatch):
+    monkeypatch.setenv(
+        "METADATA_EXTRACTION_END_POINT",
+        "https://meta-preferred.example.net/mcp",
+    )
+    monkeypatch.setenv("METADATA_MCP_URL", "http://127.0.0.1:8005/mcp")
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+
+    from central_agentic_flow.mcp_registry import (
+        expand_env,
+        get_mcp_server,
+        metadata_mcp_url,
+        reset_mcp_registry,
+    )
+
+    assert metadata_mcp_url() == "https://meta-preferred.example.net/mcp"
+    assert expand_env("${METADATA_MCP_URL:-}") == "https://meta-preferred.example.net/mcp"
+    reset_mcp_registry()
+    assert get_mcp_server("metadata").url == "https://meta-preferred.example.net/mcp"
+    reset_mcp_registry()
+
+
+def test_chat_and_business_mcp_are_sibling_ask_servers(monkeypatch):
+    monkeypatch.delenv("MAF_EXTRA_MCPS", raising=False)
+    monkeypatch.delenv("MAF_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("MAF_MCP_REGISTRY_FILE", raising=False)
+    monkeypatch.setenv("BUSINESS_MCP_URL", "https://business.example.net/mcp")
+    monkeypatch.setenv("CHAT_MCP_END_POINT", "https://chat.example.net/mcp")
+
+    from central_agentic_flow.mcp_registry import (
+        ask_mcp_servers,
+        get_mcp_server,
+        reset_mcp_registry,
+    )
+
+    reset_mcp_registry()
+    assert [s.name for s in ask_mcp_servers()] == ["business-agent", "chat-agent"]
+    assert get_mcp_server("business").url == "https://business.example.net/mcp"
+    assert get_mcp_server("chat").url == "https://chat.example.net/mcp"
     reset_mcp_registry()
 
 
@@ -235,9 +446,14 @@ def test_extra_mcp_registry(monkeypatch):
 
 
 def test_expand_env_defaults(monkeypatch):
+    monkeypatch.delenv("TEMPLATE_PROCESSING_END_POINT", raising=False)
     monkeypatch.delenv("DOCUMENT_MCP_URL", raising=False)
     from central_agentic_flow.mcp_registry import expand_env
 
     assert expand_env("${DOCUMENT_MCP_URL:-http://127.0.0.1:8001/mcp}").endswith("/mcp")
     monkeypatch.setenv("DOCUMENT_MCP_URL", "http://example.local/mcp")
     assert expand_env("${DOCUMENT_MCP_URL:-http://127.0.0.1:8001/mcp}") == "http://example.local/mcp"
+    assert (
+        expand_env("${TEMPLATE_PROCESSING_END_POINT:-http://127.0.0.1:8001/mcp}")
+        == "http://example.local/mcp"
+    )

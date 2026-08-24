@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ip_api.services.maf_client import central_agent_endpoint
 from ip_api.services.session_service import ensure_request_session
 
 router = APIRouter(tags=["maf"])
@@ -35,10 +36,6 @@ class AskResponse(BaseModel):
     user_email: str | None = None
 
 
-def _maf_base_url() -> str:
-    return (os.getenv("MAF_BASE_URL") or os.getenv("MAF_URL") or "http://127.0.0.1:8003").rstrip("/")
-
-
 @router.post("/ask", response_model=AskResponse)
 async def ask(body: AskRequest) -> AskResponse:
     """Proxy to standalone MAF service over HTTP."""
@@ -53,7 +50,7 @@ async def ask(body: AskRequest) -> AskResponse:
         path="/api/ask",
     )
 
-    url = f"{_maf_base_url()}/ask"
+    url = f"{central_agent_endpoint()}/ask"
     payload = {
         "message": body.message,
         "session_id": session.session_id,

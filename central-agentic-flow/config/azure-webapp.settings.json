@@ -1,0 +1,177 @@
+[
+  {
+    "name": "PYTHONUNBUFFERED",
+    "value": "1",
+    "slotSetting": false
+  },
+  {
+    "name": "WEBSITES_PORT",
+    "value": "8003",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_HOST",
+    "value": "0.0.0.0",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_PORT",
+    "value": "8003",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_MCP_TIMEOUT_SECONDS",
+    "value": "300",
+    "slotSetting": false
+  },
+  {
+    "name": "TEMPLATE_PROCESSING_END_POINT",
+    "value": "https://<document-mcp-app>.azurewebsites.net/mcp",
+    "slotSetting": false
+  },
+  {
+    "name": "DOCUMENT_MCP_URL",
+    "value": "https://<document-mcp-app>.azurewebsites.net/mcp",
+    "slotSetting": false
+  },
+  {
+    "name": "VOICE_PROCESSING_END_POINT",
+    "value": "https://<voice-mcp-app>.azurewebsites.net/mcp",
+    "slotSetting": false
+  },
+  {
+    "name": "VOICE_MCP_URL",
+    "value": "https://<voice-mcp-app>.azurewebsites.net/mcp",
+    "slotSetting": false
+  },
+  {
+    "name": "BUSINESS_MCP_URL",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "CHAT_MCP_END_POINT",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "CHAT_MCP_URL",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "METADATA_EXTRACTION_END_POINT",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "METADATA_MCP_URL",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "FOUNDRY_PROJECT_ENDPOINT",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "TOOLBOX_ENDPOINT",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "STORAGE_BASE_PATH",
+    "value": "/home/data/storage",
+    "slotSetting": false
+  },
+  {
+    "name": "SQLITE_DATABASE_PATH",
+    "value": "/home/data/app.db",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_SERVER",
+    "value": "<sql-server>.database.windows.net",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_USER",
+    "value": "adminsql",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_DATABASE",
+    "value": "ipp-app-db",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_DIALECT",
+    "value": "pyodbc",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_ODBC_DRIVER",
+    "value": "ODBC Driver 18 for SQL Server",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_PASSWORD",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/azure-sql-password/)",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_MODEL_ID",
+    "value": "azure_openai:<maf-deployment>",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_PROVIDER",
+    "value": "azure_openai",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_MODEL",
+    "value": "<maf-deployment>",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_API_KEY",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<azure-openai-api-key-secret>/)",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_ENDPOINT",
+    "value": "https://<azure-openai-resource>.cognitiveservices.azure.com",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_API_VERSION",
+    "value": "2024-12-01-preview",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_DEPLOYMENT",
+    "value": "<maf-deployment>",
+    "slotSetting": false
+  },
+  {
+    "name": "OPENAI_API_KEY",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<openai-api-key-secret>/)",
+    "slotSetting": false
+  },
+  {
+    "name": "GROQ_API_KEY",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<groq-api-key-secret>/)",
+    "slotSetting": false
+  },
+  {
+    "name": "TRACE_LOGGING_ENABLED",
+    "value": "true",
+    "slotSetting": false
+  },
+  {
+    "name": "TRACE_LOG_MAX_CHARS",
+    "value": "16000",
+    "slotSetting": false
+  }
+]

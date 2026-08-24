@@ -7,22 +7,25 @@ Two **independent** FastMCP processes. FastAPI proxies to them over HTTP.
 ```text
 Gradio UI ──► FastAPI (:8000)
                  │
-                 ├── /api/v1/documents/*     (direct pipeline / jobs)
-                 ├── /api/v1/voice/*         (direct voice workflow)
+                 ├── /api/v1/documents/*     (jobs via MAF /invoke)
+                 ├── /api/v1/voice/*         (jobs via MAF /invoke)
                  ├── /api/v1/agents/*        (proxies to FastMCP tools)
-                 └── /api/ask ──► MAF (:8003) ──► chat MCP only
-                          │
-          ┌──────────────┴──────────────┐          (chat path)
-          ▼                             ▼                ▼
- document_process_mcp (:8001/mcp) voice_process_mcp   business MCP
- DocumentProcessMCP               VoiceProcessMCP     (BUSINESS_MCP_URL,
- (health, generate_document)      (:8002/mcp)          optional)
-          └──────── jobs only: MAF POST /invoke ───────┘
+                 └── /api/ask ──► MAF (:8003) ──► ask MCPs only
+                          │                      (business, optional chat)
+          ┌──────────────┴──────────────┐
+          ▼                             ▼
+ document_process_mcp (:8001/mcp) voice_process_mcp (:8002/mcp)
+ + optional metadata MCP          jobs: MAF POST /invoke
 ```
 
 Chat and jobs are segregated in `central-agentic-flow/config/mcp_registry.yml`:
 document and voice are `modes: [jobs]`, so the LLM never calls them; the chat
-path reaches only the business MCP (`modes: [ask]`).
+path reaches only ask-mode MCPs (`BUSINESS_MCP_URL` and optional
+`CHAT_MCP_END_POINT`). Metadata extraction is another optional jobs MCP
+(`METADATA_EXTRACTION_END_POINT`) — same pattern as document, not on `/ask`.
+
+To attach chat or metadata (config URLs only; you still build the FastMCP
+package): [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md).
 
 See [MAF_LOCAL.md](MAF_LOCAL.md) and [COMPONENTS.md](COMPONENTS.md).
 

@@ -110,6 +110,18 @@ Optional but recommended: attach an **Azure File share** at `/home/data` so jobs
 
 ## 4. Configure App Settings
 
+Example JSON (placeholders only, Portal Advanced-edit format) lives next to each component:
+
+| App | File |
+|---|---|
+| UI | [`UI/config/azure-webapp.settings.json`](../UI/config/azure-webapp.settings.json) |
+| ip_api | [`ip_api/config/azure-webapp.settings.json`](../ip_api/config/azure-webapp.settings.json) |
+| document MCP | [`document-processing-mcp/config/azure-webapp.settings.json`](../document-processing-mcp/config/azure-webapp.settings.json) |
+| voice MCP | [`voice_enable_mcp/config/azure-webapp.settings.json`](../voice_enable_mcp/config/azure-webapp.settings.json) |
+| MAF | [`central-agentic-flow/config/azure-webapp.settings.json`](../central-agentic-flow/config/azure-webapp.settings.json) |
+
+How to paste or apply with `az`: [DYNACONF.md](DYNACONF.md#apply-azure-web-app-json). Use a Key Vault **reference** for `AZURE_SQL_PASSWORD`, never a committed password.
+
 ### 4.1 API Web App (`doc-api-dev`)
 
 ```bash

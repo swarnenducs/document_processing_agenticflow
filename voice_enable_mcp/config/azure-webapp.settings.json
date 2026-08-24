@@ -1,0 +1,152 @@
+[
+  {
+    "name": "PYTHONUNBUFFERED",
+    "value": "1",
+    "slotSetting": false
+  },
+  {
+    "name": "WEBSITES_PORT",
+    "value": "8002",
+    "slotSetting": false
+  },
+  {
+    "name": "VOICE_MCP_HOST",
+    "value": "0.0.0.0",
+    "slotSetting": false
+  },
+  {
+    "name": "VOICE_MCP_PORT",
+    "value": "8002",
+    "slotSetting": false
+  },
+  {
+    "name": "VOICE_MCP_TRANSPORT",
+    "value": "http",
+    "slotSetting": false
+  },
+  {
+    "name": "STORAGE_BASE_PATH",
+    "value": "/home/data/storage",
+    "slotSetting": false
+  },
+  {
+    "name": "SQLITE_DATABASE_PATH",
+    "value": "/home/data/app.db",
+    "slotSetting": false
+  },
+  {
+    "name": "AUDIO_SUBDIRECTORY",
+    "value": "audio",
+    "slotSetting": false
+  },
+  {
+    "name": "MAX_UPLOAD_MB",
+    "value": "25",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_SERVER",
+    "value": "<sql-server>.database.windows.net",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_USER",
+    "value": "adminsql",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_DATABASE",
+    "value": "ipp-app-db",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_DIALECT",
+    "value": "pyodbc",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_ODBC_DRIVER",
+    "value": "ODBC Driver 18 for SQL Server",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_SQL_PASSWORD",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/azure-sql-password/)",
+    "slotSetting": false
+  },
+  {
+    "name": "LANGGRAPH_CHECKPOINT_BACKEND",
+    "value": "sql",
+    "slotSetting": false
+  },
+  {
+    "name": "REDIS_URL",
+    "value": "",
+    "slotSetting": false
+  },
+  {
+    "name": "MAPPER_MODEL_ID",
+    "value": "azure_openai:<mapper-deployment>",
+    "slotSetting": false
+  },
+  {
+    "name": "MAPPER_PROVIDER",
+    "value": "azure_openai",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_API_KEY",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<azure-openai-api-key-secret>/)",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_ENDPOINT",
+    "value": "https://<azure-openai-resource>.cognitiveservices.azure.com",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_API_VERSION",
+    "value": "2024-12-01-preview",
+    "slotSetting": false
+  },
+  {
+    "name": "AZURE_OPENAI_DEPLOYMENT",
+    "value": "<mapper-deployment>",
+    "slotSetting": false
+  },
+  {
+    "name": "OPENAI_API_KEY",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<openai-api-key-secret>/)",
+    "slotSetting": false
+  },
+  {
+    "name": "GROQ_API_KEY",
+    "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<groq-api-key-secret>/)",
+    "slotSetting": false
+  },
+  {
+    "name": "SPEECH_PROVIDER",
+    "value": "groq",
+    "slotSetting": false
+  },
+  {
+    "name": "GROQ_WHISPER_MODEL",
+    "value": "whisper-large-v3",
+    "slotSetting": false
+  },
+  {
+    "name": "OPENAI_WHISPER_MODEL",
+    "value": "whisper-1",
+    "slotSetting": false
+  },
+  {
+    "name": "TRACE_LOGGING_ENABLED",
+    "value": "true",
+    "slotSetting": false
+  },
+  {
+    "name": "TRACE_LOG_MAX_CHARS",
+    "value": "16000",
+    "slotSetting": false
+  }
+]

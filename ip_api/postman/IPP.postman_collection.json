@@ -1,0 +1,369 @@
+{
+  "info": {
+    "name": "IPP — API + MAF",
+    "description": "Gateway (ip_api :8000) and MAF (:8003). Select environment IPP local or IPP Azure. Document/voice MCP is not REST — use gateway or MAF POST /invoke. No API keys in this file.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "xid", "value": "" },
+    { "key": "sessionId", "value": "" },
+    { "key": "job_id", "value": "" },
+    { "key": "thread_id", "value": "" },
+    { "key": "contract_id", "value": "" },
+    { "key": "transcription_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Gateway",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/health"
+          }
+        },
+        {
+          "name": "Ask (chat via MAF)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What tools are available?\"\n}"
+            },
+            "url": "{{baseUrl}}/api/ask"
+          }
+        },
+        {
+          "name": "Ask health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/ask/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "Create job (template + JSON data)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.job_id) pm.collectionVariables.set('job_id', j.job_id);",
+                  "  if (j.xid) pm.collectionVariables.set('xid', j.xid);",
+                  "  if (j.session_id) pm.collectionVariables.set('sessionId', j.session_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "template",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select samples/templates/*.docx"
+                },
+                {
+                  "key": "data",
+                  "type": "text",
+                  "value": "{\"party\":\"AVC\"}",
+                  "description": "JSON object as a form string, not a file"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/documents/jobs"
+          }
+        },
+        {
+          "name": "List jobs",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/documents/jobs?limit=20"
+          }
+        },
+        {
+          "name": "Get job (wait)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}?wait=true&timeout=180"
+          }
+        },
+        {
+          "name": "Job accuracy",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/accuracy"
+          }
+        },
+        {
+          "name": "Download job docx",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/download"
+          }
+        },
+        {
+          "name": "Trace by xid",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/traces/{{xid}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice",
+      "item": [
+        {
+          "name": "Start contract (text)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.thread_id) pm.collectionVariables.set('thread_id', j.thread_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"please create contract with legal entity AVC contract reference number CR 1001\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/voice/contract"
+          }
+        },
+        {
+          "name": "Confirm contract",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.contract_id) pm.collectionVariables.set('contract_id', j.contract_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legal_entity\": \"AVC\",\n  \"contract_reference_number\": \"CR-1001\",\n  \"thread_id\": \"{{thread_id}}\",\n  \"user_text\": \"yes\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/voice/contract/confirm"
+          }
+        },
+        {
+          "name": "List contracts",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/voice/contracts?limit=20"
+          }
+        },
+        {
+          "name": "Get contract",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/voice/contracts/{{contract_id}}"
+          }
+        },
+        {
+          "name": "Download contract docx",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/voice/contracts/{{contract_id}}/download?format=docx"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agents via MAF",
+      "item": [
+        {
+          "name": "Agents health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/agents/health"
+          }
+        },
+        {
+          "name": "All tools",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/agents/tools"
+          }
+        },
+        {
+          "name": "Document generate (paths, not upload)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"template_path\": \"samples/templates/complete_contract_template_GPO.docx\",\n  \"data_path\": \"samples/data/gpo_agreement.json\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/document/generate"
+          }
+        },
+        {
+          "name": "Voice start (agent proxy)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"please create contract with legal entity AVC contract reference number CR 1001\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/voice/contract"
+          }
+        },
+        {
+          "name": "Voice confirm (agent proxy)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legal_entity\": \"AVC\",\n  \"contract_reference_number\": \"CR-1001\",\n  \"thread_id\": \"{{thread_id}}\",\n  \"user_text\": \"yes\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/voice/contract/confirm"
+          }
+        }
+      ]
+    },
+    {
+      "name": "MAF direct",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": "{{mafUrl}}/health"
+          }
+        },
+        {
+          "name": "Ask health",
+          "request": {
+            "method": "GET",
+            "url": "{{mafUrl}}/ask/health"
+          }
+        },
+        {
+          "name": "MCPs",
+          "request": {
+            "method": "GET",
+            "url": "{{mafUrl}}/mcps"
+          }
+        },
+        {
+          "name": "Tools",
+          "request": {
+            "method": "GET",
+            "url": "{{mafUrl}}/tools"
+          }
+        },
+        {
+          "name": "Invoke document generate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"server\": \"document\",\n  \"tool\": \"generate_document\",\n  \"arguments\": {\n    \"template_path\": \"samples/templates/complete_contract_template_GPO.docx\",\n    \"data_path\": \"samples/data/gpo_agreement.json\"\n  }\n}"
+            },
+            "url": "{{mafUrl}}/invoke"
+          }
+        },
+        {
+          "name": "Invoke voice start",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  const r = j.result || j;",
+                  "  if (r.thread_id) pm.collectionVariables.set('thread_id', r.thread_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"server\": \"voice\",\n  \"tool\": \"start_voice_contract\",\n  \"arguments\": {\n    \"transcript\": \"please create contract with legal entity AVC contract reference number CR 1001\"\n  }\n}"
+            },
+            "url": "{{mafUrl}}/invoke"
+          }
+        },
+        {
+          "name": "Ask",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What tools are available?\"\n}"
+            },
+            "url": "{{mafUrl}}/ask"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin templates",
+      "item": [
+        {
+          "name": "List templates",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Api-Key", "value": "{{adminKey}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/templates"
+          }
+        },
+        {
+          "name": "List folders",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Api-Key", "value": "{{adminKey}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/templates/folders"
+          }
+        }
+      ]
+    }
+  ]
+}

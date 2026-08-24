@@ -11,33 +11,41 @@ flowchart LR
     User[User / Foundry Playground] --> FA[Foundry hosted chat agent]
     FA --> Model[Foundry model deployment]
     FA --> TB[Foundry Toolbox]
-    TB --> BMCP[Business MCP /mcp]
+    TB --> BMCP[Business / Chat MCP /mcp]
     API[ip_api Web App] --> MAF[MAF FastAPI Web App /invoke]
     MAF --> DMCP[Document MCP /mcp]
     MAF --> VMCP[Voice MCP /mcp]
+    MAF --> MMCP[Metadata MCP /mcp]
 ```
 
 Two paths, no overlap:
 
 | Path | Endpoint | MCPs reachable | Registry mode |
 |---|---|---|---|
-| Chat | Foundry `/responses`, Web App `POST /ask` | business only | `modes: [ask]` |
-| Jobs | Web App `POST /invoke` | document, voice | `modes: [jobs]` |
+| Chat | Foundry `/responses`, Web App `POST /ask` | business, optional chat | `modes: [ask]` |
+| Jobs | Web App `POST /invoke` | document, voice, optional metadata | `modes: [jobs]` |
 
-The LLM can never call document generation or voice contracts: those servers are
-declared `modes: [jobs]` in `central-agentic-flow/config/mcp_registry.yml`, so
-they are not passed to the model as tools on either chat host. Job submission
-stays deterministic — the caller names the server and tool explicitly.
+The LLM can never call document generation, voice contracts, or metadata
+extraction: those servers are declared `modes: [jobs]` in
+`central-agentic-flow/config/mcp_registry.yml`, so they are not passed to the
+model as tools on either chat host. Job submission stays deterministic — the
+caller names the server and tool explicitly.
 
 Do not configure `ip_api.MAF_BASE_URL` with the Foundry Responses endpoint; it
 serves chat only and has no `/invoke`.
 
-## Business MCP is optional
+## Optional ask-mode MCPs
 
-The business MCP is not part of this repo. It activates only when
-`BUSINESS_MCP_URL` is set for the Web App, or when `TOOLBOX_ENDPOINT` is set for
-the Foundry agent. Until then both chat hosts start normally and answer without
-tools, and they are instructed to redirect document and voice requests to the API.
+Business (`BUSINESS_MCP_URL`) and chat (`CHAT_MCP_END_POINT` / `CHAT_MCP_URL`)
+are siblings. Either or both activate when the URL is set on the Web App, or
+when `TOOLBOX_ENDPOINT` is set for the Foundry agent (add each ask MCP in
+`toolbox.yaml`). Until then both chat hosts start normally and answer without
+tools, and they are instructed to redirect document, voice, and metadata
+requests to the API.
+
+Metadata (`METADATA_EXTRACTION_END_POINT`) is jobs-only. Do **not** put it on
+the Foundry Toolbox. How to attach both slots:
+[ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md).
 
 ## Deployment files
 

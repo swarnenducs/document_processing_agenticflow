@@ -13,12 +13,19 @@ All SQL goes through SQLAlchemy 2.x — no component uses `sqlite3`, `pyodbc`, o
 
 ## Run everything locally
 
+In the **gitignored** `.env`, comment Azure SQL and Blob so `python ./run_all_components.py` uses SQLite + local files. Exact keys: [ENVIRONMENT.md](ENVIRONMENT.md#run-locally-sqlite--local-files).
+
 ```bash
 FILE_STORAGE_BACKEND=local
 STORAGE_BASE_PATH=./data/storage
 SQLITE_DATABASE_PATH=./data/app.db
 ADMIN_API_KEY=local-dev-key
-# leave AZURE_SQL_* and AZURE_STORAGE_* unset
+# comment/unset:
+#   SQLALCHEMY_DATABASE_URL
+#   AZURE_SQL_SERVER  AZURE_SQL_PASSWORD
+#   AZURE_KEY_VAULT_NAME  AZURE_KEY_VAULT_URL
+#   AZURE_STORAGE_CONNECTION_STRING  AZURE_STORAGE_ACCOUNT_NAME
+#   AZURE_STORAGE_ACCOUNT_KEY  AZURE_STORAGE_SAS_TOKEN  AZURE_STORAGE_SAS_URL
 ```
 
 Verify with the API health probe:
@@ -41,8 +48,9 @@ curl -s localhost:8000/api/v1/health | jq '{storage_backend, sqlite_database_pat
 
 ### Local: SQL password from Key Vault
 
-Leave `AZURE_SQL_PASSWORD` empty and set the vault. `python run_all_components.py`
-fetches the secret with Azure CLI (`az login` first):
+This is the **local Azure SQL** path, not SQLite. Leave `AZURE_SQL_PASSWORD` empty and set the vault. `python run_all_components.py` fetches the secret with Azure CLI (`az login` first). If you instead want SQLite, **unset the vault name/URL and `AZURE_SQL_SERVER`** — otherwise the launcher injects the password and you stay on Azure SQL.
+
+On **Azure Web Apps**, do not use this script. Set `AZURE_SQL_PASSWORD` to a Key Vault **reference** (see [DYNACONF.md](DYNACONF.md)). Paste the example JSON from each component’s `config/azure-webapp.settings.json`.
 
 ```bash
 AZURE_SQL_SERVER=YOUR_SQL.database.windows.net
@@ -208,11 +216,11 @@ The API copies the stored template into the job directory and the pipeline runs
 unchanged. Sending both an upload and a stored-template name is a `400` — pick
 one. Sending neither is also a `400`.
 
-## Environment reference
-
-Full catalog (every variable, default, **which process**, what it does), including `DEBUG_FLOW`: [ENVIRONMENT.md](ENVIRONMENT.md).
+Environment reference: [ENVIRONMENT.md](ENVIRONMENT.md). Dynaconf later / Web App JSON: [DYNACONF.md](DYNACONF.md).
 
 Storage-related keys:
+
+| Variable | Default | Notes |
 |---|---|---|
 | `STORAGE_BASE_PATH` | `./data/storage` | Root for jobs, audio, templates |
 | `SQLITE_DATABASE_PATH` | `{STORAGE_BASE_PATH}/../app.db` | Used unless Azure SQL is configured |
@@ -222,9 +230,9 @@ Storage-related keys:
 | `FILE_STORAGE_BACKEND` | auto | `local` or `azure_blob` |
 | `SQLALCHEMY_DATABASE_URL` | *(unset)* | Full override, wins over `AZURE_SQL_*` |
 | `AZURE_SQL_DIALECT` | `pyodbc` | `pyodbc` or `pymssql` |
-| `AZURE_KEY_VAULT_NAME` | *(unset)* | Local only: fetch `AZURE_SQL_PASSWORD` via `az` |
-| `AZURE_KEY_VAULT_URL` | *(unset)* | Alternate to vault name (`https://NAME.vault.azure.net/`) |
-| `AZURE_SQL_PASSWORD_SECRET_NAME` | `azure-sql-password` | Key Vault secret name |
+| `AZURE_KEY_VAULT_NAME` | *(unset)* | Local `az` loader only: fetch `AZURE_SQL_PASSWORD` |
+| `AZURE_KEY_VAULT_URL` | *(unset)* | Alternate to vault name (`https://<vault-name>.vault.azure.net/`) |
+| `AZURE_SQL_PASSWORD_SECRET_NAME` | `azure-sql-password` | Key Vault secret name (local script + Azure reference) |
 | `DOCUMENT_MAX_RETRIES` | `1` | Judge retry cap (0–3). API form `max_retries` overrides |
 | `DOCUMENT_VALIDATION_THRESHOLD` | `0.7` | Judge accuracy bar 0–1 (`DOCUMENT_ACCURACY_THRESHOLD` alias) |
 | `DOCUMENT_LLM_OPTIMIZATION_ENABLED` | `false` | Turn on mapper optimisation for all jobs unless the request sets `optimized_flow=false` |

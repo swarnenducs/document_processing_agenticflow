@@ -8,10 +8,25 @@ from typing import Any
 import httpx
 
 
+_DEFAULT_CENTRAL_AGENT = "http://127.0.0.1:8003"
+
+
+def central_agent_endpoint() -> str:
+    """API → MAF base URL (no ``/invoke`` suffix).
+
+    Resolution order: ``CENTRAL_AGENT_END_POINT``, ``MAF_BASE_URL``, ``MAF_URL``,
+    then local ``http://127.0.0.1:8003``. Do not hardcode Azure hostnames here.
+    """
+    for name in ("CENTRAL_AGENT_END_POINT", "MAF_BASE_URL", "MAF_URL"):
+        value = (os.getenv(name) or "").strip()
+        if value:
+            return value.rstrip("/")
+    return _DEFAULT_CENTRAL_AGENT
+
+
 def maf_base_url() -> str:
-    return (os.getenv("MAF_BASE_URL") or os.getenv("MAF_URL") or "http://127.0.0.1:8003").rstrip(
-        "/"
-    )
+    """Alias of :func:`central_agent_endpoint` (health payload / existing callers)."""
+    return central_agent_endpoint()
 
 
 def _timeout() -> float:

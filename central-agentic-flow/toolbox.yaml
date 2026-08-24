@@ -1,9 +1,10 @@
 # Foundry Toolbox consumed by foundry_main.py.
 #
-# Chat only. Document generation and voice contracts stay on the Web App
-# `POST /invoke` job path and must NOT be added here.
+# Chat only. Document generation, voice contracts, and metadata extraction
+# stay on the Web App `POST /invoke` job path and must NOT be added here.
 #
-# Replace the URL with the business MCP HTTPS /mcp endpoint. Do not use localhost.
+# Replace the URL with the business MCP HTTPS /mcp endpoint. Optional: add a
+# second `type: mcp` entry for chat (`CHAT_MCP_END_POINT`). Do not use localhost.
 #
 # Create:
 #   azd ai toolbox create agent-tools --from-file ./toolbox.yaml

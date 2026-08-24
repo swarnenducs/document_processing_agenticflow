@@ -16,6 +16,8 @@ Default hosts:
 
 Interactive OpenAPI: `http://127.0.0.1:8000/docs`.
 
+Postman collection (gateway + MAF): [POSTMAN.md](POSTMAN.md).
+
 **Counts**
 
 | Surface | Count |

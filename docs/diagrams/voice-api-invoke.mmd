@@ -1,0 +1,65 @@
+%% Step-by-step invoke path (not an architecture box diagram).
+%% draw.io: Arrange > Insert > Advanced > Mermaid
+
+%% ========== TURN 1 — start (typed text) ==========
+sequenceDiagram
+  autonumber
+  participant UI as Gradio UI :7860
+  participant API as ip_api :8000
+  participant MAF as MAF :8003
+  participant MCP as voice_process_mcp :8002
+  participant LG as LangGraph
+
+  UI->>API: POST /api/v1/voice/contract<br/>{"transcript":"create contract AVC CR 1001"}
+  Note over API: voice_contract_from_text
+  API->>MAF: POST /invoke<br/>{"server":"voice","tool":"start_voice_contract","arguments":{transcript, auto_create}}
+  Note over MAF: invoke_mcp_tool (jobs path, not /ask)
+  MAF->>MCP: MCP tool start_voice_contract
+  MCP->>LG: start_voice_contract_agent
+  LG->>LG: parse_intent
+  LG->>LG: fetch_legal_entity
+  LG->>LG: fetch_pricelist
+  LG->>LG: await_confirmation interrupt()
+  LG-->>MCP: status=needs_confirmation + thread_id
+  MCP-->>MAF: VoiceContractMcpResponse
+  MAF-->>API: same JSON
+  API-->>UI: 200 VoiceContractResponse<br/>needs_confirmation + thread_id
+
+%% ========== TURN 2 — confirm ==========
+sequenceDiagram
+  autonumber
+  participant UI as Gradio UI :7860
+  participant API as ip_api :8000
+  participant MAF as MAF :8003
+  participant MCP as voice_process_mcp :8002
+  participant LG as LangGraph
+
+  UI->>API: POST /api/v1/voice/contract/confirm<br/>{legal_entity, contract_reference_number, thread_id, user_text:"yes"}
+  Note over API: voice_contract_confirm
+  API->>MAF: POST /invoke<br/>{"server":"voice","tool":"confirm_voice_contract","arguments":{...}}
+  MAF->>MCP: MCP tool confirm_voice_contract
+  MCP->>LG: resume_voice_contract_agent(Command resume)
+  LG->>LG: generate_contract
+  LG-->>MCP: status=completed
+  MCP->>MCP: save_voice_contract SQL
+  MCP-->>MAF: ok + file paths
+  MAF-->>API: same JSON
+  API-->>UI: 200 completed + download paths
+
+%% ========== AUDIO variant (only extra steps before start) ==========
+sequenceDiagram
+  autonumber
+  participant UI as Gradio UI :7860
+  participant API as ip_api :8000
+  participant STT as Speech provider
+  participant MAF as MAF :8003
+  participant MCP as voice_process_mcp :8002
+
+  UI->>API: POST /api/v1/voice/contract/from-audio<br/>multipart audio
+  API->>STT: transcribe_audio (Groq/OpenAI)
+  STT-->>API: transcript text
+  API->>MAF: POST /invoke start_voice_contract
+  MAF->>MCP: start_voice_contract
+  MCP-->>MAF: needs_confirmation
+  MAF-->>API: JSON
+  API-->>UI: same as typed start

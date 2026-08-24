@@ -4,7 +4,83 @@ Copy [`.env.example`](../.env.example) to `.env` at the repo root for `python ru
 
 **Never commit `.env`**, Azure keys, SAS tokens, Foundry endpoints, or toolbox URLs.
 
-Related: [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md), [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md), [function-by-function-debug.md](interview-prep/flow-understanding/function-by-function-debug.md).
+Related: [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md), [DYNACONF.md](DYNACONF.md), [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md), [function-by-function-debug.md](interview-prep/flow-understanding/function-by-function-debug.md).
+
+---
+
+## Run locally (SQLite + local files)
+
+The SQL/Blob switch is **env-only** (no code change). `SQLALCHEMY_DATABASE_URL` wins; else `AZURE_SQL_SERVER` **and** `AZURE_SQL_PASSWORD` select Azure SQL; else SQLite. `python run_all_components.py` will also **fetch** `AZURE_SQL_PASSWORD` from Key Vault when `AZURE_KEY_VAULT_NAME` or `AZURE_KEY_VAULT_URL` is set and the password is empty — so a leftover vault name plus `AZURE_SQL_SERVER` still opens Azure SQL.
+
+In the **gitignored** root `.env` (do not commit it), comment or delete:
+
+| Unset / comment | Why |
+|---|---|
+| `SQLALCHEMY_DATABASE_URL` | Explicit URL always wins |
+| `AZURE_SQL_SERVER` | Together with a password, selects Azure SQL |
+| `AZURE_SQL_PASSWORD` | Together with the server, selects Azure SQL |
+| `AZURE_KEY_VAULT_NAME` | Local launcher would inject the SQL password |
+| `AZURE_KEY_VAULT_URL` | Alternate vault locator for that loader |
+| `AZURE_STORAGE_CONNECTION_STRING` | Blob creds auto-select `azure_blob` if backend is unset |
+| `AZURE_STORAGE_ACCOUNT_NAME` | with key or SAS → Blob |
+| `AZURE_STORAGE_ACCOUNT_KEY` | Blob account key |
+| `AZURE_STORAGE_SAS_TOKEN` | Blob SAS |
+| `AZURE_STORAGE_SAS_URL` | Blob SAS URL |
+
+Keep (or set):
+
+```bash
+FILE_STORAGE_BACKEND=local
+STORAGE_BASE_PATH=./data/storage
+SQLITE_DATABASE_PATH=./data/app.db
+```
+
+`AZURE_SQL_USER` / `AZURE_SQL_DATABASE` / dialect / ODBC driver alone do **not** select Azure SQL. Restart `python ./run_all_components.py` after editing `.env`.
+
+Local **Azure SQL** (not SQLite): leave `AZURE_SQL_PASSWORD` empty, set server + `AZURE_KEY_VAULT_NAME`, `az login`. See [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md). Dynaconf later overlays the same keys: [DYNACONF.md](DYNACONF.md).
+
+---
+
+## Azure Web App Application settings (example JSON)
+
+Paste into Portal **Advanced edit**, or flatten to `NAME=VALUE` for `az webapp config appsettings set`. Placeholders only — never commit real passwords or vault URIs. Apply steps: [DYNACONF.md](DYNACONF.md#apply-azure-web-app-json).
+
+| Component | File |
+|---|---|
+| UI `:7860` | [`UI/config/azure-webapp.settings.json`](../UI/config/azure-webapp.settings.json) |
+| ip_api `:8000` | [`ip_api/config/azure-webapp.settings.json`](../ip_api/config/azure-webapp.settings.json) |
+| document-processing-mcp `:8001` | [`document-processing-mcp/config/azure-webapp.settings.json`](../document-processing-mcp/config/azure-webapp.settings.json) |
+| voice_enable_mcp `:8002` | [`voice_enable_mcp/config/azure-webapp.settings.json`](../voice_enable_mcp/config/azure-webapp.settings.json) |
+| central-agentic-flow `:8003` | [`central-agentic-flow/config/azure-webapp.settings.json`](../central-agentic-flow/config/azure-webapp.settings.json) |
+
+On Azure, `AZURE_SQL_PASSWORD` should be a Key Vault **reference** (`@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/azure-sql-password/)`), not a committed secret. `AZURE_KEY_VAULT_NAME` is for the **local** `az` loader only.
+
+---
+
+## Inter-component URLs (fill per environment)
+
+Jobs stay `ip_api` → `POST {central}/invoke` with `{server, tool, arguments}`. Only the **base URL** is config — not the hop. Python never hardcodes `azurewebsites.net`; local defaults stay `127.0.0.1`. Fill the preferred name (or keep the old alias in an existing `.env`).
+
+| Hop | Preferred env | Aliases (same value) | Local | Azure Application setting |
+|---|---|---|---|---|
+| API → MAF | `CENTRAL_AGENT_END_POINT` | `MAF_BASE_URL`, `MAF_URL` | `http://127.0.0.1:8003` | `https://<maf-app>.azurewebsites.net` (no `/invoke`) |
+| MAF → document MCP | `TEMPLATE_PROCESSING_END_POINT` | `DOCUMENT_MCP_URL` | `http://127.0.0.1:8001/mcp` | `https://<document-mcp-app>.azurewebsites.net/mcp` |
+| MAF → voice MCP | `VOICE_PROCESSING_END_POINT` | `VOICE_MCP_URL` | `http://127.0.0.1:8002/mcp` | `https://<voice-mcp-app>.azurewebsites.net/mcp` |
+| MAF → business MCP (optional chat) | `BUSINESS_MCP_URL` | — | unset | HTTPS `/mcp` if you have an ask-mode MCP |
+| MAF → chat MCP (optional ask) | `CHAT_MCP_END_POINT` | `CHAT_MCP_URL` | unset | `https://<chat-mcp-app>.azurewebsites.net/mcp` |
+| MAF → metadata MCP (optional jobs) | `METADATA_EXTRACTION_END_POINT` | `METADATA_MCP_URL` | unset | `https://<metadata-mcp-app>.azurewebsites.net/mcp` |
+
+Resolution (first non-empty wins):
+
+1. **API → MAF:** `CENTRAL_AGENT_END_POINT` → `MAF_BASE_URL` → `MAF_URL` → `http://127.0.0.1:8003`
+2. **MAF → document:** `TEMPLATE_PROCESSING_END_POINT` → `DOCUMENT_MCP_URL` → YAML default `http://127.0.0.1:8001/mcp`
+3. **MAF → voice:** `VOICE_PROCESSING_END_POINT` → `VOICE_MCP_URL` → YAML default `http://127.0.0.1:8002/mcp`
+4. **MAF → chat (optional):** `CHAT_MCP_END_POINT` → `CHAT_MCP_URL` → absent
+5. **MAF → metadata (optional):** `METADATA_EXTRACTION_END_POINT` → `METADATA_MCP_URL` → absent
+
+Chat and business are siblings (both `modes: [ask]`). Metadata is jobs-only, like document. How to add the packages: [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md).
+
+`ip_api` also keeps `DOCUMENT_MCP_URL` / `VOICE_MCP_URL` for health/catalog only; document and voice **jobs** still go through MAF `/invoke`. Dynaconf later overlays the same keys (`envvar_prefix=False`). See [DYNACONF.md](DYNACONF.md) and [AZURE_WEBAPP_SETTINGS.md](AZURE_WEBAPP_SETTINGS.md).
 
 ---
 
@@ -126,7 +202,9 @@ Used by whichever process actually calls that provider. UI never needs these.
 | `API_HOST` | `0.0.0.0` | ip_api | Bind address |
 | `API_PORT` | `8000` | ip_api | Bind port |
 | `ADMIN_API_KEY` | empty (admin off) | ip_api | `X-Admin-Api-Key` for `/api/v1/admin/templates` |
-| `MAF_BASE_URL` | `http://127.0.0.1:8003` | ip_api | MAF URL for `/api/ask` and `/invoke` |
+| `CENTRAL_AGENT_END_POINT` | `http://127.0.0.1:8003` | ip_api | API → MAF base URL for `/api/ask` and `POST {base}/invoke` (no `/invoke` suffix). Wins over `MAF_BASE_URL` / `MAF_URL`. |
+| `MAF_BASE_URL` | `http://127.0.0.1:8003` | ip_api | Alias of `CENTRAL_AGENT_END_POINT` |
+| `MAF_URL` | unset | ip_api | Older alias of `CENTRAL_AGENT_END_POINT` |
 | `MAF_PROXY_TIMEOUT` | `320` | ip_api | Seconds for the MAF HTTP proxy |
 | `DOCUMENT_MCP_URL` | `http://127.0.0.1:8001/mcp` | ip_api | Document MCP (health / catalog; jobs go MAF → MCP) |
 | `VOICE_MCP_URL` | `http://127.0.0.1:8002/mcp` | ip_api | Voice MCP URL |
@@ -215,9 +293,15 @@ When **optimised flow is on** and the request omits retries/threshold, values co
 | `MAF_INSTRUCTIONS_FILE` | prompts file | MAF | Path to orchestrator markdown |
 | `MAF_PROMPTS_DIR` | `./prompts` | MAF | Prompt folder |
 | `MAF_MCP_REGISTRY_FILE` | `./config/mcp_registry.yml` | MAF | MCP catalog YAML |
-| `DOCUMENT_MCP_URL` | `http://127.0.0.1:8001/mcp` | MAF | Document MCP (jobs-only in the registry) |
-| `VOICE_MCP_URL` | `http://127.0.0.1:8002/mcp` | MAF | Voice MCP (jobs-only in the registry) |
+| `TEMPLATE_PROCESSING_END_POINT` | `http://127.0.0.1:8001/mcp` | MAF | MAF → document MCP (jobs-only). Wins over `DOCUMENT_MCP_URL`. |
+| `DOCUMENT_MCP_URL` | `http://127.0.0.1:8001/mcp` | MAF | Alias of `TEMPLATE_PROCESSING_END_POINT` |
+| `VOICE_PROCESSING_END_POINT` | `http://127.0.0.1:8002/mcp` | MAF | MAF → voice MCP (jobs-only). Wins over `VOICE_MCP_URL`. |
+| `VOICE_MCP_URL` | `http://127.0.0.1:8002/mcp` | MAF | Alias of `VOICE_PROCESSING_END_POINT` |
 | `BUSINESS_MCP_URL` | unset | MAF | Optional chat-mode business MCP |
+| `CHAT_MCP_END_POINT` | unset | MAF | Optional ask-mode chat MCP (sibling of business). Wins over `CHAT_MCP_URL`. |
+| `CHAT_MCP_URL` | unset | MAF | Alias of `CHAT_MCP_END_POINT` |
+| `METADATA_EXTRACTION_END_POINT` | unset | MAF | Optional jobs-mode metadata MCP. Wins over `METADATA_MCP_URL`. |
+| `METADATA_MCP_URL` | unset | MAF | Alias of `METADATA_EXTRACTION_END_POINT` |
 | `MAF_EXTRA_MCPS` | unset | MAF | Extra MCPs, `name=url,name=url` |
 | `MAF_MCP_FABRIC_DESCRIPTION` | unset | MAF | Description for a Fabric extra MCP |
 | `FABRIC_SQL_AGENT_URL` | unset | MAF | Fabric SQL agent URL |
@@ -239,7 +323,8 @@ When **optimised flow is on** and the request omits retries/threshold, values co
 | Use the cheaper mapper cascade | `DOCUMENT_LLM_OPTIMIZATION_ENABLED=true` | ip_api **and** document-mcp (or root `.env`) |
 | Point at a custom optimisation JSON | `DOCUMENT_LLM_OPTIMIZATION_CONFIG` | document-mcp |
 | Change default judge retries | `DOCUMENT_MAX_RETRIES` | ip_api + document-mcp |
-| Talk to Azure SQL | `AZURE_SQL_*` (password via vault locally) | all SQL processes |
+| Talk to Azure SQL | `AZURE_SQL_*` (password via vault locally, Key Vault **reference** on Web Apps) | all SQL processes |
+| Stay on local SQLite | unset `SQLALCHEMY_DATABASE_URL`, `AZURE_SQL_SERVER`, `AZURE_SQL_PASSWORD`, `AZURE_KEY_VAULT_NAME`, `AZURE_KEY_VAULT_URL` | all SQL processes |
 | Store .docx in Blob | `FILE_STORAGE_BACKEND=azure_blob` + storage creds | ip_api + document-mcp |
 | Enable admin templates | `ADMIN_API_KEY` | ip_api |
 | Point the UI at another API | `API_BASE_URL` | UI |

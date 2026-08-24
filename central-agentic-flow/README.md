@@ -10,7 +10,7 @@ cp .env.example .env
 # or: python run.py
 ```
 
-Set `DOCUMENT_MCP_URL` and `VOICE_MCP_URL` (env overrides `config/mcp_registry.yml`).
+Set `TEMPLATE_PROCESSING_END_POINT` (alias `DOCUMENT_MCP_URL`) and `VOICE_PROCESSING_END_POINT` (alias `VOICE_MCP_URL`); env overrides `config/mcp_registry.yml`.
 
 ## Chat and jobs are segregated
 
@@ -18,12 +18,13 @@ Set `DOCUMENT_MCP_URL` and `VOICE_MCP_URL` (env overrides `config/mcp_registry.y
 
 | Path | Endpoint | MCPs | Mode |
 |---|---|---|---|
-| Chat | `POST /ask`, Foundry `/responses` | business (`BUSINESS_MCP_URL`) | `[ask]` |
-| Jobs | `POST /invoke` | document, voice | `[jobs]` |
+| Chat | `POST /ask`, Foundry `/responses` | business (`BUSINESS_MCP_URL`), optional chat (`CHAT_MCP_END_POINT`) | `[ask]` |
+| Jobs | `POST /invoke` | document, voice, optional metadata (`METADATA_EXTRACTION_END_POINT`) | `[jobs]` |
 
-The LLM is never given the document or voice tools. `BUSINESS_MCP_URL` is
-optional: when unset, chat answers without tools and redirects document/voice
-requests to the API.
+The LLM is never given the document, voice, or metadata tools. Ask-mode URLs
+are optional: when unset, chat answers without tools and redirects job
+requests to the API. How to attach chat/metadata:
+[docs/ADD_MAF_MCP_AGENTS.md](../docs/ADD_MAF_MCP_AGENTS.md).
 
 ## Microsoft Foundry hosted chat agent
 

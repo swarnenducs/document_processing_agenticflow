@@ -1,0 +1,27 @@
+[
+  {
+    "name": "PYTHONUNBUFFERED",
+    "value": "1",
+    "slotSetting": false
+  },
+  {
+    "name": "WEBSITES_PORT",
+    "value": "7860",
+    "slotSetting": false
+  },
+  {
+    "name": "GRADIO_HOST",
+    "value": "0.0.0.0",
+    "slotSetting": false
+  },
+  {
+    "name": "GRADIO_PORT",
+    "value": "7860",
+    "slotSetting": false
+  },
+  {
+    "name": "API_BASE_URL",
+    "value": "https://<api-app>.azurewebsites.net",
+    "slotSetting": false
+  }
+]

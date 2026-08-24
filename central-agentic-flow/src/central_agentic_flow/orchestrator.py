@@ -248,7 +248,8 @@ async def ask_maf(message: str, *, instructions: str | None = None) -> MafAskRes
         system_instructions=system_raw,
         message=text,
     )
-    # Chat runs tool-less until an ask-mode MCP (e.g. BUSINESS_MCP_URL) is configured.
+    # Chat runs tool-less until an ask-mode MCP (e.g. BUSINESS_MCP_URL or
+    # CHAT_MCP_END_POINT) is configured.
     # Document and voice are jobs-only and must not be reachable from chat.
     registry = ask_mcp_servers()
 

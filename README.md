@@ -3,6 +3,7 @@
 LangGraph workspace (managed with **UV**) that turns a Word `.docx` template + JSON data into a new Word document while preserving the original Word XML styles — with **tool-wrapped steps**, **generator confidence scores**, and **two separate LLMs**.
 
 **Docs index:** [docs/INDEX.md](docs/INDEX.md) (every document with a short description).  
+**Postman:** [docs/POSTMAN.md](docs/POSTMAN.md).  
 **Docs landing:** [docs/README.md](docs/README.md).  
 **Interview / architecture walkthrough:** see [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md).  
 **LangGraph interview prep (state, edges, dynamic models):** see [docs/INTERVIEW_LANGGRAPH.md](docs/INTERVIEW_LANGGRAPH.md).  
@@ -159,7 +160,7 @@ See `.env.example` for the copy-paste template. Tables of **what each variable d
 | `voice_enable_mcp/.env.example` | Voice MCP — SQLite or Azure SQL; optional Redis HITL |
 | `central-agentic-flow/.env.example` | MAF — SQLite or Azure SQL (traces) |
 
-Storage default is **SQLite + local files**. Uncomment the Azure SQL / Blob blocks for cloud. To take the SQL password from Key Vault locally, set `AZURE_KEY_VAULT_NAME` and leave `AZURE_SQL_PASSWORD` empty, then `az login`. `python run_all_components.py` and `.\run.ps1` fetch it. For a one-off session: `source scripts/load_sql_password_from_keyvault.sh` (macOS/Linux) or `. .\scripts\load_sql_password_from_keyvault.ps1` (Windows PowerShell). Voice HITL checkpoints use that same SQL unless `LANGGRAPH_CHECKPOINT_BACKEND=redis`.
+Storage default is **SQLite + local files**. In your gitignored `.env`, comment `SQLALCHEMY_DATABASE_URL`, `AZURE_SQL_SERVER`, `AZURE_SQL_PASSWORD`, `AZURE_KEY_VAULT_NAME` / `AZURE_KEY_VAULT_URL`, and `AZURE_STORAGE_*`, and keep `FILE_STORAGE_BACKEND=local`. Uncomment the Azure SQL / Blob blocks for cloud. To take the SQL password from Key Vault *locally* (Azure SQL, not SQLite), set `AZURE_KEY_VAULT_NAME` and leave `AZURE_SQL_PASSWORD` empty, then `az login`. `python run_all_components.py` and `.\run.ps1` fetch it. For a one-off session: `source scripts/load_sql_password_from_keyvault.sh` (macOS/Linux) or `. .\scripts\load_sql_password_from_keyvault.ps1` (Windows PowerShell). On Azure Web Apps use Key Vault **references** instead ([docs/DYNACONF.md](docs/DYNACONF.md)). Voice HITL checkpoints use that same SQL unless `LANGGRAPH_CHECKPOINT_BACKEND=redis`.
 
 ## Sample files
 

@@ -104,4 +104,4 @@ curl -s http://127.0.0.1:8000/api/ask \
   -d '{"message":"Call document_health and voice_health and summarize"}'
 ```
 
-See also: [README.md](README.md) · [../maf-basic/06-tool-calling-and-hallucination.md](../maf-basic/06-tool-calling-and-hallucination.md)
+See also: [README.md](README.md) · [../maf-basic/06-tool-calling-and-hallucination.md](../maf-basic/06-tool-calling-and-hallucination.md) · [../../ADD_MAF_MCP_AGENTS.md](../../ADD_MAF_MCP_AGENTS.md) (optional chat + metadata slots already in the registry)

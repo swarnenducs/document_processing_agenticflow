@@ -44,4 +44,6 @@ cp .env.example .env
 ./run.sh
 ```
 
-Wire them with URLs only: `DOCUMENT_MCP_URL`, `VOICE_MCP_URL`, `MAF_BASE_URL`, `API_BASE_URL`.
+Wire them with URLs only: `CENTRAL_AGENT_END_POINT` (alias `MAF_BASE_URL`), `TEMPLATE_PROCESSING_END_POINT` / `VOICE_PROCESSING_END_POINT` (aliases `DOCUMENT_MCP_URL` / `VOICE_MCP_URL`), `API_BASE_URL`.
+
+Postman (gateway + MAF, not Gradio/MCP JSON-RPC): [POSTMAN.md](POSTMAN.md). Split `ip_api` repos can use [ip_api/postman/](../ip_api/postman/).

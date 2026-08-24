@@ -9,6 +9,10 @@
 # Business question answering is a separate ask-only MCP.
 #
 # URLs support ${ENV} and ${ENV:-default}.
+# Document: TEMPLATE_PROCESSING_END_POINT (alias DOCUMENT_MCP_URL).
+# Voice: VOICE_PROCESSING_END_POINT (alias VOICE_MCP_URL).
+# Optional ask: BUSINESS_MCP_URL; CHAT_MCP_END_POINT (alias CHAT_MCP_URL).
+# Optional jobs: METADATA_EXTRACTION_END_POINT (alias METADATA_MCP_URL).
 # Optional: instructions_file (markdown next to this file or under prompts/).
 
 orchestrator:
@@ -19,7 +23,7 @@ servers:
     aliases: [document, template-auto-creation]
     mcp: contract_autocreation_mcp
     enabled: true
-    url: "${DOCUMENT_MCP_URL:-http://127.0.0.1:8001/mcp}"
+    url: "${TEMPLATE_PROCESSING_END_POINT:-http://127.0.0.1:8001/mcp}"
     prefix: document
     description: Template auto-creation — fill a Word .docx from JSON (LangGraph).
     invoke:
@@ -47,7 +51,7 @@ servers:
     aliases: [voice]
     mcp: voice_process_mcp
     enabled: true
-    url: "${VOICE_MCP_URL:-http://127.0.0.1:8002/mcp}"
+    url: "${VOICE_PROCESSING_END_POINT:-http://127.0.0.1:8002/mcp}"
     prefix: voice
     description: Voice agent — spoken/typed create-contract with human-in-the-loop confirm.
     invoke:
@@ -91,6 +95,52 @@ servers:
       Answer business questions with the business_* tools; never invent a business answer.
       Document generation and voice contracts are not available here — they run as
       API jobs. If asked for one, say it must be submitted through the API.
+
+  # Optional chat MCP for /ask and the Foundry hosted agent. Sibling of
+  # business-agent — both can be enabled. Activates only when
+  # CHAT_MCP_END_POINT (alias CHAT_MCP_URL) is set.
+  - name: chat-agent
+    aliases: [chat]
+    mcp: chat_process_mcp
+    enabled: true
+    url: "${CHAT_MCP_END_POINT:-}"
+    prefix: chat
+    description: General chat MCP — conversational tools for /ask (not jobs).
+    invoke:
+      modes: [ask]
+    instructions: |
+      Answer with the chat_* tools; never invent a chat-tool result.
+      Document generation, metadata extraction, and voice contracts are not
+      available here — they run as API jobs. If asked for one, say it must
+      be submitted through the API.
+
+  # Optional metadata extraction MCP for POST /invoke jobs. Activates only when
+  # METADATA_EXTRACTION_END_POINT (alias METADATA_MCP_URL) is set.
+  # Foundry Toolbox is chat-only — do not attach this server there.
+  - name: metadata-agent
+    aliases: [metadata]
+    mcp: metadata_process_mcp
+    enabled: true
+    url: "${METADATA_EXTRACTION_END_POINT:-}"
+    prefix: metadata
+    description: Metadata extraction — pull structured metadata from a document (jobs).
+    invoke:
+      modes: [jobs]
+      default_tool: extract_metadata
+      tools:
+        health:
+          when: "Ping metadata MCP liveness."
+        extract_metadata:
+          when: >
+            Extract structured metadata from a document. Use for metadata-extraction
+            jobs once this MCP is deployed.
+          request:
+            required: [source_path]
+            optional: [job_id, xid, schema]
+    instructions: |
+      Call metadata_extract_metadata with source_path. Pass job_id when a job
+      already exists. This server is jobs-only — never expose it on /ask or
+      a Foundry Toolbox.
 
   # Example extra MCP — set enabled: true and a live URL (or MAF_EXTRA_MCPS).
   - name: fabric-sql-agent
