@@ -218,21 +218,28 @@ def create_document_job(
     data: dict[str, Any] | str | Path,
     *,
     skip_validation: bool = False,
-    max_retries: int = 1,
-    validation_threshold: float = 0.7,
+    max_retries: int | None = None,
+    validation_threshold: float | None = None,
+    optimized_flow: bool = False,
     session_id: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
 ) -> dict[str, Any]:
+    from ui_app.flow_debug import flow_breakpoint
+
+    flow_breakpoint("ui_create_document_job", template_path=str(template_path))
     tpl = Path(template_path)
     if not tpl.exists():
         raise ApiError(f"Template not found: {tpl}")
 
     form_data = {
         "skip_validation": str(skip_validation).lower(),
-        "max_retries": str(max_retries),
-        "validation_threshold": str(validation_threshold),
+        "optimized_flow": str(optimized_flow).lower(),
     }
+    if max_retries is not None:
+        form_data["max_retries"] = str(max_retries)
+    if validation_threshold is not None:
+        form_data["validation_threshold"] = str(validation_threshold)
     if session_id:
         form_data["session_id"] = session_id
     if user_id:
@@ -266,7 +273,17 @@ def create_document_job(
         resp = client.post(f"{_base_url()}/api/v1/documents/jobs", files=files, data=form_data)
 
     if resp.status_code != 202:
-        raise ApiError(resp.text, resp.status_code)
+        detail = resp.text
+        try:
+            body = resp.json()
+            detail = body.get("detail", detail)
+            if isinstance(detail, list):
+                detail = "; ".join(
+                    str(item.get("msg") if isinstance(item, dict) else item) for item in detail
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        raise ApiError(str(detail), resp.status_code)
     return resp.json()
 
 

@@ -30,7 +30,10 @@ from ip_api.core.request_context import (
     set_user_id,
     set_xid,
 )
+from ip_api.flow_debug import install_flow_logger
 from ip_api.services.trace_log import log_event
+
+install_flow_logger()
 
 
 class XidMiddleware(BaseHTTPMiddleware):

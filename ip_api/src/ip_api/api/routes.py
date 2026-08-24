@@ -349,8 +349,20 @@ async def create_document_job(
         description="Stored template name (with optional folder_name)",
     ),
     skip_validation: bool = Form(default=False),
-    max_retries: int = Form(default=1),
-    validation_threshold: float = Form(default=0.7),
+    max_retries: int | None = Form(
+        default=None,
+        description="Map→generate retries when the judge fails. Default: DOCUMENT_MAX_RETRIES (0-3).",
+    ),
+    validation_threshold: float | None = Form(
+        default=None,
+        description="Minimum judge score to accept (0-1). Default: DOCUMENT_VALIDATION_THRESHOLD.",
+    ),
+    optimized_flow: bool | None = Form(
+        default=None,
+        description=(
+            "Use llm_optimization.json mapper cascade. Default: DOCUMENT_LLM_OPTIMIZATION_ENABLED."
+        ),
+    ),
     session_id: str | None = Form(default=None),
     user_id: str | None = Form(default=None),
     user_email: str | None = Form(default=None),
@@ -406,10 +418,26 @@ async def create_document_job(
 
     store.insert_job(job_id, template_path, data_path, output_path, xid=require_xid())
 
+    use_opt = (
+        cfg.document_llm_optimization_enabled
+        if optimized_flow is None
+        else optimized_flow
+    )
+    if use_opt:
+        retries_out = max_retries
+        threshold_out = validation_threshold
+    else:
+        retries_out = cfg.document_max_retries if max_retries is None else max_retries
+        threshold_out = (
+            cfg.document_validation_threshold
+            if validation_threshold is None
+            else validation_threshold
+        )
     options = JobCreateOptions(
         skip_validation=skip_validation,
-        max_retries=max_retries,
-        validation_threshold=validation_threshold,
+        max_retries=retries_out,
+        validation_threshold=threshold_out,
+        optimized_flow=use_opt,
     )
 
     corr = require_xid()
@@ -420,6 +448,7 @@ async def create_document_job(
         skip_validation=options.skip_validation,
         max_retries=options.max_retries,
         validation_threshold=options.validation_threshold,
+        optimized_flow=options.optimized_flow,
         store=store,
         xid=corr,
     )

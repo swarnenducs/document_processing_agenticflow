@@ -19,8 +19,9 @@ async def run_document_job(
     job_id: str,
     *,
     skip_validation: bool = False,
-    max_retries: int = 1,
-    validation_threshold: float = 0.7,
+    max_retries: int | None = None,
+    validation_threshold: float | None = None,
+    optimized_flow: bool = False,
     store: JobStore | None = None,
     xid: str | None = None,
 ) -> dict[str, Any]:
@@ -40,6 +41,7 @@ async def run_document_job(
             skip_validation=skip_validation,
             max_retries=max_retries,
             validation_threshold=validation_threshold,
+            optimized_flow=optimized_flow,
         )
 
 
@@ -49,27 +51,32 @@ async def _run_document_job_bound(
     job: Any,
     job_store: JobStore,
     skip_validation: bool,
-    max_retries: int,
-    validation_threshold: float,
+    max_retries: int | None,
+    validation_threshold: float | None,
+    optimized_flow: bool,
 ) -> dict[str, Any]:
     xid = get_xid()
     job_store.update_status(job_id, "processing")
     publish_job_stage(job_id, "processing", xid=xid)
 
     try:
+        tool_args: dict[str, Any] = {
+            "template_path": job.template_path,
+            "data_path": job.data_path,
+            "output_path": job.output_path,
+            "job_id": job_id,
+            "xid": xid,
+            "skip_validation": skip_validation,
+            "optimized_flow": optimized_flow,
+        }
+        if max_retries is not None:
+            tool_args["max_retries"] = max_retries
+        if validation_threshold is not None:
+            tool_args["validation_threshold"] = validation_threshold
         payload = await maf_client.invoke_tool(
             "document",
             "generate_document",
-            {
-                "template_path": job.template_path,
-                "data_path": job.data_path,
-                "output_path": job.output_path,
-                "job_id": job_id,
-                "xid": xid,
-                "skip_validation": skip_validation,
-                "max_retries": max_retries,
-                "validation_threshold": validation_threshold,
-            },
+            tool_args,
         )
         if not isinstance(payload, dict):
             raise RuntimeError(f"contract_autocreation_mcp returned unexpected payload: {payload!r}")

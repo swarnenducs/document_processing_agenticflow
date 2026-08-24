@@ -38,3 +38,7 @@ class DocumentProcessingState(TypedDict, total=False):
     # Optional LangChain init_chat_model overrides (provider:model)
     mapper_model_id: str
     validator_model_id: str
+    # Opt-in LLM optimisation (complexity + retry cascade)
+    optimized_flow: bool
+    complexity: str
+    complexity_signals: dict[str, Any]

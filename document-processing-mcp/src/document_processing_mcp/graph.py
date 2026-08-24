@@ -29,10 +29,17 @@ def _after_validation(state: DocumentProcessingState) -> str:
     if state.get("status") == "completed":
         return "finalize"
 
+    from document_processing_mcp.core.settings import settings
+
+    cfg = settings()
     validation = state.get("validation")
-    threshold = state.get("validation_threshold", 0.7)
+    threshold = state.get("validation_threshold")
+    if threshold is None:
+        threshold = cfg.document_validation_threshold
     retry_count = state.get("retry_count", 0)
-    max_retries = state.get("max_retries", 1)
+    max_retries = state.get("max_retries")
+    if max_retries is None:
+        max_retries = cfg.document_max_retries
 
     if validation is None:
         return "finalize"
@@ -44,12 +51,21 @@ def _after_validation(state: DocumentProcessingState) -> str:
 
 
 def _bump_retry(state: DocumentProcessingState) -> DocumentProcessingState:
-    """Increment retry counter before re-mapping."""
-    return {
+    """Increment retry counter before re-mapping; upgrade models when optimised."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    retry_count = int(state.get("retry_count") or 0) + 1
+    flow_breakpoint("bump_retry", retry_count=retry_count, complexity=state.get("complexity"))
+    updates: DocumentProcessingState = {
         **state,
-        "retry_count": int(state.get("retry_count") or 0) + 1,
+        "retry_count": retry_count,
         "status": "retrying",
     }
+    if state.get("optimized_flow"):
+        from document_processing_mcp.services.llm_optimization import upgrade_models_for_retry
+
+        updates.update(upgrade_models_for_retry(dict(state), retry_count))
+    return updates
 
 
 def build_graph():

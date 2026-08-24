@@ -94,6 +94,14 @@ def _assistant_from_result(result: dict) -> str:
         if result.get("contract_text"):
             lines.extend(["", "```", result["contract_text"], "```"])
         return "\n".join(lines)
+    err = result.get("error") or result.get("error_message")
+    extra = [str(e) for e in (result.get("errors") or []) if e]
+    if err or extra:
+        lines = ["**Error**", "", msg or "The request failed."]
+        if err:
+            lines.append(str(err))
+        lines.extend(extra)
+        return "\n".join(line for line in lines if line is not None)
     return msg or "Please ask a relevant service."
 
 
@@ -375,12 +383,89 @@ def _overall_time_label(status: dict) -> str:
 
 def _html_esc(value: object) -> str:
     return (
-        str(value)
+        str(value if value is not None else "")
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def _error_banner(title: str, messages: list[str] | str) -> str:
+    """Visible error panel for the Gradio HTML result box."""
+    if isinstance(messages, str):
+        lines = [messages]
+    else:
+        lines = [str(item) for item in messages if str(item).strip()]
+    if not lines:
+        lines = ["Unknown failure"]
+    body = "<br>".join(_html_esc(line).replace("\n", "<br>") for line in lines)
+    return f"""
+<div style="margin:0 0 1rem 0;padding:0.85rem 1rem;border:1px solid #8a3030;
+            border-radius:8px;background:#2a1212;color:#FFC4C4;line-height:1.5">
+  <div style="font-weight:700;color:#FF9A9A;margin-bottom:0.35rem">{_html_esc(title)}</div>
+  <div style="white-space:pre-wrap;word-break:break-word">{body}</div>
+</div>
+"""
+
+
+def _job_error_messages(status: dict) -> list[str]:
+    """Collect pipeline / judge / extraction errors from a job status payload."""
+    seen: set[str] = set()
+    texts: list[str] = []
+
+    def _add(text: object) -> None:
+        value = str(text or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            texts.append(value)
+
+    _add(status.get("error_message"))
+    result = status.get("result") if isinstance(status.get("result"), dict) else {}
+    _add(result.get("error"))
+    for item in result.get("errors") or []:
+        _add(item)
+    for item in status.get("errors") or []:
+        _add(item)
+
+    validation = status.get("validation") if isinstance(status.get("validation"), dict) else {}
+    if validation.get("passed") is False:
+        _add(validation.get("summary") or "Document judge did not pass")
+        for issue in (validation.get("issues") or [])[:8]:
+            if not isinstance(issue, dict):
+                _add(issue)
+                continue
+            field = issue.get("field") or ""
+            message = issue.get("message") or ""
+            severity = issue.get("severity") or "issue"
+            _add(f"Judge {severity}: {field} — {message}".strip(" —"))
+
+    extraction = status.get("extraction_validation")
+    if isinstance(extraction, dict) and extraction.get("passed") is False:
+        _add(extraction.get("summary") or "Extraction critic did not pass")
+        for issue in (extraction.get("issues") or [])[:5]:
+            if isinstance(issue, dict):
+                _add(issue.get("message") or issue)
+            else:
+                _add(issue)
+    return texts
+
+
+def _build_failed_job_report(job_id: str, status: dict, stages: list[dict] | None = None) -> str:
+    messages = _job_error_messages(status) or ["Unknown failure"]
+    xid = status.get("xid") or ""
+    elapsed = _overall_time_label(status) or "n/a"
+    return (
+        '<div style="font-size:0.95rem;line-height:1.4">'
+        + _error_banner(f"Job {job_id} failed", messages)
+        + f"""
+<div style="margin:0 0 1rem 0;opacity:0.85;font-size:0.9rem">
+  xid <code>{_html_esc(xid)}</code> · time {_html_esc(elapsed)}
+</div>
+"""
+        + _stages_table_html(stages or [])
+        + "</div>"
+    ).replace("${", "$&#123;").replace("{{", "{&#123;")
 
 
 _SPINNER_CSS = """
@@ -631,7 +716,15 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
             f'<span style="color:{color}">{label}</span></span>'
         )
 
+    warning = ""
+    if validation.get("passed") is False or status.get("error_message"):
+        warning = _error_banner(
+            "Completed with errors",
+            _job_error_messages(status) or ["Judge or pipeline reported a problem"],
+        )
+
     sections = [
+        warning,
         elapsed_banner,
         _table(
             "Job",
@@ -776,6 +869,7 @@ def ui_generate_document(
     json_file: object | None,
     json_text: str,
     skip_validation: bool,
+    optimized_flow: bool,
     session_id: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
@@ -786,8 +880,7 @@ def ui_generate_document(
     flow_breakpoint("ui_generate_document", template_file=template_file, session_id=session_id)
 
     def _err(msg: str):
-        safe = _html_esc(msg).replace("\n", "<br>")
-        yield f'<div style="color:#FFC4C4;line-height:1.45">{safe}</div>', None, session_id
+        yield _error_banner("Error", msg), None, session_id
 
     # Immediate feedback so the UI is never blank while validating/uploading.
     yield _loading_html("Checking API and preparing upload…"), None, session_id
@@ -830,6 +923,7 @@ def ui_generate_document(
             template_path,
             data,
             skip_validation=skip_validation,
+            optimized_flow=bool(optimized_flow),
             session_id=session_id,
             user_id=user_id,
             user_email=user_email,
@@ -869,8 +963,7 @@ def ui_generate_document(
         return
 
     if status.get("status") != "completed":
-        err = status.get("error_message") or "Unknown failure"
-        yield from _err(f"Job {job_id} failed.\n\n{err}")
+        yield _build_failed_job_report(job_id, status, stages), None, sid
         return
 
     yield _progress_html(job_id, stages, working=True), None, sid
@@ -900,10 +993,10 @@ def ui_health() -> str:
         health = check_health()
     except Exception as exc:  # noqa: BLE001 — API down / network
         return (
-            f"<p><strong>API unreachable</strong> at <code>{cfg.api_base_url}</code></p>"
-            f"<p>Start the backend:</p>"
-            f"<pre>python run_all_components.py</pre>"
-            f"<p>Error: {exc}</p>"
+            _error_banner("API unreachable", str(exc))
+            + f"<p>Tried <code>{_html_esc(cfg.api_base_url)}</code></p>"
+            + "<p>Start the backend:</p>"
+            + "<pre>python run_all_components.py</pre>"
         )
 
     def _signal(ok: bool) -> str:
@@ -1138,16 +1231,6 @@ def ui_central_agent_ask(
     return history, "", sid
 
 
-def _html_esc(value: object) -> str:
-    return (
-        str(value if value is not None else "")
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
-
-
 def _pretty_json(value: object, *, limit: int = 4000) -> str:
     if value is None:
         return "-"
@@ -1174,11 +1257,16 @@ def ui_recent_jobs_for_trace(limit: float | int = 15) -> str:
     rows = []
     for job in jobs:
         xid = job.get("xid") or ""
+        failed = job.get("status") == "failed"
+        err = (job.get("error_message") or "").strip()
+        err_cell = _html_esc(err[:160] + ("…" if len(err) > 160 else "")) if err else "—"
         rows.append(
             "<tr>"
             f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(job.get('job_id'))}</code></td>"
             f"<td style='padding:0.35rem 0.5rem'><code>{_html_esc(xid)}</code></td>"
-            f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('status'))}</td>"
+            f"<td style='padding:0.35rem 0.5rem;color:{'#FF9A9A' if failed else 'inherit'}'>"
+            f"{_html_esc(job.get('status'))}</td>"
+            f"<td style='padding:0.35rem 0.5rem;color:#FFC4C4'>{err_cell}</td>"
             f"<td style='padding:0.35rem 0.5rem'>{_html_esc(_overall_time_label(job) or '—')}</td>"
             f"<td style='padding:0.35rem 0.5rem'>{_html_esc(job.get('created_at'))}</td>"
             "</tr>"
@@ -1192,6 +1280,7 @@ def ui_recent_jobs_for_trace(limit: float | int = 15) -> str:
         <th style="padding:0.35rem 0.5rem">Job ID</th>
         <th style="padding:0.35rem 0.5rem">xid</th>
         <th style="padding:0.35rem 0.5rem">Status</th>
+        <th style="padding:0.35rem 0.5rem">Error</th>
         <th style="padding:0.35rem 0.5rem">Overall time</th>
         <th style="padding:0.35rem 0.5rem">Created</th>
       </tr>
@@ -1413,6 +1502,10 @@ def build_ui() -> gr.Blocks:
                             type="filepath",
                         )
                     skip_validation = gr.Checkbox(label="Skip LLM #2 validation", value=False)
+                    optimized_flow = gr.Checkbox(
+                        label="Optimized flow (complexity + cheaper mapper first)",
+                        value=False,
+                    )
                     generate_btn = gr.Button("Generate document", variant="primary")
                 with gr.Column():
                     job_report = gr.HTML(
@@ -1438,6 +1531,7 @@ def build_ui() -> gr.Blocks:
                     json_file_upload,
                     json_input,
                     skip_validation,
+                    optimized_flow,
                     session_id_box,
                     user_id_box,
                     user_email_box,
@@ -1608,6 +1702,9 @@ def build_ui() -> gr.Blocks:
 
 
 def main() -> None:
+    from ui_app.flow_debug import install_flow_logger
+
+    install_flow_logger()
     cfg = settings()
     app = build_ui()
     app.launch(

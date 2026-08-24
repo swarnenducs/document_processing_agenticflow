@@ -1,0 +1,15 @@
+---
+description: NC/nc means No Commit for this entire repository
+alwaysApply: true
+---
+
+# No Commit (`NC` / `nc`)
+
+`NC` and `nc` mean **No Commit** for the entire codebase.
+
+- Do **not** run `git commit`, `git commit --amend`, or create a commit.
+- Do **not** treat `NC` / `nc` as permission to commit.
+- "Make available for commit" still means **stage only** (`git add`), never commit.
+- Only commit when the user explicitly writes `commit` / `create a commit` (not `NC`/`nc`).
+- Never commit `.env`, Azure keys, SAS tokens, Foundry/toolbox endpoints.
+- Never add or commit `AGENTS.md`. It is gitignored and local-only.

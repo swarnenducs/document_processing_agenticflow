@@ -210,7 +210,9 @@ one. Sending neither is also a `400`.
 
 ## Environment reference
 
-| Variable | Default | Notes |
+Full catalog (every variable, default, **which process**, what it does), including `DEBUG_FLOW`: [ENVIRONMENT.md](ENVIRONMENT.md).
+
+Storage-related keys:
 |---|---|---|
 | `STORAGE_BASE_PATH` | `./data/storage` | Root for jobs, audio, templates |
 | `SQLITE_DATABASE_PATH` | `{STORAGE_BASE_PATH}/../app.db` | Used unless Azure SQL is configured |
@@ -223,3 +225,7 @@ one. Sending neither is also a `400`.
 | `AZURE_KEY_VAULT_NAME` | *(unset)* | Local only: fetch `AZURE_SQL_PASSWORD` via `az` |
 | `AZURE_KEY_VAULT_URL` | *(unset)* | Alternate to vault name (`https://NAME.vault.azure.net/`) |
 | `AZURE_SQL_PASSWORD_SECRET_NAME` | `azure-sql-password` | Key Vault secret name |
+| `DOCUMENT_MAX_RETRIES` | `1` | Judge retry cap (0–3). API form `max_retries` overrides |
+| `DOCUMENT_VALIDATION_THRESHOLD` | `0.7` | Judge accuracy bar 0–1 (`DOCUMENT_ACCURACY_THRESHOLD` alias) |
+| `DOCUMENT_LLM_OPTIMIZATION_ENABLED` | `false` | Turn on mapper optimisation for all jobs unless the request sets `optimized_flow=false` |
+| `DOCUMENT_LLM_OPTIMIZATION_CONFIG` | `document-processing-mcp/config/llm_optimization.json` | JSON used only when optimisation is on |

@@ -22,6 +22,53 @@ def _path_from_env(key: str, default: str) -> Path:
     return Path(raw).expanduser().resolve()
 
 
+def _env_clamped_int(keys: tuple[str, ...], *, default: int, lo: int, hi: int) -> int:
+    for key in keys:
+        raw = (os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            return max(lo, min(hi, int(raw)))
+        except ValueError:
+            break
+    return default
+
+
+def _env_bool(keys: tuple[str, ...], *, default: bool = False) -> bool:
+    for key in keys:
+        raw = os.getenv(key)
+        if raw is None or not str(raw).strip():
+            continue
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
+def _optimization_config_path() -> Path:
+    raw = (
+        os.getenv("DOCUMENT_LLM_OPTIMIZATION_CONFIG")
+        or os.getenv("DOCUMENT_LLM_ROUTING_CONFIG")
+        or ""
+    ).strip()
+    if raw:
+        path = Path(raw).expanduser()
+        return path.resolve() if path.is_absolute() else (_PACKAGE_ROOT / path).resolve()
+    return _PACKAGE_ROOT / "config" / "llm_optimization.json"
+
+
+def _env_clamped_float(
+    keys: tuple[str, ...], *, default: float, lo: float, hi: float
+) -> float:
+    for key in keys:
+        raw = (os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            return max(lo, min(hi, float(raw)))
+        except ValueError:
+            break
+    return default
+
+
 @dataclass(frozen=True)
 class Settings:
     """Central config — storage paths and API behaviour."""
@@ -59,6 +106,10 @@ class Settings:
     api_base_url: str
     max_upload_mb: int
     job_ttl_hours: int
+    document_max_retries: int
+    document_validation_threshold: float
+    document_llm_optimization_enabled: bool
+    document_llm_optimization_config: Path
 
     # Gradio UI
     gradio_host: str
@@ -139,6 +190,27 @@ def get_settings() -> Settings:
         api_base_url=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "25")),
         job_ttl_hours=int(os.getenv("JOB_TTL_HOURS", "24")),
+        document_max_retries=_env_clamped_int(
+            ("DOCUMENT_MAX_RETRIES", "MAX_RETRIES"),
+            default=1,
+            lo=0,
+            hi=3,
+        ),
+        document_validation_threshold=_env_clamped_float(
+            (
+                "DOCUMENT_VALIDATION_THRESHOLD",
+                "DOCUMENT_ACCURACY_THRESHOLD",
+                "VALIDATION_THRESHOLD",
+            ),
+            default=0.7,
+            lo=0.0,
+            hi=1.0,
+        ),
+        document_llm_optimization_enabled=_env_bool(
+            ("DOCUMENT_LLM_OPTIMIZATION_ENABLED", "DOCUMENT_LLM_ROUTING_ENABLED"),
+            default=False,
+        ),
+        document_llm_optimization_config=_optimization_config_path(),
         gradio_host=os.getenv("GRADIO_HOST", "127.0.0.1"),
         gradio_port=int(os.getenv("GRADIO_PORT", "7860")),
         speech_provider=os.getenv("SPEECH_PROVIDER", "groq").lower(),

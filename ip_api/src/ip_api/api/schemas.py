@@ -9,8 +9,9 @@ from pydantic import BaseModel, Field
 
 class JobCreateOptions(BaseModel):
     skip_validation: bool = False
-    max_retries: int = Field(default=1, ge=0, le=3)
-    validation_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    max_retries: int | None = Field(default=None, ge=0, le=3)
+    validation_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    optimized_flow: bool = False
 
 
 class JobAcceptedResponse(BaseModel):

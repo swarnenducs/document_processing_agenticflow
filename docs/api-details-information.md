@@ -81,8 +81,9 @@ Start a job. Provide **either** an uploaded `.docx` **or** a stored library temp
 | `template_name` | one of | Reuse an admin-library template |
 | `folder_name` | no | Library folder; default `ipp_default_template` |
 | `skip_validation` | no | default `false` |
-| `max_retries` | no | default `1` |
-| `validation_threshold` | no | default `0.7` |
+| `max_retries` | no | Map→generate retries. Omit to use `DOCUMENT_MAX_RETRIES` (or JSON retries when `optimized_flow` is on) |
+| `validation_threshold` | no | Judge accuracy bar 0–1. Omit to use `DOCUMENT_VALIDATION_THRESHOLD` |
+| `optimized_flow` | no | Use `llm_optimization.json` mapper cascade. Default: `DOCUMENT_LLM_OPTIMIZATION_ENABLED` |
 | `session_id` / `user_id` / `user_email` | no | |
 
 **Response (`JobAcceptedResponse`):** `job_id`, `xid`, `session_id`, `status: pending`, `status_url`, `download_url`, `ws_url`.

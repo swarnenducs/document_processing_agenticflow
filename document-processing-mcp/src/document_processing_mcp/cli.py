@@ -113,6 +113,9 @@ def _print_confidence(result: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
+    from document_processing_mcp.flow_debug import install_flow_logger
+
+    install_flow_logger()
 
     parser = argparse.ArgumentParser(
         description=(
@@ -155,14 +158,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=1,
-        help="Retries of map→generate when validation fails (default: 1)",
+        default=None,
+        help="Retries of map→generate when validation fails (default: DOCUMENT_MAX_RETRIES)",
     )
     parser.add_argument(
         "--validation-threshold",
         type=float,
-        default=0.7,
-        help="Minimum validation_score to accept without retry (default: 0.7)",
+        default=None,
+        help="Minimum validation_score to accept without retry (default: DOCUMENT_VALIDATION_THRESHOLD)",
+    )
+    parser.add_argument(
+        "--optimized-flow",
+        action="store_true",
+        help="Use llm_optimization.json mapper cascade (off by default)",
     )
     parser.add_argument(
         "--fail-on-validation",
@@ -181,6 +189,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    from document_processing_mcp.core.settings import settings as mcp_settings
+
+    quality = mcp_settings()
+    use_opt = args.optimized_flow or quality.document_llm_optimization_enabled
     result = invoke_document_graph(
         {
             "template_path": str(Path(args.template).resolve()),
@@ -189,10 +201,27 @@ def main(argv: list[str] | None = None) -> int:
             "errors": [],
             "status": "started",
             "retry_count": 0,
-            "max_retries": args.max_retries,
-            "validation_threshold": args.validation_threshold,
+            "max_retries": (
+                args.max_retries
+                if use_opt
+                else (
+                    quality.document_max_retries
+                    if args.max_retries is None
+                    else args.max_retries
+                )
+            ),
+            "validation_threshold": (
+                args.validation_threshold
+                if use_opt
+                else (
+                    quality.document_validation_threshold
+                    if args.validation_threshold is None
+                    else args.validation_threshold
+                )
+            ),
             "skip_validation": args.skip_validation,
             "skip_extraction_validation": args.skip_extraction_validation,
+            "optimized_flow": use_opt,
         },
         mapper_model_id=args.mapper_model_id,
         validator_model_id=args.validator_model_id,

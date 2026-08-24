@@ -252,6 +252,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Launch children via `uv run` entry points",
     )
+    parser.add_argument(
+        "--debug-flow",
+        action="store_true",
+        help="Print file:line method in every child process (DEBUG_FLOW=1)",
+    )
     return parser.parse_args(argv)
 
 
@@ -262,8 +267,12 @@ def main(argv: list[str] | None = None) -> int:
     from scripts.load_sql_password_from_keyvault import apply_sql_password_from_keyvault
 
     apply_sql_password_from_keyvault()
-
     args = parse_args(argv)
+    if args.debug_flow and not (os.getenv("DEBUG_FLOW") or "").strip():
+        os.environ["DEBUG_FLOW"] = "1"
+    from ip_api.flow_debug import install_flow_logger
+
+    install_flow_logger()
     use_uv = bool(args.use_uv)
     mcp_transport = "http" if args.mcp_http else str(args.mcp_transport)
     if mcp_transport == "stdio" and not args.mcp_only:

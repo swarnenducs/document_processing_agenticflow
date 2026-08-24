@@ -16,21 +16,33 @@ Related: [README.md](README.md) (architecture) · [adding-a-new-flow.md](adding-
 
 Do **not** also run `python run_all_components.py` on the same ports.
 
-### B — Named `flow_breakpoint()` hops (already wired)
+### B — Flow logger (`file + method`, default off)
 
-These pause **only** when env is set. Normal runs do nothing.
+Prints `file:line method` as your code runs. Normal `python run_all_components.py` does nothing.
 
 ```bash
-# Pause at every marked hop
+# Every project function/method (UI, API, MAF, both MCPs)
 export DEBUG_FLOW=1
 
-# Or pause at selected names only
+# Only the named hops already wired in code
+export DEBUG_FLOW=hops
+
+# Restrict either mode to selected names
 export DEBUG_FLOW_POINTS=create_document_job,map_fields_node,ask_maf
+
+# Also pause in the debugger at matching hops (need F5)
+export DEBUG_FLOW_BREAK=1
 ```
 
-Then start the service(s) **under the debugger** (F5). When a named hop hits, you land in `breakpoint()` inside `flow_debug.py` — press **Step Out** / **Step Over** to see caller locals.
+Restart the services after changing env. Lines look like:
 
-Helper: [`flow_debug.py`](../../flow_debug.py) at repo root.
+```text
+[FLOW] enabled mode=trace (file + method)
+[FLOW]   ip_api/src/ip_api/api/routes.py:331 create_document_job  [create_document_job]
+[FLOW]     ip_api/src/ip_api/services/pipeline_runner.py:18 run_document_job
+```
+
+Helper: [`flow_debug.py`](../../flow_debug.py) at repo root (same module in each package).
 
 ---
 

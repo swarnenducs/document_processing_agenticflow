@@ -17,7 +17,9 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | Understand the architecture | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) |
 | Call HTTP / WS / MCP APIs | [api-details-information.md](api-details-information.md) |
 | Local vs Azure SQL/Blob + admin templates | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) |
+| See every env variable (tables by component) | [ENVIRONMENT.md](ENVIRONMENT.md) |
 | Estimate LLM tokens / STT cost | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) |
+| Route cheap vs strong document mappers | [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) |
 | Voice → contract HITL | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) |
 | Deploy Azure Web Apps | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) |
 | Deploy Foundry-hosted MAF | [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md) |
@@ -32,7 +34,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | Document | Description |
 |----------|-------------|
 | [../README.md](../README.md) | Project overview, LLM roles, UV/pip setup, sample files, how to run the stack |
-| [../AGENTS.md](../AGENTS.md) | Agent rules: independently deployable components; Foundry vs Web App `POST /invoke` |
+| [../AGENTS.md](../AGENTS.md) | Local-only agent rules (gitignored; not in commits) |
 | [../install.ps1](../install.ps1) | Windows one-shot: uv, Python, workspace deps, `.env` scaffold |
 
 ### Guides (`docs/`)
@@ -46,8 +48,10 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [INTERVIEW_LANGGRAPH.md](INTERVIEW_LANGGRAPH.md) | LangGraph in this repo: state, edges, retries, dynamic models |
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice/text → intent → catalog lookup → HITL confirm → contract file |
 | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) | SQLite + local files vs Azure SQL + Blob; default admin template library (`ipp_default_template`) |
+| [ENVIRONMENT.md](ENVIRONMENT.md) | Env variables in tables: what each does and which process reads it (`DEBUG_FLOW` included) |
 | [api-details-information.md](api-details-information.md) | Catalogue of gateway, MAF, document MCP, and voice MCP APIs |
 | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) | Estimated tokens (and Whisper minutes) per component, with cost knobs |
+| [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) | Optional optimized mapper flow: JSON config, complexity + retry cascade |
 | [MCP_AGENTS.md](MCP_AGENTS.md) | Class-based FastMCP servers for document (`:8001`) and voice (`:8002`) |
 | [FASTMCP_JSON.md](FASTMCP_JSON.md) | How FastMCP returns Pydantic JSON (`structuredContent`) vs text blocks |
 | [MAF_LOCAL.md](MAF_LOCAL.md) | Run the MAF orchestrator locally (`:8003`), prompts and registry |

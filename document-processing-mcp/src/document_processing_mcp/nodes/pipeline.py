@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from document_processing_mcp.models.state import DocumentProcessingState
+from document_processing_mcp.core.settings import settings
 from document_processing_mcp.services.confidence import build_confidence_report
 from document_processing_mcp.services.document_generator import generate_styled_document
 from document_processing_mcp.services.document_validator import validate_documents
@@ -37,12 +38,26 @@ def load_data_node(state: DocumentProcessingState) -> DocumentProcessingState:
         errors.append("JSON root must be an object")
         return {**state, "errors": errors, "status": "failed"}
 
+    cfg = settings()
+    retries = state.get("max_retries")
+    threshold = state.get("validation_threshold")
+    optimized = bool(state.get("optimized_flow"))
     return {
         **state,
         "json_data": payload,
         "retry_count": state.get("retry_count", 0),
-        "max_retries": state.get("max_retries", 1),
-        "validation_threshold": state.get("validation_threshold", 0.7),
+        "max_retries": (
+            retries
+            if optimized
+            else (cfg.document_max_retries if retries is None else retries)
+        ),
+        "validation_threshold": (
+            threshold
+            if optimized
+            else (
+                cfg.document_validation_threshold if threshold is None else threshold
+            )
+        ),
         "status": "data_loaded",
         "errors": errors,
     }
@@ -68,12 +83,20 @@ def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingSta
         errors.append(f"Style extraction failed: {exc}")
         return {**state, "errors": errors, "status": "failed"}
 
-    return {
-        **state,
+    updates: dict = {
         "extracted": extracted,
         "status": "styles_extracted",
         "errors": errors,
     }
+    if state.get("optimized_flow"):
+        from document_processing_mcp.services.llm_optimization import apply_optimization
+
+        try:
+            updates.update(apply_optimization({**state, **updates}, extracted))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"LLM optimisation config failed: {exc}")
+            return {**state, "errors": errors, "status": "failed"}
+    return {**state, **updates}
 
 
 def validate_extraction_node(state: DocumentProcessingState) -> DocumentProcessingState:
@@ -188,19 +211,34 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
     if state.get("status") == "failed":
         return state
 
-    if state.get("skip_validation"):
+    from document_processing_mcp.services.llm_optimization import should_skip_document_critic
+
+    if state.get("skip_validation") or should_skip_document_critic(state):
+        from document_processing_mcp.models.schemas import ValidationResult
+
+        validation = None
+        if should_skip_document_critic(state) and not state.get("skip_validation"):
+            validation = ValidationResult(
+                passed=True,
+                validation_score=1.0,
+                summary="Document critic skipped: easy job and no leftover placeholders",
+                validator_source="regex",
+            )
         confidence = build_confidence_report(
             state.get("mapping"),
             state.get("generation"),
-            None,
+            validation,
             extraction_validation=state.get("extraction_validation"),
         )
-        return {
+        updates = {
             **state,
             "confidence": confidence,
             "status": "completed",
             "errors": errors,
         }
+        if validation is not None:
+            updates["validation"] = validation
+        return updates
 
     extracted = state.get("extracted")
     mapping = state.get("mapping")

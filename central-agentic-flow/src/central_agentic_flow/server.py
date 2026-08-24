@@ -69,6 +69,9 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    from central_agentic_flow.flow_debug import install_flow_logger
+
+    install_flow_logger()
     app = FastAPI(
         title="Document Processing MAF Orchestrator",
         description="Microsoft Agent Framework — sole caller of MCP servers (document, voice, extras)",

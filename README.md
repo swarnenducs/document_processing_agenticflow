@@ -8,6 +8,7 @@ LangGraph workspace (managed with **UV**) that turns a Word `.docx` template + J
 **LangGraph interview prep (state, edges, dynamic models):** see [docs/INTERVIEW_LANGGRAPH.md](docs/INTERVIEW_LANGGRAPH.md).  
 **How voice → contract works (LangGraph agent + HITL):** see [docs/VOICE_CONTRACT_FLOW.md](docs/VOICE_CONTRACT_FLOW.md).  
 **Estimated LLM tokens per component:** see [docs/TOKEN_CONSUMPTION.md](docs/TOKEN_CONSUMPTION.md).  
+**Mapper cost optimisation (complexity + retry cascade):** see [docs/DOCUMENT_LLM_OPTIMIZATION.md](docs/DOCUMENT_LLM_OPTIMIZATION.md).  
 **Deploy to Azure Web Apps (GitHub Actions CI/CD):** see [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md).
 
 ## Two separate LLMs (provider-injectable)
@@ -145,7 +146,7 @@ GROQ_API_KEY=gsk-...
 # AZURE_OPENAI_API_VERSION=2024-12-01-preview
 ```
 
-See `.env.example` for the full matrix.
+See `.env.example` for the copy-paste template. Tables of **what each variable does and which process reads it** (including `DEBUG_FLOW`): [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 **Run all vs standalone**
 

@@ -33,8 +33,22 @@ class DocumentGenerateRequest(BaseModel):
     xid: str | None = None
     skip_validation: bool = False
     skip_extraction_validation: bool = False
-    max_retries: int = 1
-    validation_threshold: float = 0.7
+    max_retries: int | None = Field(
+        default=None,
+        ge=0,
+        le=3,
+        description="Overrides DOCUMENT_MAX_RETRIES when set",
+    )
+    validation_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Overrides DOCUMENT_VALIDATION_THRESHOLD when set",
+    )
+    optimized_flow: bool | None = Field(
+        default=None,
+        description="Use llm_optimization.json mapper cascade when true",
+    )
 
 
 class VoiceStartRequest(BaseModel):

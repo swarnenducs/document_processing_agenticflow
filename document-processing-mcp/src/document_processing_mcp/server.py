@@ -20,6 +20,9 @@ class DocumentProcessMCP(BaseAgentMCPServer):
     """Standalone MCP: Word template + JSON → filled .docx (LangGraph)."""
 
     def __init__(self, *, host: str | None = None, port: int | None = None) -> None:
+        from document_processing_mcp.flow_debug import install_flow_logger
+
+        install_flow_logger()
         port = port if port is not None else int(os.getenv("DOCUMENT_MCP_PORT", "8001"))
         set_app_context(build_application_context())
         super().__init__(
@@ -68,8 +71,9 @@ class DocumentProcessMCP(BaseAgentMCPServer):
         xid: str | None = None,
         skip_validation: bool = False,
         skip_extraction_validation: bool = False,
-        max_retries: int = 1,
-        validation_threshold: float = 0.7,
+        max_retries: int | None = None,
+        validation_threshold: float | None = None,
+        optimized_flow: bool | None = None,
     ) -> GenerateDocumentResponse:
         """
         Run the LangGraph document pipeline (extract → map → generate → validate).
@@ -79,6 +83,8 @@ class DocumentProcessMCP(BaseAgentMCPServer):
         When ``job_id`` is set, MCP downloads, processes, uploads the .docx, and
         updates ``document_jobs`` + ``document_accuracy_reports``.
         Provide either ``data_path`` or ``data_json``.
+        ``optimized_flow`` uses ``llm_optimization.json`` (off unless set or
+        ``DOCUMENT_LLM_OPTIMIZATION_ENABLED=true``).
         """
         from document_processing_mcp.core.request_context import bind_xid, require_xid
         from document_processing_mcp.flow_debug import flow_breakpoint
@@ -94,6 +100,24 @@ class DocumentProcessMCP(BaseAgentMCPServer):
             job_id=job_id,
             xid=corr,
         )
+        from document_processing_mcp.core.settings import settings as mcp_settings
+
+        quality = mcp_settings()
+        use_opt = (
+            quality.document_llm_optimization_enabled
+            if optimized_flow is None
+            else optimized_flow
+        )
+        if use_opt:
+            retries = max_retries
+            threshold = validation_threshold
+        else:
+            retries = quality.document_max_retries if max_retries is None else max_retries
+            threshold = (
+                quality.document_validation_threshold
+                if validation_threshold is None
+                else validation_threshold
+            )
         with bind_xid(corr, job_id=job_id):
             payload_out = run_generate_document(
                 template_path=template_path,
@@ -104,8 +128,9 @@ class DocumentProcessMCP(BaseAgentMCPServer):
                 xid=corr,
                 skip_validation=skip_validation,
                 skip_extraction_validation=skip_extraction_validation,
-                max_retries=max_retries,
-                validation_threshold=validation_threshold,
+                max_retries=retries,
+                validation_threshold=threshold,
+                optimized_flow=use_opt,
             )
             log_event(
                 kind="mcp_tool",

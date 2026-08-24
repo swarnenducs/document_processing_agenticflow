@@ -1,3 +1,6 @@
+# Agent-only local guidance (never commit)
+AGENTS.md
+
 # Environment
 .env
 .env.*

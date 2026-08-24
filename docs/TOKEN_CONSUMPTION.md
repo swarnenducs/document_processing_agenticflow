@@ -48,6 +48,8 @@ Mapper is still the expensive call. Hard ceiling is now ~11 k characters of pa
 
 Worked example (contract template, happy path, mid of the ranges): **~7 000 input + 1 200 output ≈ 8 200 tokens / job** (was ~14 000 before payload compaction). Mapping still uses placeholder keys, short occurrence `ctx`, table headers, and JSON paths; critics still run unless you skip them.
 
+Optional cheaper mapper path (opt-in `optimized_flow` + [llm_optimization.json](../document-processing-mcp/config/llm_optimization.json)): [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md). Off by default.
+
 ---
 
 ## 2. Voice MCP (`voice_enable_mcp`)
@@ -142,7 +144,8 @@ If mapper and validator use **different** models, split the table: extraction + 
 | Knob | Effect |
 |------|--------|
 | `MAPPER_MAX_TOKENS` / `VALIDATOR_MAX_TOKENS` / `LLM_MAX_TOKENS` | Caps **completion** size (validator already defaults to 1024) |
-| `max_retries` (API form, default 1, max 3) | Each retry repeats **mapper + document critic** |
+| `DOCUMENT_MAX_RETRIES` / API `max_retries` (default 1, max 3) | Each retry repeats **mapper + document critic** |
+| `optimized_flow` / `DOCUMENT_LLM_OPTIMIZATION_ENABLED` | Optional cheaper mapper first; see [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) |
 | `skip_validation` / `skip_extraction_validation` | Drops one critic (and retry if document critic is skipped) |
 | Template / JSON size | Mapper samples JSON arrays; payload is clipped to ~11 k characters |
 | Chat history on MAF / Foundry | Unbounded unless you truncate session context |

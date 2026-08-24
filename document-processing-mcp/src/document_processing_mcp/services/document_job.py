@@ -82,14 +82,18 @@ def run_generate_document(
     xid: str | None = None,
     skip_validation: bool = False,
     skip_extraction_validation: bool = False,
-    max_retries: int = 1,
-    validation_threshold: float = 0.7,
+    max_retries: int | None = None,
+    validation_threshold: float | None = None,
+    optimized_flow: bool = False,
 ) -> GenerateDocumentResponse:
     """
     MCP document pipeline entry: blob-or-local inputs → LangGraph → blob output.
 
     When ``job_id`` is set, updates ``document_jobs`` + ``document_accuracy_reports``.
     """
+    from document_processing_mcp.flow_debug import flow_breakpoint
+
+    flow_breakpoint("run_generate_document", job_id=job_id, template_path=template_path)
     cfg = settings()
     jid = (job_id or "").strip() or uuid.uuid4().hex
     work_dir = cfg.job_dir(jid)
@@ -152,6 +156,7 @@ def run_generate_document(
                 "validation_threshold": validation_threshold,
                 "skip_validation": skip_validation,
                 "skip_extraction_validation": skip_extraction_validation,
+                "optimized_flow": optimized_flow,
             }
         )
         if result is None:

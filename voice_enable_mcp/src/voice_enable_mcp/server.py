@@ -23,6 +23,9 @@ class VoiceProcessMCP(BaseAgentMCPServer):
     """Standalone MCP: voice/text create-contract with HITL confirm (LangGraph)."""
 
     def __init__(self, *, host: str | None = None, port: int | None = None) -> None:
+        from voice_enable_mcp.flow_debug import install_flow_logger
+
+        install_flow_logger()
         port = port if port is not None else int(os.getenv("VOICE_MCP_PORT", "8002"))
         set_app_context(build_application_context())
         super().__init__(
