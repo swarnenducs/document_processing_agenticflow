@@ -52,21 +52,28 @@ class DocumentGenerateRequest(BaseModel):
 
 
 class VoiceStartRequest(BaseModel):
-    transcript: str = Field(..., min_length=1)
-    auto_create: bool = False
+    transcript: str = Field(
+        ...,
+        min_length=1,
+        description="Spoken or typed instruction, e.g. create contract with legal entity AVC …",
+    )
+    auto_create: bool = Field(
+        default=False,
+        description="Skip HITL confirmation when true",
+    )
 
 
 class VoiceConfirmRequest(BaseModel):
-    legal_entity: str = Field(..., min_length=1)
-    contract_reference_number: str = Field(..., min_length=1)
-    thread_id: str | None = None
-    user_text: str = "yes"
+    legal_entity: str = Field(..., min_length=1, description="Entity code or name, e.g. AVC")
+    contract_reference_number: str = Field(..., min_length=1, description="e.g. CR-1001")
+    thread_id: str | None = Field(default=None, description="From start response")
+    user_text: str = Field(default="yes", description="Operator reply")
     transcript: str | None = None
 
 
-@router.get("/health")
+@router.get("/health", summary="MAF catalogue ping")
 async def agents_health() -> dict[str, Any]:
-    """Ping MCPs via the central agent catalogue."""
+    """Whether MAF answered and which MCP servers it registered. Requires MAF up."""
     catalog = await maf_client.catalog_tools()
     return {
         "ok": bool(catalog.get("ok")),
@@ -75,17 +82,18 @@ async def agents_health() -> dict[str, Any]:
     }
 
 
-@router.get("/tools")
+@router.get("/tools", summary="List all MCP tools on MAF")
 async def all_mcp_tools() -> dict[str, Any]:
-    """List tools from every MCP registered on MAF."""
+    """Tool names from every MCP registered on the central agent."""
     try:
         return await maf_client.catalog_tools()
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"central agent unavailable: {exc}") from exc
 
 
-@router.get("/document/tools")
+@router.get("/document/tools", summary="Document MCP tools only")
 async def document_tools() -> dict[str, Any]:
+    """Subset of `/tools` for the document / contract-autocreation MCP."""
     catalog = await maf_client.catalog_tools()
     block = catalog.get("contract_autocreation_mcp") or catalog.get("document_process_mcp") or {}
     if not block:
@@ -93,9 +101,13 @@ async def document_tools() -> dict[str, Any]:
     return {"mcp": "contract_autocreation_mcp", "via": "maf", **block}
 
 
-@router.post("/document/generate")
+@router.post("/document/generate", summary="Generate via MAF (paths, not upload)")
 async def document_generate_via_mcp(body: DocumentGenerateRequest) -> dict[str, Any]:
-    """FastAPI → MAF → contract_autocreation_mcp ``generate_document``."""
+    """
+    FastAPI → MAF → `generate_document`. Body uses **paths already on the MCP host**
+    (`template_path`, `data_path` or `data_json`). For file upload use
+    `POST /api/v1/documents/jobs` instead.
+    """
     from ip_api.flow_debug import flow_breakpoint
 
     flow_breakpoint("document_generate_via_mcp", template_path=body.template_path)
@@ -109,8 +121,9 @@ async def document_generate_via_mcp(body: DocumentGenerateRequest) -> dict[str, 
         raise HTTPException(status_code=502, detail=f"central agent document call failed: {exc}") from exc
 
 
-@router.get("/voice/tools")
+@router.get("/voice/tools", summary="Voice MCP tools only")
 async def voice_tools() -> dict[str, Any]:
+    """Subset of `/tools` for voice_process_mcp."""
     catalog = await maf_client.catalog_tools()
     block = catalog.get("voice_process_mcp") or {}
     if not block:
@@ -118,18 +131,18 @@ async def voice_tools() -> dict[str, Any]:
     return {"mcp": "voice_process_mcp", "via": "maf", **block}
 
 
-@router.post("/voice/contract")
+@router.post("/voice/contract", summary="Start voice contract via MAF tools")
 async def voice_contract_via_mcp(body: VoiceStartRequest) -> dict[str, Any]:
-    """FastAPI → MAF → voice_process_mcp ``start_voice_contract``."""
+    """Same as `POST /api/v1/voice/contract` but raw MCP payload (no session wrapper)."""
     try:
         return await maf_client.invoke_tool("voice", "start_voice_contract", body.model_dump())
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"central agent voice call failed: {exc}") from exc
 
 
-@router.post("/voice/contract/confirm")
+@router.post("/voice/contract/confirm", summary="Confirm voice contract via MAF tools")
 async def voice_confirm_via_mcp(body: VoiceConfirmRequest) -> dict[str, Any]:
-    """FastAPI → MAF → voice_process_mcp ``confirm_voice_contract``."""
+    """Same as `POST /api/v1/voice/contract/confirm` via MAF `confirm_voice_contract`."""
     try:
         return await maf_client.invoke_tool(
             "voice", "confirm_voice_contract", body.model_dump(exclude_none=True)

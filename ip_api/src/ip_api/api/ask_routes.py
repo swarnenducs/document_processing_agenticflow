@@ -27,18 +27,27 @@ class AskRequest(BaseModel):
 
 
 class AskResponse(BaseModel):
-    ok: bool = True
-    text: str
-    response_id: str | None = None
-    orchestrator: str = "maf"
+    ok: bool = Field(default=True, description="False if the orchestrator reported failure")
+    text: str = Field(description="Assistant reply")
+    response_id: str | None = Field(default=None, description="MAF response id when present")
+    orchestrator: str = Field(default="maf", description="Always maf for this route")
     session_id: str | None = None
     user_id: str | None = None
     user_email: str | None = None
 
 
-@router.post("/ask", response_model=AskResponse)
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    summary="Chat: proxy to MAF /ask",
+)
 async def ask(body: AskRequest) -> AskResponse:
-    """Proxy to standalone MAF service over HTTP."""
+    """
+    Natural-language question for the MAF orchestrator (tools/chat).
+
+    Needs MAF at `CENTRAL_AGENT_END_POINT` (default `http://127.0.0.1:8003`).
+    **Not** used for document jobs — those are `POST /api/v1/documents/jobs`.
+    """
     from ip_api.flow_debug import flow_breakpoint
 
     flow_breakpoint("api_ask", message=body.message, session_id=body.session_id)
@@ -84,9 +93,9 @@ async def ask(body: AskRequest) -> AskResponse:
     )
 
 
-@router.get("/ask/health")
+@router.get("/ask/health", summary="MAF /ask/health via proxy")
 async def ask_health() -> dict[str, Any]:
-    """Readiness: proxy MAF /ask/health."""
+    """Whether the chat proxy can reach MAF. **503** if MAF is down."""
     from ip_api.services.maf_client import maf_health
 
     return await maf_health()

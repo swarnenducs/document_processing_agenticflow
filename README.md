@@ -322,7 +322,10 @@ All paths are configurable via `.env`.
 
 ```bash
 uv run doc-api
-# docs: http://localhost:8000/docs
+# or: uv run ipp_agentic_api
+# Swagger title: ipp_agentic_api  →  http://localhost:8000/docs
+# OpenAPI JSON: http://localhost:8000/openapi.json
+# Postman: postman/IPP.postman_collection.json + postman/local.postman_environment.json
 ```
 
 ### API endpoints

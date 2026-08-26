@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ip_api.api.admin_routes import router as admin_router
 from ip_api.api.ask_routes import router as ask_router
 from ip_api.api.mcp_routes import router as mcp_router
+from ip_api.api.openapi_docs import APP_DESCRIPTION, APP_TITLE, APP_VERSION, OPENAPI_TAGS
 from ip_api.api.routes import router
 from ip_api.core.request_context import (
     SESSION_HEADER,
@@ -34,6 +37,23 @@ from ip_api.flow_debug import install_flow_logger
 from ip_api.services.trace_log import log_event
 
 install_flow_logger()
+
+_DEFAULT_CORS_ORIGINS = (
+    "http://localhost:4200",
+    "http://127.0.0.1:4200",
+    "http://localhost:7860",
+    "http://127.0.0.1:7860",
+)
+
+
+def cors_allow_origins() -> list[str]:
+    """Angular (and other browser UIs) need this for REST. WS does not use CORS."""
+    raw = (os.getenv("CORS_ORIGINS") or "").strip()
+    if raw in {"*", "all"}:
+        return ["*"]
+    if raw:
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return list(_DEFAULT_CORS_ORIGINS)
 
 
 class XidMiddleware(BaseHTTPMiddleware):
@@ -109,16 +129,34 @@ async def lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Document Processing Agentic Flow API",
-        description=(
-            "Upload Word templates + JSON data → LangGraph generates styled documents. "
-            "FastAPI can also call class-based FastMCP document and voice agents. "
-            "POST /api/ask proxies to the MAF service (:8003 by default), which calls "
-            "those MCP tools. Document / voice / MAF calls accept session_id + "
-            "user_id / user_email (SQLite-backed)."
-        ),
-        version="0.1.0",
+        title=APP_TITLE,
+        description=APP_DESCRIPTION,
+        version=APP_VERSION,
         lifespan=lifespan,
+        openapi_tags=OPENAPI_TAGS,
+        swagger_ui_parameters={
+            "docExpansion": "list",
+            "defaultModelsExpandDepth": 1,
+            "filter": True,
+            "displayRequestDuration": True,
+        },
+        servers=[
+            {"url": "http://127.0.0.1:8000", "description": "Local ip_api"},
+            {"url": "/", "description": "This host"},
+        ],
+    )
+    origins = cors_allow_origins()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=origins != ["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=[
+            "X-Request-ID",
+            "X-Correlation-ID",
+            "X-Session-Id",
+        ],
     )
     app.add_middleware(XidMiddleware)
     app.include_router(router, prefix="/api/v1")

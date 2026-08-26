@@ -34,7 +34,10 @@ from ip_api.storage.template_store import (
 
 ADMIN_KEY_HEADER = "X-Admin-Api-Key"
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+)
 
 TemplateStoreDep = Annotated[TemplateStore, Depends(get_template_store_dep)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dependency)]
@@ -42,7 +45,11 @@ SettingsDep = Annotated[Settings, Depends(get_settings_dependency)]
 
 def require_admin_key(
     cfg: SettingsDep,
-    x_admin_api_key: str | None = Header(default=None, alias=ADMIN_KEY_HEADER),
+    x_admin_api_key: str | None = Header(
+        default=None,
+        alias=ADMIN_KEY_HEADER,
+        description="Must match env ADMIN_API_KEY. Admin is 503 if that env is empty.",
+    ),
 ) -> None:
     configured = cfg.admin_api_key
     if not configured:
@@ -131,6 +138,7 @@ def _list_for_folder(
     response_model=TemplateRecordResponse,
     status_code=201,
     dependencies=[Depends(require_admin_key)],
+    summary="Upload template (optional folder in form)",
 )
 async def upload_template(
     store: TemplateStoreDep,
@@ -146,7 +154,12 @@ async def upload_template(
     ),
     uploaded_by: str | None = Form(default=None),
 ) -> TemplateRecordResponse:
-    """Store a Word template at ``{folder_name}/{template_name}`` (re-upload replaces)."""
+    """
+    Store a Word `.docx` at `{folder_name}/{template_name}`. Re-upload replaces.
+
+    Header **`X-Admin-Api-Key`** must equal env `ADMIN_API_KEY`. Multipart: `file`,
+    optional `folder_name` (default `ipp_default_template`), `template_name`, `uploaded_by`.
+    """
     return await _save_uploaded_template(
         folder_name=folder_name,
         file=file,
@@ -162,6 +175,7 @@ async def upload_template(
     response_model=TemplateRecordResponse,
     status_code=201,
     dependencies=[Depends(require_admin_key)],
+    summary="Upload template into a folder path",
 )
 async def upload_folder_template(
     folder_name: str,
@@ -174,7 +188,7 @@ async def upload_folder_template(
     ),
     uploaded_by: str | None = Form(default=None),
 ) -> TemplateRecordResponse:
-    """Upload into a library folder, e.g. ``/templates/ipp_default_template``."""
+    """Same as POST `/templates` but folder is in the URL, e.g. `/templates/ipp_default_template`."""
     return await _save_uploaded_template(
         folder_name=folder_name,
         file=file,
@@ -189,6 +203,7 @@ async def upload_folder_template(
     "/templates",
     response_model=TemplateListResponse,
     dependencies=[Depends(require_admin_key)],
+    summary="List templates",
 )
 def list_templates(
     store: TemplateStoreDep,
@@ -198,6 +213,7 @@ def list_templates(
     ),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> TemplateListResponse:
+    """Optional `folder_name` query. Requires `X-Admin-Api-Key`."""
     return _list_for_folder(folder_name, limit, store)
 
 
@@ -205,8 +221,10 @@ def list_templates(
     "/templates/folders",
     response_model=list[str],
     dependencies=[Depends(require_admin_key)],
+    summary="List library folder names",
 )
 def list_template_folders(store: TemplateStoreDep) -> list[str]:
+    """Distinct folders that contain at least one stored template."""
     return store.list_folders()
 
 
@@ -214,6 +232,7 @@ def list_template_folders(store: TemplateStoreDep) -> list[str]:
     "/templates/{folder_name}",
     response_model=TemplateListResponse,
     dependencies=[Depends(require_admin_key)],
+    summary="List templates in one folder",
 )
 def list_folder_templates(
     folder_name: str,
@@ -228,12 +247,14 @@ def list_folder_templates(
     "/templates/{folder_name}/{template_name}",
     response_model=TemplateRecordResponse,
     dependencies=[Depends(require_admin_key)],
+    summary="Get template metadata",
 )
 def get_template(
     folder_name: str,
     template_name: str,
     store: TemplateStoreDep,
 ) -> TemplateRecordResponse:
+    """Metadata only (folder, name, size, storage_ref). Use `/download` for bytes."""
     try:
         record = store.get(folder_name, template_name)
     except TemplateNameError as error:
@@ -246,6 +267,7 @@ def get_template(
 @router.get(
     "/templates/{folder_name}/{template_name}/download",
     dependencies=[Depends(require_admin_key)],
+    summary="Download stored .docx",
 )
 def download_template(
     folder_name: str,
@@ -275,6 +297,7 @@ def download_template(
     "/templates/{folder_name}/{template_name}",
     response_model=TemplateDeletedResponse,
     dependencies=[Depends(require_admin_key)],
+    summary="Delete template (file + SQL row)",
 )
 def delete_template(
     folder_name: str,

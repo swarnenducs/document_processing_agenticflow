@@ -10,9 +10,11 @@ Related: [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md), [DYNACONF.md]
 
 ## Run locally (SQLite + local files)
 
-The SQL/Blob switch is **env-only** (no code change). `SQLALCHEMY_DATABASE_URL` wins; else `AZURE_SQL_SERVER` **and** `AZURE_SQL_PASSWORD` select Azure SQL; else SQLite. `python run_all_components.py` will also **fetch** `AZURE_SQL_PASSWORD` from Key Vault when `AZURE_KEY_VAULT_NAME` or `AZURE_KEY_VAULT_URL` is set and the password is empty — so a leftover vault name plus `AZURE_SQL_SERVER` still opens Azure SQL.
+`python run_all_components.py` **defaults to SQLite + local files** even if `.env` still has Azure SQL (`ipp-app-db`) or Blob creds. The launcher sets `IPP_FORCE_SQLITE=1` and blank `AZURE_SQL_SERVER` / `AZURE_SQL_PASSWORD` so child processes cannot reload Azure SQL from `.env` (that caused ODBC 4060). To use Azure from `.env`: `python run_all_components.py --azure-sql --azure-blob` (or `IPP_USE_AZURE_SQL=1` / `IPP_USE_AZURE_BLOB=1`). Azure Web Apps do not use this script.
 
-In the **gitignored** root `.env` (do not commit it), comment or delete:
+The SQL/Blob switch for each process is still **env-only**. `SQLALCHEMY_DATABASE_URL` wins; else `AZURE_SQL_SERVER` **and** `AZURE_SQL_PASSWORD` select Azure SQL; else SQLite. With `--azure-sql`, the launcher will **fetch** `AZURE_SQL_PASSWORD` from Key Vault when `AZURE_KEY_VAULT_NAME` or `AZURE_KEY_VAULT_URL` is set and the password is empty.
+
+To keep SQLite without the launcher override, in the **gitignored** root `.env` (do not commit it), comment or delete:
 
 | Unset / comment | Why |
 |---|---|
@@ -202,6 +204,7 @@ Used by whichever process actually calls that provider. UI never needs these.
 | `API_HOST` | `0.0.0.0` | ip_api | Bind address |
 | `API_PORT` | `8000` | ip_api | Bind port |
 | `ADMIN_API_KEY` | empty (admin off) | ip_api | `X-Admin-Api-Key` for `/api/v1/admin/templates` |
+| `CORS_ORIGINS` | Angular `:4200` + Gradio `:7860` | ip_api | Browser REST (Angular). Comma-separated. WebSockets do not use CORS. |
 | `CENTRAL_AGENT_END_POINT` | `http://127.0.0.1:8003` | ip_api | API → MAF base URL for `/api/ask` and `POST {base}/invoke` (no `/invoke` suffix). Wins over `MAF_BASE_URL` / `MAF_URL`. |
 | `MAF_BASE_URL` | `http://127.0.0.1:8003` | ip_api | Alias of `CENTRAL_AGENT_END_POINT` |
 | `MAF_URL` | unset | ip_api | Older alias of `CENTRAL_AGENT_END_POINT` |

@@ -209,6 +209,49 @@ def terminate_process(proc: subprocess.Popen | None, name: str) -> None:
             pass
 
 
+# Azure SQL / Blob leftover in .env must not break `python run_all_components.py`.
+_AZURE_SQL_ENV_KEYS = (
+    "SQLALCHEMY_DATABASE_URL",
+    "AZURE_SQL_SERVER",
+    "AZURE_SQL_PASSWORD",
+)
+
+
+def _truthy_env(key: str) -> bool:
+    return (os.getenv(key) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def apply_local_storage_for_launcher(*, use_azure_sql: bool, use_azure_blob: bool) -> None:
+    """Laptop launcher: SQLite + local files unless Azure backends are opted in.
+
+    Azure Web Apps do not use this script. Children call ``load_dotenv(.env)``,
+    so Azure SQL keys must stay in ``os.environ`` as **empty** (not popped) and
+    ``IPP_FORCE_SQLITE=1`` must be set; otherwise ``.env`` fills ``ipp-app-db``
+    again and MCP crashes with ODBC 4060.
+    """
+    if use_azure_sql or _truthy_env("IPP_USE_AZURE_SQL"):
+        os.environ.pop("IPP_FORCE_SQLITE", None)
+        print("Local run: Azure SQL from env (IPP_USE_AZURE_SQL / --azure-sql).")
+    else:
+        had_sql = any((os.getenv(k) or "").strip() for k in _AZURE_SQL_ENV_KEYS)
+        os.environ["IPP_FORCE_SQLITE"] = "1"
+        for key in _AZURE_SQL_ENV_KEYS:
+            os.environ[key] = ""
+        if had_sql:
+            print(
+                "Local run: using SQLite (ignored Azure SQL in .env, e.g. ipp-app-db). "
+                "Pass --azure-sql or set IPP_USE_AZURE_SQL=1 to use Azure SQL."
+            )
+        else:
+            print("Local run: SQLite at SQLITE_DATABASE_PATH (default).")
+
+    if use_azure_blob or _truthy_env("IPP_USE_AZURE_BLOB"):
+        print("Local run: Azure Blob from env (IPP_USE_AZURE_BLOB / --azure-blob).")
+    else:
+        os.environ["FILE_STORAGE_BACKEND"] = "local"
+        print("Local run: FILE_STORAGE_BACKEND=local (pass --azure-blob for Blob).")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -258,17 +301,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print file:line method in every child process (DEBUG_FLOW=1)",
     )
+    parser.add_argument(
+        "--azure-sql",
+        action="store_true",
+        help="Use Azure SQL from .env (default local launcher uses SQLite)",
+    )
+    parser.add_argument(
+        "--azure-blob",
+        action="store_true",
+        help="Use Azure Blob from .env (default local launcher uses FILE_STORAGE_BACKEND=local)",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv(PROJECT_ROOT / ".env")
+    args = parse_args(argv)
+    apply_local_storage_for_launcher(
+        use_azure_sql=bool(args.azure_sql),
+        use_azure_blob=bool(args.azure_blob),
+    )
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
-    from scripts.load_sql_password_from_keyvault import apply_sql_password_from_keyvault
+    if args.azure_sql or _truthy_env("IPP_USE_AZURE_SQL"):
+        from scripts.load_sql_password_from_keyvault import apply_sql_password_from_keyvault
 
-    apply_sql_password_from_keyvault()
-    args = parse_args(argv)
+        apply_sql_password_from_keyvault()
     if args.debug_flow and not (os.getenv("DEBUG_FLOW") or "").strip():
         os.environ["DEBUG_FLOW"] = "1"
     from ip_api.flow_debug import install_flow_logger

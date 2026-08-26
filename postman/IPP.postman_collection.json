@@ -1,50 +1,110 @@
 {
   "info": {
-    "name": "IPP — API + MAF",
-    "description": "Gateway (ip_api :8000) and MAF (:8003). Select environment IPP local or IPP Azure. Document/voice MCP is not REST — use gateway or MAF POST /invoke. No API keys in this file.",
+    "name": "ipp_agentic_api",
+    "description": "# ipp_agentic_api + MAF\n\nUse environment **IPP local** (`baseUrl` http://127.0.0.1:8000, `mafUrl` :8003) or **IPP Azure**.\n\n## Swagger (same API)\n\nOpen `{{baseUrl}}/docs` after starting ipp_agentic_api (`ip_api`). Schema: `{{baseUrl}}/openapi.json`. Title in Swagger is **ipp_agentic_api**.\n\n## Typical order\n\n1. Gateway \u2192 Health\n2. Documents \u2192 Create job (attach a `.docx` from `samples/templates/`) \u2192 Get job (wait) \u2192 Download\n3. Voice \u2192 Start contract \u2192 Confirm (uses saved `thread_id`)\n4. Admin needs `adminKey` in the environment (`ADMIN_API_KEY`)\n\nDocument/voice MCP `:8001/mcp` and `:8002/mcp` are **not** REST. Use gateway or MAF \u2192 Invoke.\n\nDo **not** put API keys or SQL passwords in this collection.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "xid", "value": "" },
-    { "key": "sessionId", "value": "" },
-    { "key": "job_id", "value": "" },
-    { "key": "thread_id", "value": "" },
-    { "key": "contract_id", "value": "" },
-    { "key": "transcription_id", "value": "" }
+    {
+      "key": "xid",
+      "value": ""
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "job_id",
+      "value": ""
+    },
+    {
+      "key": "thread_id",
+      "value": ""
+    },
+    {
+      "key": "contract_id",
+      "value": ""
+    },
+    {
+      "key": "transcription_id",
+      "value": ""
+    },
+    {
+      "key": "templateName",
+      "value": "complete_contract_template_GPO.docx"
+    }
   ],
   "item": [
     {
       "name": "Gateway",
       "item": [
         {
+          "name": "OpenAPI (Swagger schema)",
+          "request": {
+            "method": "GET",
+            "description": "Machine-readable schema used by `/docs`. Import into tools that speak OpenAPI.",
+            "header": [],
+            "url": "{{baseUrl}}/openapi.json"
+          }
+        },
+        {
           "name": "Health",
           "request": {
             "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/api/v1/health"
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/health",
+            "description": "Liveness plus LLM/MAF/MCP flags. HTTP 200 even when `status` is `degraded`."
           }
         },
         {
           "name": "Ask (chat via MAF)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"message\": \"What tools are available?\"\n}"
             },
-            "url": "{{baseUrl}}/api/ask"
+            "url": "{{baseUrl}}/api/ask",
+            "description": "Natural language to MAF. Needs MAF running. Not used for document jobs."
           }
         },
         {
           "name": "Ask health",
           "request": {
             "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/api/ask/health"
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
+            "url": "{{baseUrl}}/api/ask/health",
+            "description": "Whether the gateway can reach MAF `/ask/health`."
           }
         }
-      ]
+      ],
+      "description": "Health and chat (`POST /api/ask` \u2192 MAF). Start here."
     },
     {
       "name": "Documents",
@@ -69,7 +129,14 @@
           ],
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -87,42 +154,135 @@
                 }
               ]
             },
-            "url": "{{baseUrl}}/api/v1/documents/jobs"
+            "url": "{{baseUrl}}/api/v1/documents/jobs",
+            "description": "multipart: `template` file + `data` JSON string. 202 + `job_id`. Attach `samples/templates/*.docx`."
           }
         },
         {
           "name": "List jobs",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/documents/jobs?limit=20"
+            "url": "{{baseUrl}}/api/v1/documents/jobs?limit=20",
+            "description": "Newest document jobs first.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "Get job (wait)",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}?wait=true&timeout=180"
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}?wait=true&timeout=180",
+            "description": "Long-poll until completed/failed (`wait=true`). Uses collection `job_id`.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "Job accuracy",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/accuracy"
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/accuracy",
+            "description": "Judge/mapper scores for `job_id`. 404 if missing.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "Download job docx",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/download"
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/download",
+            "description": "Binary Word file. 409 if job not completed.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "Trace by xid",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/traces/{{xid}}"
+            "url": "{{baseUrl}}/api/v1/traces/{{xid}}",
+            "description": "Logs for correlation id saved from Create job (`xid`).",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Delete job",
+          "request": {
+            "method": "DELETE",
+            "description": "Removes job row. 204 empty body.",
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}"
+          }
+        }
+      ],
+      "description": "Multipart job API. Create returns `job_id` (saved). Then wait + download. `data` is a JSON **string**, not a file."
+    },
+    {
+      "name": "Audio (STT only)",
+      "description": "Whisper transcription. Does not create a contract.",
+      "item": [
+        {
+          "name": "Transcribe",
+          "request": {
+            "method": "POST",
+            "description": "Upload audio \u2192 text. Needs OPENAI_API_KEY or GROQ_API_KEY.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "language",
+                  "type": "text",
+                  "value": "en",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/audio/transcribe"
+          }
+        },
+        {
+          "name": "Get transcription",
+          "request": {
+            "method": "GET",
+            "description": "Saved row from Transcribe (`transcription_id`).",
+            "url": "{{baseUrl}}/api/v1/audio/transcriptions/{{transcription_id}}"
           }
         }
       ]
@@ -148,12 +308,24 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"transcript\": \"please create contract with legal entity AVC contract reference number CR 1001\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/voice/contract"
+            "url": "{{baseUrl}}/api/v1/voice/contract",
+            "description": "JSON transcript. Saves `thread_id` on 200."
           }
         },
         {
@@ -174,36 +346,101 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"legal_entity\": \"AVC\",\n  \"contract_reference_number\": \"CR-1001\",\n  \"thread_id\": \"{{thread_id}}\",\n  \"user_text\": \"yes\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/voice/contract/confirm"
+            "url": "{{baseUrl}}/api/v1/voice/contract/confirm",
+            "description": "HITL resume. Fill `thread_id` from Start (auto-saved)."
           }
         },
         {
           "name": "List contracts",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/voice/contracts?limit=20"
+            "url": "{{baseUrl}}/api/v1/voice/contracts?limit=20",
+            "description": "Voice MCP list via gateway.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "Get contract",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/voice/contracts/{{contract_id}}"
+            "url": "{{baseUrl}}/api/v1/voice/contracts/{{contract_id}}",
+            "description": "Metadata for collection `contract_id`.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "Download contract docx",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/voice/contracts/{{contract_id}}/download?format=docx"
+            "url": "{{baseUrl}}/api/v1/voice/contracts/{{contract_id}}/download?format=docx",
+            "description": "Query `format=docx` or `txt`. File is on voice MCP disk.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Start contract from audio",
+          "request": {
+            "method": "POST",
+            "description": "multipart `audio` then same HITL as Start contract. Confirm still required unless auto_create.",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": [],
+                  "description": "mp3/wav/m4a/webm"
+                },
+                {
+                  "key": "auto_create",
+                  "type": "text",
+                  "value": "false"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/voice/contract/from-audio"
           }
         }
-      ]
+      ],
+      "description": "HITL contract via MAF \u2192 voice MCP. Start saves `thread_id`; confirm uses it."
     },
     {
       "name": "Agents via MAF",
@@ -212,53 +449,124 @@
           "name": "Agents health",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/agents/health"
+            "url": "{{baseUrl}}/api/v1/agents/health",
+            "description": "MAF catalogue ping.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
           }
         },
         {
           "name": "All tools",
           "request": {
             "method": "GET",
-            "url": "{{baseUrl}}/api/v1/agents/tools"
+            "url": "{{baseUrl}}/api/v1/agents/tools",
+            "description": "Tools from every MCP registered on MAF.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Document tools",
+          "request": {
+            "method": "GET",
+            "description": "Document MCP tool list via MAF.",
+            "url": "{{baseUrl}}/api/v1/agents/document/tools"
+          }
+        },
+        {
+          "name": "Voice tools",
+          "request": {
+            "method": "GET",
+            "description": "Voice MCP tool list via MAF.",
+            "url": "{{baseUrl}}/api/v1/agents/voice/tools"
           }
         },
         {
           "name": "Document generate (paths, not upload)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"template_path\": \"samples/templates/complete_contract_template_GPO.docx\",\n  \"data_path\": \"samples/data/gpo_agreement.json\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/agents/document/generate"
+            "url": "{{baseUrl}}/api/v1/agents/document/generate",
+            "description": "Paths must exist on the document MCP process. Not multipart."
           }
         },
         {
           "name": "Voice start (agent proxy)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"transcript\": \"please create contract with legal entity AVC contract reference number CR 1001\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/agents/voice/contract"
+            "url": "{{baseUrl}}/api/v1/agents/voice/contract",
+            "description": "Raw MCP start; prefer Voice \u2192 Start contract."
           }
         },
         {
           "name": "Voice confirm (agent proxy)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"legal_entity\": \"AVC\",\n  \"contract_reference_number\": \"CR-1001\",\n  \"thread_id\": \"{{thread_id}}\",\n  \"user_text\": \"yes\"\n}"
             },
-            "url": "{{baseUrl}}/api/v1/agents/voice/contract/confirm"
+            "url": "{{baseUrl}}/api/v1/agents/voice/contract/confirm",
+            "description": "Raw MCP confirm."
           }
         }
-      ]
+      ],
+      "description": "Same work as documents/voice but JSON **paths on the MCP host**, not file upload. Prefer Documents/Voice folders for operators."
     },
     {
       "name": "MAF direct",
@@ -267,40 +575,50 @@
           "name": "Health",
           "request": {
             "method": "GET",
-            "url": "{{mafUrl}}/health"
+            "url": "{{mafUrl}}/health",
+            "description": "Liveness plus LLM/MAF/MCP flags. HTTP 200 even when `status` is `degraded`."
           }
         },
         {
           "name": "Ask health",
           "request": {
             "method": "GET",
-            "url": "{{mafUrl}}/ask/health"
+            "url": "{{mafUrl}}/ask/health",
+            "description": "Whether the gateway can reach MAF `/ask/health`."
           }
         },
         {
           "name": "MCPs",
           "request": {
             "method": "GET",
-            "url": "{{mafUrl}}/mcps"
+            "url": "{{mafUrl}}/mcps",
+            "description": "Registered MCP servers on MAF."
           }
         },
         {
           "name": "Tools",
           "request": {
             "method": "GET",
-            "url": "{{mafUrl}}/tools"
+            "url": "{{mafUrl}}/tools",
+            "description": "MAF tool catalogue."
           }
         },
         {
           "name": "Invoke document generate",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"server\": \"document\",\n  \"tool\": \"generate_document\",\n  \"arguments\": {\n    \"template_path\": \"samples/templates/complete_contract_template_GPO.docx\",\n    \"data_path\": \"samples/data/gpo_agreement.json\"\n  }\n}"
             },
-            "url": "{{mafUrl}}/invoke"
+            "url": "{{mafUrl}}/invoke",
+            "description": "MAF `POST /invoke` document `generate_document`."
           }
         },
         {
@@ -322,27 +640,40 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"server\": \"voice\",\n  \"tool\": \"start_voice_contract\",\n  \"arguments\": {\n    \"transcript\": \"please create contract with legal entity AVC contract reference number CR 1001\"\n  }\n}"
             },
-            "url": "{{mafUrl}}/invoke"
+            "url": "{{mafUrl}}/invoke",
+            "description": "MAF invoke `start_voice_contract`; saves `thread_id` from `result`."
           }
         },
         {
           "name": "Ask",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"message\": \"What tools are available?\"\n}"
             },
-            "url": "{{mafUrl}}/ask"
+            "url": "{{mafUrl}}/ask",
+            "description": "MAF chat without gateway."
           }
         }
-      ]
+      ],
+      "description": "Hit `:8003` without the gateway. `POST /invoke` is jobs; `POST /ask` is chat."
     },
     {
       "name": "Admin templates",
@@ -351,19 +682,76 @@
           "name": "List templates",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-Admin-Api-Key", "value": "{{adminKey}}" }],
-            "url": "{{baseUrl}}/api/v1/admin/templates"
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/templates",
+            "description": "Admin library. Set `adminKey`."
           }
         },
         {
           "name": "List folders",
           "request": {
             "method": "GET",
-            "header": [{ "key": "X-Admin-Api-Key", "value": "{{adminKey}}" }],
-            "url": "{{baseUrl}}/api/v1/admin/templates/folders"
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/templates/folders",
+            "description": "Folder names in the template library."
+          }
+        },
+        {
+          "name": "Upload template",
+          "request": {
+            "method": "POST",
+            "description": "multipart `file` .docx into default folder `ipp_default_template`.",
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Word .docx"
+                },
+                {
+                  "key": "folder_name",
+                  "type": "text",
+                  "value": "ipp_default_template"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/admin/templates"
+          }
+        },
+        {
+          "name": "Download template",
+          "request": {
+            "method": "GET",
+            "description": "Bytes for folder/name. Set templateName if you change the default.",
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/templates/ipp_default_template/{{templateName}}/download"
           }
         }
-      ]
+      ],
+      "description": "Requires header `X-Admin-Api-Key` = env `adminKey`. 503 if `ADMIN_API_KEY` is unset on the server."
     }
   ]
 }

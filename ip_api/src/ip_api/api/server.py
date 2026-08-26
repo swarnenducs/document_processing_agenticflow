@@ -1,4 +1,4 @@
-"""Run the FastAPI server via `uv run doc-api`."""
+"""Run ipp_agentic_api via `uv run doc-api` or `uv run ipp_agentic_api`."""
 
 from __future__ import annotations
 

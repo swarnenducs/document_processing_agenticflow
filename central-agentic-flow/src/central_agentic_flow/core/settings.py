@@ -22,6 +22,11 @@ def _path_from_env(key: str, default: str) -> Path:
     return Path(raw).expanduser().resolve()
 
 
+def force_sqlite_from_env() -> bool:
+    """Launcher sets IPP_FORCE_SQLITE=1 so child dotenv cannot reopen Azure SQL."""
+    return (os.getenv("IPP_FORCE_SQLITE") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     """Central config — storage paths and API behaviour."""
@@ -87,17 +92,24 @@ class Settings:
 def get_settings() -> Settings:
     storage_base = _path_from_env("STORAGE_BASE_PATH", "./data/storage")
     sqlite_default = str(storage_base.parent / "app.db")
+    force_sqlite = force_sqlite_from_env()
     return Settings(
         storage_base_path=storage_base,
         jobs_subdirectory=os.getenv("JOBS_SUBDIRECTORY", "jobs"),
         audio_subdirectory=os.getenv("AUDIO_SUBDIRECTORY", "audio"),
         sqlite_database_path=_path_from_env("SQLITE_DATABASE_PATH", sqlite_default),
-        sqlalchemy_database_url=(os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip() or None,
-        azure_sql_server=(os.getenv("AZURE_SQL_SERVER") or "").strip() or None,
+        sqlalchemy_database_url=(
+            None if force_sqlite else ((os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip() or None)
+        ),
+        azure_sql_server=(
+            None if force_sqlite else ((os.getenv("AZURE_SQL_SERVER") or "").strip() or None)
+        ),
         azure_sql_user=(
             os.getenv("AZURE_SQL_USER") or os.getenv("AZURE_SQL_ADMIN") or "adminsql"
         ).strip(),
-        azure_sql_password=(os.getenv("AZURE_SQL_PASSWORD") or "").strip() or None,
+        azure_sql_password=(
+            None if force_sqlite else ((os.getenv("AZURE_SQL_PASSWORD") or "").strip() or None)
+        ),
         azure_sql_database=(os.getenv("AZURE_SQL_DATABASE") or "ipp-app-db").strip(),
         azure_sql_dialect=(os.getenv("AZURE_SQL_DIALECT") or "pyodbc").strip().lower(),
         azure_sql_odbc_driver=os.getenv("AZURE_SQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),

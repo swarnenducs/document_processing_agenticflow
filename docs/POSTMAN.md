@@ -4,11 +4,11 @@ Import these JSON files in Postman (or Insomnia/Bruno that accept Collection v2.
 
 | File | What |
 |------|------|
-| [postman/IPP.postman_collection.json](../postman/IPP.postman_collection.json) | Gateway + MAF requests |
+| [postman/IPP.postman_collection.json](../postman/IPP.postman_collection.json) | **ipp_agentic_api** + MAF requests |
 | [postman/local.postman_environment.json](../postman/local.postman_environment.json) | `baseUrl` `:8000`, `mafUrl` `:8003` |
 | [postman/azure.postman_environment.json](../postman/azure.postman_environment.json) | Replace `<api-app>` / `<maf-app>` |
 
-The same three files are copied to [ip_api/postman/](../ip_api/postman/) so a split `ip_api` git still has them.
+The collection folders: **Gateway** (health, OpenAPI JSON, chat), **Documents**, **Audio (STT only)**, **Voice**, **Agents via MAF**, **MAF direct**, **Admin templates**. Each request has a description in Postman.
 
 ## Import
 
@@ -17,7 +17,7 @@ The same three files are copied to [ip_api/postman/](../ip_api/postman/) so a sp
 3. Send **Gateway → Health**. Then **Voice → Start contract** (saves `thread_id`) → **Confirm**.
 4. For document jobs: **Documents → Create job** and attach a `.docx` from `samples/templates/`.
 
-Swagger alternative: `http://127.0.0.1:8000/docs` (`/openapi.json`).
+Swagger (human-readable): `http://127.0.0.1:8000/docs` — each operation has a summary, tag, and how-to text. Schema: `/openapi.json`. ReDoc: `/redoc`.
 
 Document and voice **MCP** (`:8001/mcp`, `:8002/mcp`) are not OpenAPI. Use the collection’s gateway or **MAF direct → Invoke**.
 

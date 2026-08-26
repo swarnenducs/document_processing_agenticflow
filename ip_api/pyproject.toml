@@ -1,7 +1,7 @@
 [project]
 name = "ip-api"
 version = "0.1.0"
-description = "FastAPI gateway (self-contained; talks to MCPs/MAF over HTTP)"
+description = "ipp_agentic_api — FastAPI gateway (self-contained; talks to MCPs/MAF over HTTP)"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0.0",
@@ -29,6 +29,7 @@ dependencies = [
 
 [project.scripts]
 doc-api = "ip_api.api.server:main"
+ipp_agentic_api = "ip_api.api.server:main"
 doc-all = "ip_api.run_app:main"
 doc-app = "ip_api.run_app:main"
 

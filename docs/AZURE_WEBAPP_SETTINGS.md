@@ -72,6 +72,7 @@ python -m uvicorn ip_api.api.main:app --host 0.0.0.0 --port 8000
 | `AZURE_STORAGE_CONNECTION_STRING` | Key Vault ref, or use account name + key/SAS instead |
 | `GROQ_API_KEY` / `OPENAI_API_KEY` / `AZURE_OPENAI_*` | STT; fill the provider you use (`SPEECH_PROVIDER`) |
 | `ADMIN_API_KEY` | Key Vault ref if you lock admin template routes |
+| `CORS_ORIGINS` | Comma-separated HTTPS origins for Angular (and Gradio UI). Example: `https://<angular-app>.azurewebsites.net` |
 
 Keep `FILE_STORAGE_BACKEND=azure_blob` and do **not** set `SQLALCHEMY_DATABASE_URL` unless you intend to override Azure SQL parts.
 

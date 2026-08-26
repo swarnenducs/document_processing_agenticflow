@@ -17,6 +17,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | Understand the architecture | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) |
 | Call HTTP / WS / MCP APIs | [api-details-information.md](api-details-information.md) |
 | Hit APIs from Postman | [POSTMAN.md](POSTMAN.md) |
+| Read Swagger (`/docs`) on the gateway | [POSTMAN.md](POSTMAN.md) (same collection; open `:8000/docs`) |
 | Local vs Azure SQL/Blob + admin templates | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) |
 | See every env variable (tables by component) | [ENVIRONMENT.md](ENVIRONMENT.md) |
 | Dynaconf later + Azure Web App JSON + Key Vault | [DYNACONF.md](DYNACONF.md) |

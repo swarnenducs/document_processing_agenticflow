@@ -230,11 +230,23 @@ def _materialize_stored_template(record, dest: Path, templates: TemplateStore) -
         ) from exc
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    tags=["health"],
+    summary="Gateway + downstream health",
+)
 async def health(
     cfg: SettingsDep,
     blob: BlobStoreDep,
 ) -> HealthResponse:
+    """
+    Cheap readiness for operators and load balancers.
+
+    Returns SQL/Blob flags, whether mapper and validator LLM keys work, speech,
+    and whether MAF (and its document/voice MCP catalogue) answered. `status` is
+    `ok` only if the mapper LLM is configured; otherwise `degraded` but HTTP 200.
+    """
     from ip_api.services.llm_factory import (
         is_mapper_available,
         is_validator_available,
@@ -327,7 +339,18 @@ async def health(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/documents/jobs", response_model=JobAcceptedResponse, status_code=202)
+@router.post(
+    "/documents/jobs",
+    response_model=JobAcceptedResponse,
+    status_code=202,
+    tags=["documents"],
+    summary="Create document job (template + JSON)",
+    responses={
+        202: {"description": "Accepted. Poll status_url or wait=true, then download."},
+        400: {"description": "`data` is not a JSON object, or template missing/invalid."},
+        404: {"description": "Named library template does not exist."},
+    },
+)
 async def create_document_job(
     background_tasks: BackgroundTasks,
     store: JobStoreDep,
@@ -368,13 +391,30 @@ async def create_document_job(
     user_email: str | None = Form(default=None),
 ) -> JobAcceptedResponse:
     """
-    Send JSON data in the form field ``data``, plus a template.
+    Create a document generation job.
 
-    The template is either uploaded inline or named from the admin library with
-    ``template_name`` (optional ``folder_name``, default ``ipp_default_template``).
+    Send **multipart/form-data**, not a JSON body.
 
-    Returns job_id immediately. Prefer long-poll:
-    ``GET /documents/jobs/{job_id}?wait=true`` then download when completed.
+    **Form fields**
+
+    * `data` (required) — JSON object **as text**, not a file.
+      Example: `{"party":"AVC"}`
+    * Template — provide **one** of:
+      * `template` — upload a `.docx` file, or
+      * `template_name` — name in the admin library
+        (`folder_name` defaults to `ipp_default_template`)
+
+    **After 202**
+
+    1. `GET /api/v1/documents/jobs/{job_id}?wait=true&timeout=180`
+       until `status` is `completed` or `failed`, **or**
+    2. WebSocket `ws://<host>/api/v1/documents/jobs/{job_id}/ws`
+       (path is also returned as `ws_url`)
+    3. `GET /api/v1/documents/jobs/{job_id}/download` when completed
+
+    Optional form fields: `skip_validation`, `max_retries` (0–3),
+    `validation_threshold` (0–1), `optimized_flow`, `session_id`,
+    `user_id`, `user_email`.
     """
     from ip_api.flow_debug import flow_breakpoint
 
@@ -467,9 +507,14 @@ async def create_document_job(
     )
 
 
-@router.get("/documents/jobs", response_model=JobListResponse)
+@router.get(
+    "/documents/jobs",
+    response_model=JobListResponse,
+    tags=["documents"],
+    summary="List recent document jobs",
+)
 def list_document_jobs(store: JobStoreDep, limit: int = 50) -> JobListResponse:
-    """List recent document jobs persisted in SQLite (newest first)."""
+    """Newest first. Each row includes `status` and `download_url` when the file is ready."""
     rows = store.list_document_jobs(limit=limit)
     jobs: list[JobStatusResponse] = []
     for row in rows:
@@ -572,7 +617,12 @@ def _job_status_response(job: JobRecord, store: JobStore | None = None) -> JobSt
     )
 
 
-@router.get("/documents/jobs/{job_id}", response_model=JobStatusResponse)
+@router.get(
+    "/documents/jobs/{job_id}",
+    response_model=JobStatusResponse,
+    tags=["documents"],
+    summary="Get document job status",
+)
 async def get_document_job(
     job_id: str,
     store: JobStoreDep,
@@ -587,7 +637,13 @@ async def get_document_job(
         description="Max seconds to wait when wait=true.",
     ),
 ) -> JobStatusResponse:
-    """Return job status. With ``wait=true``, block until terminal status (no client polling)."""
+    """
+    Return current `status`: `pending`, `processing`, `completed`, or `failed`.
+
+    Set `wait=true` to **long-poll** (server holds until terminal or `timeout`
+    seconds, default 180). Then call `/download` if `status` is `completed`.
+    `409` on download if the job is not finished.
+    """
     try:
         job = store.get_job(job_id)
     except KeyError as exc:
@@ -609,9 +665,13 @@ async def get_document_job(
     return _job_status_response(job, store)
 
 
-@router.get("/documents/jobs/{job_id}/accuracy")
+@router.get(
+    "/documents/jobs/{job_id}/accuracy",
+    tags=["documents"],
+    summary="Accuracy / confidence report",
+)
 def get_document_accuracy(job_id: str, store: JobStoreDep) -> dict[str, Any]:
-    """Accuracy / confidence report persisted for this document job."""
+    """Persisted judge/mapper scores for this job. **404** if the job or report is missing."""
     try:
         store.get_job(job_id)
     except KeyError as exc:
@@ -624,7 +684,12 @@ def get_document_accuracy(job_id: str, store: JobStoreDep) -> dict[str, Any]:
 
 @router.websocket("/documents/jobs/{job_id}/ws")
 async def document_job_progress_ws(websocket: WebSocket, job_id: str, store: JobStoreDep) -> None:
-    """Push live pipeline stages (extraction done, mapped, validated, …). No Redis/Kafka."""
+    """
+    Live pipeline stages (`extraction`, `mapped`, `validated`, `completed`, …).
+
+    Swagger **Try it out** does not drive WebSockets. Connect with a WS client to
+    `ws://127.0.0.1:8000/api/v1/documents/jobs/{job_id}/ws` (or `wss://` in Azure).
+    """
     await websocket.accept()
     try:
         job = store.get_job(job_id)
@@ -686,15 +751,30 @@ async def document_job_progress_ws(websocket: WebSocket, job_id: str, store: Job
         pass
 
 
-@router.get("/traces/{xid}", response_model=TraceByXidResponse)
+@router.get(
+    "/traces/{xid}",
+    response_model=TraceByXidResponse,
+    tags=["traces"],
+    summary="Trace logs by xid",
+)
 def get_trace_by_xid(xid: str, store: JobStoreDep) -> TraceByXidResponse:
-    """Fetch all HTTP/tool/LLM call logs + jobs for one correlation xid."""
+    """All HTTP/tool/LLM events and jobs sharing this correlation id (`X-Request-ID`)."""
     payload = store.get_trace_by_xid(xid.strip())
     return TraceByXidResponse(**payload)
 
 
-@router.get("/documents/jobs/{job_id}/download")
+@router.get(
+    "/documents/jobs/{job_id}/download",
+    tags=["documents"],
+    summary="Download generated Word file",
+    responses={
+        200: {"description": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+        404: {"description": "Job or output file missing."},
+        409: {"description": "Job not completed yet."},
+    },
+)
 def download_document(job_id: str, store: JobStoreDep) -> FileResponse:
+    """Binary `.docx`. Call only when GET status is `completed`."""
     try:
         job = store.get_job(job_id)
     except KeyError as exc:
@@ -714,8 +794,14 @@ def download_document(job_id: str, store: JobStoreDep) -> FileResponse:
     )
 
 
-@router.delete("/documents/jobs/{job_id}", status_code=204)
+@router.delete(
+    "/documents/jobs/{job_id}",
+    status_code=204,
+    tags=["documents"],
+    summary="Delete document job",
+)
 def delete_document_job(job_id: str, store: JobStoreDep) -> None:
+    """Removes the job row (and local files when stored locally). **204** empty body."""
     try:
         store.delete_job(job_id)
     except KeyError as exc:
@@ -727,7 +813,12 @@ def delete_document_job(job_id: str, store: JobStoreDep) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/audio/transcribe", response_model=TranscriptionResponse)
+@router.post(
+    "/audio/transcribe",
+    response_model=TranscriptionResponse,
+    tags=["audio"],
+    summary="Speech-to-text (audio file)",
+)
 async def transcribe_voice(
     store: JobStoreDep,
     cfg: SettingsDep,
@@ -742,10 +833,11 @@ async def transcribe_voice(
     ),
 ) -> TranscriptionResponse:
     """
-    Voice / audio → natural language text (speech-to-text).
+    Upload audio (`mp3`, `wav`, `m4a`, `webm`, …) → transcript text.
 
-    Uses OpenAI Whisper or Groq Whisper. With SPEECH_PROVIDER=auto (default),
-    picks OpenAI when OPENAI_API_KEY is set, otherwise Groq.
+    Uses OpenAI Whisper or Groq. `SPEECH_PROVIDER=auto` picks OpenAI if
+    `OPENAI_API_KEY` is set, else Groq. This does **not** start a contract.
+    For STT + contract in one call use `POST /api/v1/voice/contract/from-audio`.
     """
     transcription_id = str(uuid.uuid4())
     suffix = Path(audio.filename or "audio.wav").suffix.lower()
@@ -783,17 +875,35 @@ async def transcribe_voice(
     )
 
 
-@router.get("/audio/transcriptions/{transcription_id}")
+@router.get(
+    "/audio/transcriptions/{transcription_id}",
+    tags=["audio"],
+    summary="Get saved transcription",
+)
 def get_transcription(transcription_id: str, store: JobStoreDep) -> dict[str, Any]:
+    """Row written by `/audio/transcribe` or `/voice/contract/from-audio`."""
     try:
         return store.get_transcription(transcription_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.post("/voice/contract", response_model=VoiceContractResponse)
+@router.post(
+    "/voice/contract",
+    response_model=VoiceContractResponse,
+    tags=["voice"],
+    summary="Start contract from transcript (HITL)",
+)
 async def voice_contract_from_text(body: VoiceContractRequest) -> VoiceContractResponse:
-    """Start voice-contract via MAF → voice MCP (may return needs_confirmation)."""
+    """
+    JSON body: `transcript` is required (already-transcribed speech or typed text).
+
+    Calls MAF → voice MCP `start_voice_contract`. Often returns `thread_id` and
+    asks for confirmation. Next: `POST /api/v1/voice/contract/confirm` with that
+    `thread_id` plus `legal_entity` and `contract_reference_number`.
+
+    Set `auto_create: true` only if you want to skip HITL (not the usual path).
+    """
     from ip_api.flow_debug import flow_breakpoint
 
     from ip_api.services.maf_client import invoke_tool
@@ -819,9 +929,17 @@ async def voice_contract_from_text(body: VoiceContractRequest) -> VoiceContractR
     return VoiceContractResponse(**_attach_session(payload, session))
 
 
-@router.post("/voice/contract/confirm", response_model=VoiceContractResponse)
+@router.post(
+    "/voice/contract/confirm",
+    response_model=VoiceContractResponse,
+    tags=["voice"],
+    summary="Confirm HITL voice contract",
+)
 async def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceContractResponse:
-    """Resume HITL via MAF → voice MCP."""
+    """
+    Resume after start. Send `legal_entity` (e.g. AVC), `contract_reference_number`
+    (e.g. CR-1001), `thread_id` from the start response, and `user_text` such as `yes`.
+    """
     from ip_api.flow_debug import flow_breakpoint
 
     from ip_api.services.maf_client import invoke_tool
@@ -857,7 +975,12 @@ async def voice_contract_confirm(body: VoiceContractConfirmRequest) -> VoiceCont
     return VoiceContractResponse(**_attach_session(payload, session))
 
 
-@router.post("/voice/contract/from-audio", response_model=VoiceContractResponse)
+@router.post(
+    "/voice/contract/from-audio",
+    response_model=VoiceContractResponse,
+    tags=["voice"],
+    summary="Transcribe audio then start contract",
+)
 async def voice_contract_from_audio(
     store: JobStoreDep,
     cfg: SettingsDep,
@@ -869,7 +992,12 @@ async def voice_contract_from_audio(
     user_id: str | None = Form(default=None),
     user_email: str | None = Form(default=None),
 ) -> VoiceContractResponse:
-    """Transcribe audio in the API, then start the contract via MAF → voice MCP."""
+    """
+    Multipart: `audio` file, optional `language`, `provider`, `auto_create`.
+
+    Transcribes in the gateway, then the same start path as `/voice/contract`.
+    Confirm still uses `/voice/contract/confirm` if HITL is required.
+    """
     from ip_api.services.maf_client import invoke_tool
 
     session = ensure_request_session(
@@ -938,18 +1066,31 @@ async def _voice_contract_row(contract_id: str, store: JobStore) -> dict[str, An
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.get("/voice/contracts/{contract_id}")
+@router.get(
+    "/voice/contracts/{contract_id}",
+    tags=["voice"],
+    summary="Get voice contract metadata",
+)
 async def get_voice_contract(contract_id: str, store: JobStoreDep) -> dict[str, Any]:
+    """Looks up via MAF list, then local store. **404** if unknown."""
     return await _voice_contract_row(contract_id, store)
 
 
-@router.get("/voice/contracts/{contract_id}/download")
+@router.get(
+    "/voice/contracts/{contract_id}/download",
+    tags=["voice"],
+    summary="Download voice contract file",
+)
 async def download_voice_contract(
     contract_id: str,
     store: JobStoreDep,
     cfg: SettingsDep,
-    format: str = "docx",
+    format: str = Query(
+        default="docx",
+        description="`docx` or `txt`. File lives on the voice MCP host disk.",
+    ),
 ) -> FileResponse:
+    """Binary contract. Query `format=txt` for plain text when available."""
     row = await _voice_contract_row(contract_id, store)
 
     path = row.get("contract_file")
@@ -980,8 +1121,13 @@ async def download_voice_contract(
     )
 
 
-@router.get("/voice/contracts")
+@router.get(
+    "/voice/contracts",
+    tags=["voice"],
+    summary="List voice contracts",
+)
 async def list_voice_contracts(limit: int = 50) -> dict[str, Any]:
+    """Via MAF → voice MCP `list_voice_contracts`. Newest/limit depends on MCP."""
     from ip_api.services.maf_client import invoke_tool
 
     try:

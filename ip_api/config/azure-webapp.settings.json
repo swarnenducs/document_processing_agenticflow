@@ -145,6 +145,11 @@
     "slotSetting": false
   },
   {
+    "name": "CORS_ORIGINS",
+    "value": "https://<angular-app>.azurewebsites.net,https://<ui-app>.azurewebsites.net",
+    "slotSetting": false
+  },
+  {
     "name": "SPEECH_PROVIDER",
     "value": "groq",
     "slotSetting": false

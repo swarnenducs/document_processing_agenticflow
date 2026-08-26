@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class JobCreateOptions(BaseModel):
@@ -15,8 +15,8 @@ class JobCreateOptions(BaseModel):
 
 
 class JobAcceptedResponse(BaseModel):
-    job_id: str
-    xid: str | None = None
+    job_id: str = Field(description="Use in status, download, WebSocket, and accuracy URLs")
+    xid: str | None = Field(default=None, description="Correlation id (also in X-Request-ID)")
     session_id: str | None = None
     user_id: str | None = None
     user_email: str | None = None
@@ -25,17 +25,17 @@ class JobAcceptedResponse(BaseModel):
         "Job accepted. Prefer WebSocket ws_url for live stages, "
         "or long-poll GET status_url?wait=true, then download."
     )
-    status_url: str
-    download_url: str
-    ws_url: str | None = None
+    status_url: str = Field(description="GET this path; add ?wait=true to long-poll")
+    download_url: str = Field(description="GET when status is completed")
+    ws_url: str | None = Field(default=None, description="WebSocket for live stages")
 
 
 class JobStatusResponse(BaseModel):
     job_id: str
-    mcp: str | None = None
+    mcp: str | None = Field(default=None, description="Which MCP handled the job, when known")
     xid: str | None = None
     session_id: str | None = None
-    status: str
+    status: str = Field(description="pending | processing | completed | failed")
     template_path: str | None = None
     output_path: str | None = None
     error_message: str | None = None
@@ -108,7 +108,19 @@ class TranscriptionResponse(BaseModel):
 
 
 class VoiceContractRequest(BaseModel):
-    """Optional: run workflow on already-transcribed text (no audio)."""
+    """Start HITL from already-transcribed (or typed) text."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "transcript": (
+                    "please create contract with legal entity AVC "
+                    "contract reference number CR-1001"
+                ),
+                "auto_create": False,
+            }
+        }
+    )
 
     transcript: str = Field(..., min_length=1, description="Spoken / typed instruction")
     auto_create: bool = Field(
@@ -121,6 +133,17 @@ class VoiceContractRequest(BaseModel):
 
 
 class VoiceContractConfirmRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "legal_entity": "AVC",
+                "contract_reference_number": "CR-1001",
+                "thread_id": "paste-thread-id-from-start",
+                "user_text": "yes",
+            }
+        }
+    )
+
     legal_entity: str = Field(..., min_length=1, description="Legal entity code or name")
     contract_reference_number: str = Field(
         ..., min_length=1, description="Contract reference to confirm, e.g. CR-1001"
@@ -168,9 +191,9 @@ class VoiceContractResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str = "ok"
-    storage_base_path: str
-    sqlite_database_path: str
+    status: str = Field(default="ok", description="ok if mapper LLM is configured, else degraded")
+    storage_base_path: str = Field(description="Local storage root used by this gateway")
+    sqlite_database_path: str = Field(description="SQLite file when not on Azure SQL")
     speech_provider: str
     # LLM availability for UI banners (no secrets)
     mapper_provider: str | None = None
