@@ -59,6 +59,7 @@ def build_database_url(*, sqlite_path: Path | None = None) -> str:
                 f"Uid={user};"
                 f"Pwd={{{_odbc_escape(password)}}};"
                 "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+                "ConnectRetryCount=2;ConnectRetryInterval=5;"
             )
             return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc)}"
         return (
@@ -83,7 +84,8 @@ def get_engine(*, sqlite_path: Path | None = None) -> Engine:
     if url.startswith("sqlite:///"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        kwargs["pool_recycle"] = 1800
+        kwargs["pool_recycle"] = 300
+        kwargs["pool_pre_ping"] = True
         if url.startswith("mssql+pyodbc"):
             # Avoid empty VARCHAR(MAX) binds in Azure Portal / pyodbc.
             kwargs["use_setinputsizes"] = False
@@ -323,6 +325,37 @@ IF NOT EXISTS (
             logger.warning("Azure SQL migrate could not recreate xid index: %s", exc)
 
 
+def _seed_master_data(engine: Engine) -> None:
+    """Insert default legal/sales blocks only when the table is empty.
+
+    Later admin DELETE must stick; do not re-insert keys the operator removed.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from ip_api.storage.master_data_seed import DEFAULT_MASTER_DATA_ROWS
+    from ip_api.storage.models import MasterData
+
+    now = datetime.now(timezone.utc).isoformat()
+    with Session(engine) as session:
+        count = session.scalar(select(func.count()).select_from(MasterData)) or 0
+        if count:
+            return
+        for row in DEFAULT_MASTER_DATA_ROWS:
+            session.add(
+                MasterData(
+                    id=row["id"],
+                    placeholder_key=row["placeholder_key"],
+                    category=row["category"],
+                    content=row["content"],
+                    active="true",
+                    updated_at=now,
+                )
+            )
+        session.commit()
+
+
 def ensure_schema(*, sqlite_path: Path | None = None) -> None:
     from ip_api.storage.models import Base
 
@@ -332,6 +365,7 @@ def ensure_schema(*, sqlite_path: Path | None = None) -> None:
     Base.metadata.create_all(engine)
     if engine_uses_mssql(str(engine.url)):
         _migrate_mssql_document_tables(engine)
+    _seed_master_data(engine)
 
 
 def reset_engines() -> None:

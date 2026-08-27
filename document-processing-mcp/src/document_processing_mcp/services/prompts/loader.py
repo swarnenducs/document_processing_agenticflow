@@ -10,10 +10,17 @@ from typing import Any
 import yaml
 from langchain_core.prompts import ChatPromptTemplate
 
+from document_processing_mcp.services.prompts.prompt_versions import (
+    assert_file_version,
+    catalog_as_dicts,
+    load_prompt_versions,
+    resolve_versioned_path,
+    versions_file,
+)
+
 
 def _component_root() -> Path:
     """document-processing-mcp/ (contains prompts/ + src/)."""
-    # .../src/document_processing_mcp/services/prompts/loader.py → parents[4]
     return Path(__file__).resolve().parents[4]
 
 
@@ -22,7 +29,7 @@ _PACKAGE_DEFAULTS = Path(__file__).resolve().parent / "yml"
 
 
 def prompts_dir() -> Path:
-    """Directory containing mapper.yml / validator.yml for the document MCP."""
+    """Directory containing versioned mapper / validator YAML."""
     override = (
         os.getenv("DOCUMENT_PROMPTS_DIR", "").strip()
         or os.getenv("PROMPTS_DIR", "").strip()
@@ -32,32 +39,43 @@ def prompts_dir() -> Path:
     return (_COMPONENT_ROOT / "prompts").resolve()
 
 
-def resolve_prompt_path(filename: str) -> Path:
-    """
-    Resolution order:
-      1) DOCUMENT_PROMPTS_DIR or PROMPTS_DIR / <filename>
-      2) document-processing-mcp/prompts/<filename>
-      3) packaged defaults under services/prompts/yml/<filename>
-    """
-    primary = prompts_dir() / filename
-    if primary.is_file():
-        return primary
-    fallback = _PACKAGE_DEFAULTS / filename
-    if fallback.is_file():
-        return fallback
-    raise FileNotFoundError(
-        f"Prompt file '{filename}' not found in {prompts_dir()} "
-        f"or package defaults {_PACKAGE_DEFAULTS}. "
-        "Set DOCUMENT_PROMPTS_DIR / PROMPTS_DIR or add the YAML file."
+def prompt_versions_path() -> Path:
+    return versions_file(
+        env_names=("DOCUMENT_PROMPT_VERSIONS_FILE", "PROMPT_VERSIONS_FILE"),
+        default=_COMPONENT_ROOT / "config" / "prompt_versions.json",
     )
+
+
+def prompt_version_catalog():
+    return load_prompt_versions(prompt_versions_path())
+
+
+def resolve_prompt_path(filename: str) -> Path:
+    """Resolve the file for the version required in prompt_versions.json."""
+    path, _required = resolve_versioned_path(
+        name=filename,
+        prompts_dir=prompts_dir(),
+        catalog=prompt_version_catalog(),
+        extra_dirs=(_PACKAGE_DEFAULTS,),
+    )
+    return path
 
 
 def load_prompt_yaml(filename: str, *, reload: bool = True) -> dict[str, Any]:
     """Load a prompt YAML. Reloads from disk each call so edits apply without restart."""
-    path = resolve_prompt_path(filename)
+    catalog = prompt_version_catalog()
+    path, required = resolve_versioned_path(
+        name=filename,
+        prompts_dir=prompts_dir(),
+        catalog=catalog,
+        extra_dirs=(_PACKAGE_DEFAULTS,),
+    )
     if reload:
         _load_yaml_cached.cache_clear()
-    return _load_yaml_cached(str(path), path.stat().st_mtime_ns)
+    payload = _load_yaml_cached(str(path), path.stat().st_mtime_ns)
+    assert_file_version(str(payload["version"]), required, path=path)
+    payload["required_version"] = required
+    return payload
 
 
 @lru_cache(maxsize=16)
@@ -69,12 +87,16 @@ def _load_yaml_cached(path_str: str, _mtime_ns: int) -> dict[str, Any]:
         raise ValueError(f"Prompt YAML root must be a mapping: {path}")
     system = data.get("system")
     human = data.get("human")
+    version = str(data.get("version") or "").strip()
+    if not version:
+        raise ValueError(f"Prompt YAML missing 'version': {path}")
     if not isinstance(system, str) or not system.strip():
         raise ValueError(f"Prompt YAML missing non-empty 'system' string: {path}")
     if not isinstance(human, str) or not human.strip():
         raise ValueError(f"Prompt YAML missing non-empty 'human' string: {path}")
     return {
         "name": str(data.get("name") or path.stem),
+        "version": version,
         "system": system.strip(),
         "human": human.strip(),
         "path": str(path),
@@ -88,4 +110,12 @@ def chat_prompt_from_yaml(filename: str) -> ChatPromptTemplate:
             ("system", payload["system"]),
             ("human", payload["human"]),
         ]
+    )
+
+
+def catalog_prompt_files() -> list[dict[str, Any]]:
+    return catalog_as_dicts(
+        prompt_version_catalog(),
+        prompts_dir=prompts_dir(),
+        extra_dirs=(_PACKAGE_DEFAULTS,),
     )

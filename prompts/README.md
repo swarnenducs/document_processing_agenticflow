@@ -1,11 +1,17 @@
-# Prompts live inside each component (do not keep YAML here)
+# Prompts live inside each component
 
-| Component | Path |
-|---|---|
-| Document | `document-processing-mcp/prompts/` — `mapper.yml`, `validator.yml`, `extraction_validator.yml`, `agent.yml` (all LangChain `ChatPromptTemplate`) |
-| Voice | `voice_enable_mcp/prompts/` — `intent.yml`, `confirm.yml` (LCEL `ChatPromptTemplate \| llm`) |
-| MAF | `central-agentic-flow/prompts/orchestrator_instructions.md` + registry YAML; each ask formatted via `ChatPromptTemplate` |
+Each component has `config/prompt_versions.json`. That JSON names the
+**required_version**; the loader uses `prompts/{name}.{version}.*`.
 
-Env: `DOCUMENT_PROMPTS_DIR`, `VOICE_PROMPTS_DIR`, `MAF_PROMPTS_DIR`
+| Component | Prompts | Version JSON |
+|---|---|---|
+| Document | `document-processing-mcp/prompts/*.{version}.yml` | `document-processing-mcp/config/prompt_versions.json` |
+| Voice | `voice_enable_mcp/prompts/*.{version}.yml` | `voice_enable_mcp/config/prompt_versions.json` |
+| MAF | `central-agentic-flow/prompts/*.{version}.md` | `central-agentic-flow/config/prompt_versions.json` |
 
-Architecture and interview notes: [docs/README.md](../docs/README.md)
+Env (optional path override): `DOCUMENT_PROMPT_VERSIONS_FILE`,
+`VOICE_PROMPT_VERSIONS_FILE`, `MAF_PROMPT_VERSIONS_FILE`.
+Folder override: `DOCUMENT_PROMPTS_DIR`, `VOICE_PROMPTS_DIR`, `MAF_PROMPTS_DIR`.
+
+Architecture: [docs/README.md](../docs/README.md),
+[docs/MAF_PROMPT_GUARDRAILS.md](../docs/MAF_PROMPT_GUARDRAILS.md).

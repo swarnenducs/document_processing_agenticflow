@@ -8,7 +8,8 @@
   `python run_all_components.py` already fetch the secret when
   AZURE_KEY_VAULT_NAME (or AZURE_KEY_VAULT_URL) is set in .env.
 
-  Requires: Azure CLI (`az login`) and Key Vault Secrets User on your account.
+  Requires: `az login` (tenant that owns the vault), or
+  AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET.
 
 .EXAMPLE
   az login

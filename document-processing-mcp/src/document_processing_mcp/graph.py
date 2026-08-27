@@ -1,4 +1,4 @@
-"""LangGraph workflow: extract → extraction-validate → map → generate → validate."""
+"""LangGraph workflow: extract → synthesize markers if needed → master-data → …"""
 
 from __future__ import annotations
 
@@ -6,11 +6,13 @@ from langgraph.graph import END, START, StateGraph
 
 from document_processing_mcp.models.state import DocumentProcessingState
 from document_processing_mcp.nodes.pipeline import (
+    enrich_master_data_node,
     extract_styles_node,
     finalize_node,
     generate_document_node,
     load_data_node,
     map_fields_node,
+    synthesize_markers_node,
     validate_document_node,
     validate_extraction_node,
 )
@@ -74,6 +76,8 @@ def build_graph():
 
     graph.add_node("load_data", load_data_node)
     graph.add_node("extract_styles", extract_styles_node)
+    graph.add_node("synthesize_markers", synthesize_markers_node)
+    graph.add_node("enrich_master_data", enrich_master_data_node)
     graph.add_node("validate_extraction", validate_extraction_node)
     graph.add_node("map_fields", map_fields_node)
     graph.add_node("generate_document", generate_document_node)
@@ -89,6 +93,16 @@ def build_graph():
     )
     graph.add_conditional_edges(
         "extract_styles",
+        _should_continue,
+        {"continue": "synthesize_markers", "stop": END},
+    )
+    graph.add_conditional_edges(
+        "synthesize_markers",
+        _should_continue,
+        {"continue": "enrich_master_data", "stop": END},
+    )
+    graph.add_conditional_edges(
+        "enrich_master_data",
         _should_continue,
         {"continue": "validate_extraction", "stop": END},
     )

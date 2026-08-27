@@ -17,6 +17,8 @@ def test_prompts_dir_contains_mapper_and_validator() -> None:
 
 def test_load_mapper_yaml_has_system_and_human() -> None:
     payload = load_prompt_yaml("mapper.yml")
+    assert payload["version"] == "1.0.0"
+    assert payload["required_version"] == "1.0.0"
     assert "document field mapper" in payload["system"].lower()
     assert "{placeholders_json}" in payload["human"]
     assert "{data_json}" in payload["human"]
@@ -54,6 +56,22 @@ def test_extraction_validator_yaml_loads() -> None:
     assert "{placeholders_json}" in payload["human"]
     prompt = chat_prompt_from_yaml("extraction_validator.yml")
     for var in ("template_path", "placeholders_json", "blocks_json", "tables_json"):
+        assert var in prompt.input_variables
+
+
+def test_marker_synthesizer_yaml_loads() -> None:
+    payload = load_prompt_yaml("marker_synthesizer.yml")
+    assert payload["version"] == "1.0.0"
+    prompt = chat_prompt_from_yaml("marker_synthesizer.yml")
+    for var in (
+        "document_text",
+        "blocks_json",
+        "tables_json",
+        "reference_name",
+        "reference_placeholders_json",
+        "reference_preview",
+        "json_keys_json",
+    ):
         assert var in prompt.input_variables
 
 

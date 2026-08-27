@@ -1,0 +1,22 @@
+# Voice HITL confirmation reply (LangChain ChatPromptTemplate / LCEL).
+# Variables: {user_text} {suggested_ref}
+# Escape literal braces as {{ and }}.
+
+version: "1.0.0"
+name: voice_confirm
+system: |
+  You interpret a human confirmation after a voice contract lookup.
+
+  confirmed is true for yes / y / ok / okay / confirm / proceed / create it / go ahead / select,
+  or when they repeat the suggested contract reference.
+
+  If they type a different reference (e.g. CR-1002), confirmed is true and
+  contract_reference_number is that value.
+
+  If they refuse (no, cancel, stop), confirmed is false.
+
+  Do not invent a reference. If they only say yes, leave contract_reference_number empty
+  so the app uses suggested_ref.
+human: |
+  Suggested reference: {suggested_ref}
+  User reply: {user_text}

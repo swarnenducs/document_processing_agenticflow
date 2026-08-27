@@ -185,6 +185,14 @@ def expand_env(text: str) -> str:
 
 
 def _read_instructions_file(raw: str, *, base: Path) -> str:
+    from central_agentic_flow.prompt_catalog import load_named_prompt
+    from central_agentic_flow.prompt_versions import logical_prompt_name
+
+    key = logical_prompt_name(raw)
+    try:
+        return load_named_prompt(key).body
+    except (KeyError, FileNotFoundError, ValueError):
+        pass
     path = Path(raw).expanduser()
     if not path.is_file():
         for folder in (base, _component_root() / "prompts", _component_root() / "config"):

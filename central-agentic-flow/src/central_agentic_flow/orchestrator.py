@@ -18,6 +18,11 @@ from central_agentic_flow.mcp_registry import (
     build_agent_instructions,
     orchestrator_preamble_from_yaml,
 )
+from central_agentic_flow.prompt_catalog import (
+    load_guardrail_instructions,
+    load_markdown_prompt,
+    load_orchestrator_prompt,
+)
 
 
 DEFAULT_INSTRUCTIONS = """\
@@ -32,21 +37,6 @@ Rules:
 """
 
 
-def _component_root() -> Path:
-    """central-agentic-flow/ (contains prompts/ + src/)."""
-    return Path(__file__).resolve().parents[2]
-
-
-def prompts_dir() -> Path:
-    override = (
-        os.getenv("MAF_PROMPTS_DIR", "").strip()
-        or os.getenv("PROMPTS_DIR", "").strip()
-    )
-    if override:
-        return Path(override).expanduser().resolve()
-    return (_component_root() / "prompts").resolve()
-
-
 def load_maf_instructions() -> str:
     """Resolve MAF system instructions: env → prompts file → default."""
     inline = _clean(os.getenv("MAF_INSTRUCTIONS"))
@@ -56,25 +46,22 @@ def load_maf_instructions() -> str:
     if file_override:
         override_path = Path(file_override).expanduser()
         if override_path.is_file():
-            text = override_path.read_text(encoding="utf-8").strip()
-            if text:
-                lines = text.splitlines()
-                if lines and lines[0].lstrip().startswith("#"):
-                    text = "\n".join(lines[1:]).strip()
+            try:
+                return load_markdown_prompt(override_path).body
+            except ValueError:
+                text = override_path.read_text(encoding="utf-8").strip()
                 if text:
-                    return text
+                    lines = text.splitlines()
+                    if lines and lines[0].lstrip().startswith("#"):
+                        text = "\n".join(lines[1:]).strip()
+                    if text:
+                        return text
     yaml_preamble = orchestrator_preamble_from_yaml()
     if yaml_preamble:
         return yaml_preamble
-    default_path = prompts_dir() / "orchestrator_instructions.md"
-    if default_path.is_file():
-        text = default_path.read_text(encoding="utf-8").strip()
-        if text:
-            lines = text.splitlines()
-            if lines and lines[0].lstrip().startswith("#"):
-                text = "\n".join(lines[1:]).strip()
-            if text:
-                return text
+    spec = load_orchestrator_prompt()
+    if spec is not None:
+        return spec.body
     return DEFAULT_INSTRUCTIONS
 
 
@@ -83,6 +70,12 @@ class MafAskResult:
     text: str
     response_id: str | None = None
     raw: Any | None = None
+    role: str | None = None
+    persona: str | None = None
+    prompt: str | None = None
+    version: str | None = None
+    authorized: bool = True
+    validation: dict[str, Any] | None = None
 
 
 def _clean(value: str | None) -> str | None:
@@ -230,38 +223,85 @@ def maf_request_timeout() -> int:
         return 300
 
 
-async def ask_maf(message: str, *, instructions: str | None = None) -> MafAskResult:
-    """Run one MAF turn against every registered MCP HTTP server."""
+async def ask_maf(
+    message: str | None = None,
+    *,
+    instructions: str | None = None,
+    role: str | None = None,
+    persona: str | None = None,
+    prompt: str | None = None,
+) -> MafAskResult:
+    """Validate request Persona vs Prompt with one LLM prompt, then maybe execute.
+
+    Persona comes from the request. Chat tools are shared (not per-persona).
+    Execute only if the validator JSON is allowed and confidence meets
+    ``MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE`` (default 0.95).
+    """
     from agent_framework import Agent, MCPStreamableHTTPTool
     from central_agentic_flow.flow_debug import flow_breakpoint
+    from central_agentic_flow.persona_validator import (
+        describe_available_tools,
+        should_execute,
+        validate_user_prompt,
+    )
 
-    flow_breakpoint("ask_maf", message=message)
+    caller = (persona or role or "").strip()
+    user_text = (prompt or message or "").strip()
+    flow_breakpoint("ask_maf", message=user_text, role=caller, prompt=prompt)
 
-    text = (message or "").strip()
-    if not text:
-        raise ValueError("message must be non-empty")
+    if not user_text:
+        raise ValueError("Provide Prompt")
+    if not caller:
+        raise ValueError("Provide Persona")
 
+    registry = ask_mcp_servers()
     timeout = maf_request_timeout()
     client = resolve_maf_chat_client()
-    system_raw = instructions or build_agent_instructions(preamble=load_maf_instructions())
-    system, user_text = format_orchestrator_turn(
-        system_instructions=system_raw,
-        message=text,
+
+    validation = await validate_user_prompt(
+        client=client,
+        persona_definition=caller,
+        user_prompt=user_text,
+        available_tools=describe_available_tools(registry),
     )
-    # Chat runs tool-less until an ask-mode MCP (e.g. BUSINESS_MCP_URL or
-    # CHAT_MCP_END_POINT) is configured.
-    # Document and voice are jobs-only and must not be reachable from chat.
-    registry = ask_mcp_servers()
+    authorized = should_execute(validation)
+    persona_label = str(validation.get("persona") or caller.splitlines()[0][:80])
+    if not authorized:
+        reason = str(validation.get("reason") or "Prompt is not allowed for this persona.")
+        return MafAskResult(
+            text=reason,
+            role=persona_label,
+            persona=caller,
+            prompt=user_text,
+            version=str(validation.get("prompt_version") or None),
+            authorized=False,
+            validation=validation,
+        )
+
+    persona_block = (
+        "Persona Definition (from the request; this is the authority for scope):\n"
+        f"{caller}"
+    )
+    preamble = f"{load_maf_instructions().rstrip()}\n\n{persona_block}"
+    system_raw = instructions or build_agent_instructions(preamble=preamble)
+    guardrail = load_guardrail_instructions()
+    if guardrail:
+        system_raw = f"{system_raw.rstrip()}\n\n{guardrail}"
+    system, formatted_user = format_orchestrator_turn(
+        system_instructions=system_raw,
+        message=user_text,
+        persona=persona_label,
+    )
 
     async with AsyncExitStack() as stack:
         tools = []
-        for spec in registry:
+        for mcp_spec in registry:
             mcp_tool = await stack.enter_async_context(
                 MCPStreamableHTTPTool(
-                    name=spec.mcp_key,
-                    url=spec.url,
-                    description=spec.description,
-                    tool_name_prefix=spec.prefix,
+                    name=mcp_spec.mcp_key,
+                    url=mcp_spec.url,
+                    description=mcp_spec.description,
+                    tool_name_prefix=mcp_spec.prefix,
                     approval_mode="never_require",
                     request_timeout=timeout,
                 )
@@ -275,10 +315,16 @@ async def ask_maf(message: str, *, instructions: str | None = None) -> MafAskRes
                 tools=tools,
             )
         )
-        response = await agent.run(user_text)
+        response = await agent.run(formatted_user)
 
     return MafAskResult(
         text=getattr(response, "text", None) or str(response),
         response_id=getattr(response, "response_id", None),
         raw=response,
+        role=persona_label,
+        persona=caller,
+        prompt=user_text,
+        version=str(validation.get("prompt_version") or None),
+        authorized=True,
+        validation=validation,
     )

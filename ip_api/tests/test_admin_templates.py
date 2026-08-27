@@ -38,8 +38,12 @@ def _isolate_local(tmp_path: Path, monkeypatch, *, admin_key: str | None = ADMIN
         monkeypatch.delenv(key, raising=False)
 
     from ip_api.core.settings import reload_settings
+    from ip_api.storage.blob_store import reset_blob_store
+    from ip_api.storage.template_store import reset_template_store
 
     reload_settings()
+    reset_template_store()
+    reset_blob_store()
     return storage
 
 
@@ -144,7 +148,7 @@ def test_list_filters_by_folder_and_reports_backend(admin_client, tmp_path: Path
 
 
 def test_dedicated_path_upload_and_list_by_folder(admin_client, tmp_path: Path) -> None:
-    """POST/GET /admin/templates/{folder_name} — pass ipp_default_template."""
+    """POST/GET /admin/templates/{folder_name} — default folder ipp_pricing_default_template."""
     client, storage = admin_client
     docx = build_sample_template(tmp_path / "upload.docx").read_bytes()
 
@@ -322,3 +326,28 @@ def test_document_job_with_unknown_stored_template_is_404(admin_client) -> None:
         data={"data": "{}", "folder_name": FOLDER, "template_name": "nope"},
     )
     assert resp.status_code == 404
+
+
+def test_public_library_list_needs_no_admin_key(admin_client, tmp_path: Path) -> None:
+    client, _ = admin_client
+    _upload(client, tmp_path, name="gpo-pricing")
+    resp = client.get("/api/v1/documents/templates")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["folder_name"] == FOLDER
+    assert FOLDER == "ipp_pricing_default_template"
+    names = {row["template_name"] for row in body["templates"]}
+    assert "gpo-pricing.docx" in names
+
+
+def test_public_library_list_includes_docx_on_disk_without_sql(
+    admin_client,
+) -> None:
+    client, storage = admin_client
+    folder = storage / "templates" / FOLDER
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "from-blob-layout.docx").write_bytes(b"PK\x03\x04")
+    body = client.get("/api/v1/documents/templates").json()
+    assert (storage / "templates" / FOLDER / "from-blob-layout.docx").is_file()
+    names = {row["template_name"] for row in body["templates"]}
+    assert "from-blob-layout.docx" in names

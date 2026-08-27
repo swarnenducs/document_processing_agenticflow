@@ -7,7 +7,7 @@ For full product architecture (FastAPI, Gradio, OOXML), see [DEVELOPER_GUIDE.md]
 
 ## 1. Elevator pitch (this project)
 
-> We use **LangGraph as a typed state machine** for a document pipeline: load JSON → extract Word styles → **LLM #1 maps** fields → generate `.docx` → **LLM #2 validates** → finalize, with a **conditional retry** if validation fails.  
+> We use **LangGraph as a typed state machine** for a document pipeline: load JSON → extract Word styles → **SQL master-data** (legal/sales blocks unless JSON override) → **LLM #1 maps** fields → generate `.docx` → **LLM #2 validates** → finalize, with a **conditional retry** if validation fails.  
 > Providers/models are **dynamic via env + an injectable factory** (`MAPPER_PROVIDER` / `VALIDATOR_PROVIDER`), not hardcoded.  
 > An optional **tool-calling agent** (`create_agent`) can orchestrate the same steps as tools.
 
@@ -29,7 +29,7 @@ For full product architecture (FastAPI, Gradio, OOXML), see [DEVELOPER_GUIDE.md]
 ### Whiteboard shape (memorize)
 
 ```text
-START → load_data → extract_styles → map_fields → generate → validate
+START → load_data → extract_styles → enrich_master_data → map_fields → generate → validate
                          │                              │
                          └─ on fail → END               ├─ pass → finalize → END
                                                         └─ fail + retries left

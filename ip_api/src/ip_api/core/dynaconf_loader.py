@@ -94,3 +94,5 @@ def apply_dynaconf_from_env_files() -> Dynaconf:
         _export_box(last, override=False)
     assert last is not None
     return last
+
+

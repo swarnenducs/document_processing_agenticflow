@@ -10,51 +10,73 @@ from typing import Any
 import yaml
 from langchain_core.prompts import ChatPromptTemplate
 
+from voice_enable_mcp.prompt_versions import (
+    assert_file_version,
+    catalog_as_dicts,
+    load_prompt_versions,
+    resolve_versioned_path,
+    versions_file,
+)
+
 
 def _component_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
 _PACKAGE_DEFAULTS = Path(__file__).resolve().parent / "services" / "prompts" / "yml"
+_COMPONENT_ROOT = _component_root()
 
 
 def prompts_dir() -> Path:
     override = (os.getenv("VOICE_PROMPTS_DIR") or "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    return (_component_root() / "prompts").resolve()
+    return (_COMPONENT_ROOT / "prompts").resolve()
 
 
-def resolve_prompt_path(filename: str) -> Path:
-    """
-    Resolution order:
-      1) VOICE_PROMPTS_DIR / <filename>
-      2) voice_enable_mcp/prompts/<filename>
-      3) packaged defaults under services/prompts/yml/<filename>
-      4) PROMPTS_DIR / <filename> (legacy root)
-    """
-    candidates = [
-        prompts_dir() / filename,
-        _PACKAGE_DEFAULTS / filename,
-    ]
-    legacy = (os.getenv("PROMPTS_DIR") or "").strip()
-    if legacy:
-        candidates.append(Path(legacy).expanduser().resolve() / filename)
-    for path in candidates:
-        if path.is_file():
-            return path
-    raise FileNotFoundError(
-        f"Voice prompt '{filename}' not found in {prompts_dir()} "
-        f"or package defaults {_PACKAGE_DEFAULTS}. "
-        "Set VOICE_PROMPTS_DIR or add the YAML file."
+def prompt_versions_path() -> Path:
+    return versions_file(
+        env_names=("VOICE_PROMPT_VERSIONS_FILE", "PROMPT_VERSIONS_FILE"),
+        default=_COMPONENT_ROOT / "config" / "prompt_versions.json",
     )
 
 
+def prompt_version_catalog():
+    return load_prompt_versions(prompt_versions_path())
+
+
+def resolve_prompt_path(filename: str) -> Path:
+    extra = [_PACKAGE_DEFAULTS]
+    legacy = (os.getenv("PROMPTS_DIR") or "").strip()
+    if legacy:
+        extra.append(Path(legacy).expanduser().resolve())
+    path, _required = resolve_versioned_path(
+        name=filename,
+        prompts_dir=prompts_dir(),
+        catalog=prompt_version_catalog(),
+        extra_dirs=tuple(extra),
+    )
+    return path
+
+
 def load_prompt_yaml(filename: str, *, reload: bool = True) -> dict[str, Any]:
-    path = resolve_prompt_path(filename)
+    extra = [_PACKAGE_DEFAULTS]
+    legacy = (os.getenv("PROMPTS_DIR") or "").strip()
+    if legacy:
+        extra.append(Path(legacy).expanduser().resolve())
+    catalog = prompt_version_catalog()
+    path, required = resolve_versioned_path(
+        name=filename,
+        prompts_dir=prompts_dir(),
+        catalog=catalog,
+        extra_dirs=tuple(extra),
+    )
     if reload:
         _load_yaml_cached.cache_clear()
-    return _load_yaml_cached(str(path), path.stat().st_mtime_ns)
+    payload = _load_yaml_cached(str(path), path.stat().st_mtime_ns)
+    assert_file_version(str(payload["version"]), required, path=path)
+    payload["required_version"] = required
+    return payload
 
 
 @lru_cache(maxsize=16)
@@ -66,12 +88,16 @@ def _load_yaml_cached(path_str: str, _mtime_ns: int) -> dict[str, Any]:
         raise ValueError(f"Prompt YAML root must be a mapping: {path}")
     system = data.get("system")
     human = data.get("human")
+    version = str(data.get("version") or "").strip()
+    if not version:
+        raise ValueError(f"Prompt YAML missing 'version': {path}")
     if not isinstance(system, str) or not system.strip():
         raise ValueError(f"Prompt YAML missing non-empty 'system' string: {path}")
     if not isinstance(human, str) or not human.strip():
         raise ValueError(f"Prompt YAML missing non-empty 'human' string: {path}")
     return {
         "name": str(data.get("name") or path.stem),
+        "version": version,
         "system": system.strip(),
         "human": human.strip(),
         "path": str(path),
@@ -85,4 +111,16 @@ def chat_prompt_from_yaml(filename: str) -> ChatPromptTemplate:
             ("system", payload["system"]),
             ("human", payload["human"]),
         ]
+    )
+
+
+def catalog_prompt_files() -> list[dict[str, Any]]:
+    extra = [_PACKAGE_DEFAULTS]
+    legacy = (os.getenv("PROMPTS_DIR") or "").strip()
+    if legacy:
+        extra.append(Path(legacy).expanduser().resolve())
+    return catalog_as_dicts(
+        prompt_version_catalog(),
+        prompts_dir=prompts_dir(),
+        extra_dirs=tuple(extra),
     )

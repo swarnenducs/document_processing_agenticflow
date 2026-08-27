@@ -318,12 +318,41 @@ IF NOT EXISTS (
             logger.warning("Azure SQL migrate could not recreate xid index: %s", exc)
 
 
+def _seed_master_data(engine: Engine) -> None:
+    """Insert default legal/sales blocks only when the table is empty."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from document_processing_mcp.services.master_data import DEFAULT_MASTER_DATA_ROWS
+    from document_processing_mcp.storage.sql_models import MasterData
+
+    now = datetime.now(timezone.utc).isoformat()
+    with Session(engine) as session:
+        count = session.scalar(select(func.count()).select_from(MasterData)) or 0
+        if count:
+            return
+        for row in DEFAULT_MASTER_DATA_ROWS:
+            session.add(
+                MasterData(
+                    id=row["id"],
+                    placeholder_key=row["placeholder_key"],
+                    category=row["category"],
+                    content=row["content"],
+                    active="true",
+                    updated_at=now,
+                )
+            )
+        session.commit()
+
+
 def ensure_schema(*, sqlite_path: Path | None = None) -> None:
     from document_processing_mcp.storage.sql_models import (
         Base,
         CallLog,
         DocumentAccuracyReport,
         DocumentJob,
+        MasterData,
     )
 
     engine = get_engine(sqlite_path=sqlite_path)
@@ -331,10 +360,16 @@ def ensure_schema(*, sqlite_path: Path | None = None) -> None:
         _prepare_mssql_schema(engine)
     Base.metadata.create_all(
         engine,
-        tables=[DocumentJob.__table__, DocumentAccuracyReport.__table__, CallLog.__table__],
+        tables=[
+            DocumentJob.__table__,
+            DocumentAccuracyReport.__table__,
+            CallLog.__table__,
+            MasterData.__table__,
+        ],
     )
     if engine_uses_mssql(str(engine.url)):
         _migrate_mssql_document_tables(engine)
+    _seed_master_data(engine)
 
 
 def reset_engines() -> None:

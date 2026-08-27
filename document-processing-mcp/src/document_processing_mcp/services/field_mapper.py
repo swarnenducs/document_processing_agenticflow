@@ -273,11 +273,15 @@ def _llm_mapping(
                 )
             )
 
+    from document_processing_mcp.services.table_fill_infer import infer_table_fills, merge_table_fills
+
     if not mappings and not valid_fills:
-        raise RuntimeError(
-            "Mapper LLM returned no mappings/table_fills. "
-            "Check template placeholders and JSON content."
-        )
+        valid_fills = infer_table_fills(template, data)
+        if not valid_fills:
+            raise RuntimeError(
+                "Mapper LLM returned no mappings/table_fills. "
+                "Check template placeholders and JSON content."
+            )
 
     payload = MappingResult(
         mappings=mappings,
@@ -290,14 +294,15 @@ def _llm_mapping(
         mapper_model=config.model,
     )
     enriched = enrich_mapping_scores(payload, len(template.placeholders) or 1)
-    if valid_fills and not template.placeholders:
+    enriched = merge_table_fills(enriched, infer_table_fills(template, data))
+    if enriched.table_fills and not template.placeholders:
         enriched.coverage_score = 1.0
         enriched.mapping_confidence = max(
             enriched.mapping_confidence,
-            sum(c.confidence for p in valid_fills for c in p.columns)
-            / max(1, sum(len(p.columns) for p in valid_fills)),
+            sum(c.confidence for p in enriched.table_fills for c in p.columns)
+            / max(1, sum(len(p.columns) for p in enriched.table_fills)),
         )
-    elif valid_fills:
+    elif enriched.table_fills:
         enriched.coverage_score = max(enriched.coverage_score, 0.85)
     return enriched
 

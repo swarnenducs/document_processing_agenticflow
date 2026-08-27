@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Load ``AZURE_SQL_PASSWORD`` from Azure Key Vault via the Azure CLI.
+"""Load ``AZURE_SQL_PASSWORD`` from Azure Key Vault.
 
-Used locally. App Service should use Key Vault references instead.
+Local (this script / run_all_components.py):
+  1. If AZURE_TENANT_ID + AZURE_CLIENT_ID + AZURE_CLIENT_SECRET are set, use
+     that Entra app (no az login).
+  2. Else use Azure CLI: run ``az login`` first (correct tenant).
 
-Skip (keep SQLite) when the vault is not configured.
-Skip when ``AZURE_SQL_PASSWORD`` is already set.
-Fetch when ``AZURE_KEY_VAULT_NAME`` or ``AZURE_KEY_VAULT_URL`` is set
-and the password is empty.
+Azure Web Apps do not use this script. Set a Key Vault *reference* on
+AZURE_SQL_PASSWORD and grant the app managed identity Key Vault Secrets User.
 
-  python run_all_components.py
-  source scripts/load_sql_password_from_keyvault.sh
-  python scripts/load_sql_password_from_keyvault.py --stdout
+Skip when the vault is not configured, or when ``AZURE_SQL_PASSWORD`` is already set.
 """
 
 from __future__ import annotations
@@ -70,11 +69,28 @@ def secret_name_from_env() -> str:
     )
 
 
+def vault_url(vault_name: str) -> str:
+    explicit = (os.getenv("AZURE_KEY_VAULT_URL") or os.getenv("AZURE_KEYVAULT_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    return f"https://{vault_name}.vault.azure.net"
+
+
+def _service_principal_parts() -> tuple[str, str, str] | None:
+    tenant = (os.getenv("AZURE_TENANT_ID") or "").strip()
+    client_id = (os.getenv("AZURE_CLIENT_ID") or "").strip()
+    secret = (os.getenv("AZURE_CLIENT_SECRET") or "").strip()
+    if tenant and client_id and secret:
+        return tenant, client_id, secret
+    return None
+
+
 def _run_az(args: list[str]) -> str:
     az = shutil.which("az")
     if az is None:
         raise RuntimeError(
-            "Azure CLI (`az`) is not on PATH. Install it, then run `az login`."
+            "Azure CLI (`az`) is not on PATH. Install it, then run `az login` "
+            "for the tenant that owns the Key Vault."
         )
     result = subprocess.run(
         [az, *args],
@@ -88,11 +104,7 @@ def _run_az(args: list[str]) -> str:
     return (result.stdout or "").strip()
 
 
-def fetch_sql_password(
-    *,
-    vault_name: str,
-    secret_name: str = DEFAULT_SECRET_NAME,
-) -> str:
+def _fetch_via_az(*, vault_name: str, secret_name: str) -> str:
     value = _run_az(
         [
             "keyvault",
@@ -113,6 +125,36 @@ def fetch_sql_password(
             f"Key Vault secret '{secret_name}' in vault '{vault_name}' is empty"
         )
     return value
+
+
+def _fetch_via_sdk(*, vault_name: str, secret_name: str) -> str:
+    from azure.identity import ClientSecretCredential
+    from azure.keyvault.secrets import SecretClient
+
+    tenant, client_id, secret = _service_principal_parts() or ("", "", "")
+    credential = ClientSecretCredential(
+        tenant_id=tenant, client_id=client_id, client_secret=secret
+    )
+    client = SecretClient(vault_url=vault_url(vault_name), credential=credential)
+    try:
+        value = (client.get_secret(secret_name).value or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(str(exc)) from exc
+    if not value:
+        raise RuntimeError(
+            f"Key Vault secret '{secret_name}' in vault '{vault_name}' is empty"
+        )
+    return value
+
+
+def fetch_sql_password(
+    *,
+    vault_name: str,
+    secret_name: str = DEFAULT_SECRET_NAME,
+) -> str:
+    if _service_principal_parts():
+        return _fetch_via_sdk(vault_name=vault_name, secret_name=secret_name)
+    return _fetch_via_az(vault_name=vault_name, secret_name=secret_name)
 
 
 def apply_sql_password_from_keyvault(*, strict: bool = True) -> bool:
@@ -150,7 +192,7 @@ def apply_sql_password_from_keyvault(*, strict: bool = True) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Fetch AZURE_SQL_PASSWORD from Azure Key Vault (Azure CLI)."
+        description="Fetch AZURE_SQL_PASSWORD from Azure Key Vault (az login, or Entra app)."
     )
     parser.add_argument(
         "--stdout",

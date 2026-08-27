@@ -8,7 +8,7 @@
 # (or AZURE_KEY_VAULT_URL) is set in .env. Source this only for a one-off
 # component run that does not go through that launcher.
 #
-# Requires: az login, Key Vault Secrets User on your account.
+# Requires: az login (correct tenant), OR AZURE_TENANT_ID / CLIENT_ID / CLIENT_SECRET.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

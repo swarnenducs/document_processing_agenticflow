@@ -37,7 +37,7 @@ For setup and API reference, see [README.md](../README.md). For Azure Web Apps +
                     │  generation, validation, confidence…    │
                     └─────────────────────────────────────────┘
                                          │
-  START → load_data → extract_styles → map_fields → generate → validate
+  START → load_data → extract_styles → enrich_master_data → map_fields → generate → validate
                               │              ▲                    │
                               │              │   bump_retry       │
                               │              └──────── retry ─────┤

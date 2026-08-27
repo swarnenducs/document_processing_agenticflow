@@ -39,7 +39,7 @@ SQLITE_DATABASE_PATH=./data/app.db
 
 `AZURE_SQL_USER` / `AZURE_SQL_DATABASE` / dialect / ODBC driver alone do **not** select Azure SQL. Restart `python ./run_all_components.py` after editing `.env`.
 
-Local **Azure SQL** (not SQLite): leave `AZURE_SQL_PASSWORD` empty, set server + `AZURE_KEY_VAULT_NAME`, `az login`. See [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md). Dynaconf later overlays the same keys: [DYNACONF.md](DYNACONF.md).
+Local **Azure SQL** (not SQLite): leave `AZURE_SQL_PASSWORD` empty, set server + `AZURE_KEY_VAULT_NAME` + Entra app id/secret. See [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md). Dynaconf later overlays the same keys: [DYNACONF.md](DYNACONF.md).
 
 ---
 
@@ -170,9 +170,10 @@ Used by whichever process actually calls that provider. UI never needs these.
 | `AZURE_SQL_DATABASE` | `ipp-app-db` | SQL users | Database name |
 | `AZURE_SQL_DIALECT` | `pyodbc` | SQL users | `pyodbc` or `pymssql` |
 | `AZURE_SQL_ODBC_DRIVER` | `ODBC Driver 18 for SQL Server` | SQL users | ODBC driver name |
-| `AZURE_KEY_VAULT_NAME` | unset | **local scripts / `run_all_components.py`** | Vault name; fetch SQL password via `az` |
+| `AZURE_KEY_VAULT_NAME` | unset | **local scripts / `run_all_components.py`** | Vault name; fetch SQL password via Entra app (no az login) |
 | `AZURE_KEY_VAULT_URL` | unset | local scripts | Alternate to vault name |
 | `AZURE_SQL_PASSWORD_SECRET_NAME` | `azure-sql-password` | local scripts | Secret name in the vault |
+| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | unset | local Key Vault loader | App registration used to read the SQL secret |
 | `AZURE_BLOB_CONTAINER` | `docuploadsolution` | ip_api, document-mcp | Blob container |
 | `AZURE_BLOB_PREFIX` | `jobs` | ip_api, document-mcp | Blob prefix for job files |
 | `AZURE_BLOB_TEMPLATE_PREFIX` | `templates` | ip_api | Blob prefix for the template library |
@@ -192,7 +193,7 @@ Used by whichever process actually calls that provider. UI never needs these.
 |---|---|---|---|
 | `GRADIO_HOST` | `127.0.0.1` | UI | Bind address |
 | `GRADIO_PORT` | `7860` | UI | Bind port |
-| `API_BASE_URL` | `http://127.0.0.1:8000` | UI (and ip_api health links) | FastAPI base the Gradio client calls |
+| `API_BASE_URL` | `http://127.0.0.1:8000` | UI | Default local API. Gradio **API targets** JSON (`active_target`) overrides at runtime; saved to `UI/config/ui_runtime.json`. |
 | `DEBUG_FLOW` | off | UI | Same as [debug flow](#debug-flow-default-off); logs Gradio + `api_client` |
 
 ---
@@ -203,7 +204,7 @@ Used by whichever process actually calls that provider. UI never needs these.
 |---|---|---|---|
 | `API_HOST` | `0.0.0.0` | ip_api | Bind address |
 | `API_PORT` | `8000` | ip_api | Bind port |
-| `ADMIN_API_KEY` | empty (admin off) | ip_api | `X-Admin-Api-Key` for `/api/v1/admin/templates` |
+| `ADMIN_API_KEY` | empty (admin off) | ip_api | `X-Admin-Api-Key` for `/api/v1/admin/templates` and `/api/v1/admin/master-data` |
 | `CORS_ORIGINS` | Angular `:4200` + Gradio `:7860` | ip_api | Browser REST (Angular). Comma-separated. WebSockets do not use CORS. |
 | `CENTRAL_AGENT_END_POINT` | `http://127.0.0.1:8003` | ip_api | API → MAF base URL for `/api/ask` and `POST {base}/invoke` (no `/invoke` suffix). Wins over `MAF_BASE_URL` / `MAF_URL`. |
 | `MAF_BASE_URL` | `http://127.0.0.1:8003` | ip_api | Alias of `CENTRAL_AGENT_END_POINT` |
@@ -214,7 +215,7 @@ Used by whichever process actually calls that provider. UI never needs these.
 | `SPEECH_PROVIDER` | `groq` | ip_api | `groq` / `openai` / `azure_openai` / `auto` for `POST /audio/transcribe` |
 | `GROQ_WHISPER_MODEL` | `whisper-large-v3` | ip_api, voice-mcp | Groq STT model |
 | `OPENAI_WHISPER_MODEL` | `whisper-1` | ip_api, voice-mcp | OpenAI STT model |
-| `AZURE_OPENAI_WHISPER_DEPLOYMENT` | unset | ip_api, voice-mcp | Azure Whisper deployment name |
+| `AZURE_OPENAI_WHISPER_DEPLOYMENT` | unset | ip_api, voice-mcp | Azure Whisper **deployment name** (not `whisper-1`) |
 | `DOCUMENT_MAX_RETRIES` | `1` | ip_api (passed to MCP), document-mcp | Default judge retries when the form omits `max_retries` (0–3) |
 | `DOCUMENT_VALIDATION_THRESHOLD` | `0.7` | ip_api, document-mcp | Default judge score bar when the form omits it (0–1) |
 | `DOCUMENT_ACCURACY_THRESHOLD` | alias | same | Alias for `DOCUMENT_VALIDATION_THRESHOLD` |
@@ -224,6 +225,8 @@ Used by whichever process actually calls that provider. UI never needs these.
 | `DOCUMENT_LLM_ROUTING_ENABLED` | alias | same | Alias for `DOCUMENT_LLM_OPTIMIZATION_ENABLED` |
 | `MAPPER_MODEL_ID` / `MAPPER_PROVIDER` / `MAPPER_MODEL` | see document-mcp | ip_api (health banner only) | Shown on `/health`; the mapper runs inside document-mcp |
 | `VALIDATOR_MODEL_ID` / `VALIDATOR_PROVIDER` / `VALIDATOR_MODEL` | see document-mcp | ip_api (health banner only) | Same for the judge |
+
+Azure Whisper: deploy model ID `whisper` in Foundry / Azure OpenAI (Audio API, 25 MB max), then `SPEECH_PROVIDER=azure_openai` and `AZURE_OPENAI_WHISPER_DEPLOYMENT=<deployment name>`. Same `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` as chat. `gpt-transcribe` is the newer offline model on the same path; Azure Speech batch Whisper is a different API and is not used here. [Overview](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/whisper-overview) · [quickstart](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/whisper-quickstart).
 
 ---
 
@@ -235,7 +238,8 @@ Used by whichever process actually calls that provider. UI never needs these.
 | `DOCUMENT_MCP_PORT` | `8001` | document-mcp | Bind port |
 | `DOCUMENT_MCP_TRANSPORT` | `http` | document-mcp | `http` or `stdio` |
 | `MCP_HOST` / `MCP_PORT` / `MCP_TRANSPORT` | aliases | document-mcp | Older aliases for the bind/transport |
-| `DOCUMENT_PROMPTS_DIR` | `./prompts` | document-mcp | Mapper / validator YAML folder |
+| `DOCUMENT_PROMPTS_DIR` | `./prompts` | document-mcp | Versioned mapper / validator YAML folder |
+| `DOCUMENT_PROMPT_VERSIONS_FILE` | `config/prompt_versions.json` | document-mcp | Required prompt versions (selects `*.{version}.yml`) |
 | `MAPPER_MODEL_ID` | `openai:gpt-5-mini` | document-mcp, voice-mcp | LangChain `provider:model` for LLM #1 (mapper) |
 | `MAPPER_PROVIDER` | `openai` | document-mcp | Split provider if `MAPPER_MODEL_ID` is unset |
 | `MAPPER_MODEL` | `gpt-5-mini` | document-mcp | Split model name |
@@ -258,6 +262,8 @@ Used by whichever process actually calls that provider. UI never needs these.
 
 When **optimised flow is on** and the request omits retries/threshold, values come from `llm_optimization.json`, not from `DOCUMENT_MAX_RETRIES`.
 
+JSON payload `system_instruction` (not an env var): `legal_notice_block` / `sales_notice_block` fill `<Legal_Department_Master_Data>` and `<Sales_Excellence_Master_Data>` from the `master_data` SQL table unless `"override": true` and `"value"` is set.
+
 ---
 
 ## voice_enable_mcp (`:8002`)
@@ -267,7 +273,8 @@ When **optimised flow is on** and the request omits retries/threshold, values co
 | `VOICE_MCP_HOST` | `127.0.0.1` | voice-mcp | Bind address |
 | `VOICE_MCP_PORT` | `8002` | voice-mcp | Bind port |
 | `VOICE_MCP_TRANSPORT` | `http` | voice-mcp | `http` or `stdio` |
-| `VOICE_PROMPTS_DIR` | `./prompts` | voice-mcp | Intent / confirm YAML |
+| `VOICE_PROMPTS_DIR` | `./prompts` | voice-mcp | Versioned intent / confirm YAML |
+| `VOICE_PROMPT_VERSIONS_FILE` | `config/prompt_versions.json` | voice-mcp | Required prompt versions |
 | `MAPPER_MODEL_ID` | `openai:gpt-5-mini` | voice-mcp | Intent + confirm LLM (same mapper credentials as documents if you share keys) |
 | `MAPPER_PROVIDER` | `openai` | voice-mcp | Split provider |
 | `AGENT_MODEL_ID` | unset | voice-mcp | Optional override for the contract agent |
@@ -294,7 +301,9 @@ When **optimised flow is on** and the request omits retries/threshold, values co
 | `MAF_API_VERSION` | unset | MAF | Azure API version for MAF |
 | `MAF_INSTRUCTIONS` | unset | MAF | Inline orchestrator instructions |
 | `MAF_INSTRUCTIONS_FILE` | prompts file | MAF | Path to orchestrator markdown |
-| `MAF_PROMPTS_DIR` | `./prompts` | MAF | Prompt folder |
+| `MAF_PROMPTS_DIR` | `./prompts` | MAF | Versioned markdown prompts |
+| `MAF_PROMPT_VERSIONS_FILE` | `config/prompt_versions.json` | MAF | Required prompt versions (selects `*.{version}.md`) |
+| `MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE` | `0.95` | MAF | `/ask` does not execute if validator `confidence` is below this (0–1 or 0–100) |
 | `MAF_MCP_REGISTRY_FILE` | `./config/mcp_registry.yml` | MAF | MCP catalog YAML |
 | `TEMPLATE_PROCESSING_END_POINT` | `http://127.0.0.1:8001/mcp` | MAF | MAF → document MCP (jobs-only). Wins over `DOCUMENT_MCP_URL`. |
 | `DOCUMENT_MCP_URL` | `http://127.0.0.1:8001/mcp` | MAF | Alias of `TEMPLATE_PROCESSING_END_POINT` |

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ip_api.api.schemas import (
     HealthResponse,
@@ -20,6 +20,7 @@ from ip_api.api.schemas import (
     JobCreateOptions,
     JobListResponse,
     JobStatusResponse,
+    LibraryTemplateListResponse,
     TraceByXidResponse,
     TranscriptionResponse,
     VoiceContractConfirmRequest,
@@ -35,7 +36,7 @@ from ip_api.services.session_service import ensure_request_session
 from ip_api.services.speech_to_text import transcribe_audio
 from ip_api.storage.blob_store import BlobStore, is_blob_ref
 from ip_api.storage.job_store import JobRecord, JobStore
-from ip_api.storage.template_store import TemplateStore
+from ip_api.storage.template_store import DEFAULT_TEMPLATE_FOLDER, TemplateStore
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -339,6 +340,48 @@ async def health(
 # ---------------------------------------------------------------------------
 
 
+@router.get(
+    "/documents/templates",
+    response_model=LibraryTemplateListResponse,
+    tags=["documents"],
+    summary="List library templates (ipp_pricing_default_template)",
+)
+def list_document_library_templates(
+    templates: TemplateStoreDep,
+    folder_name: str | None = Query(
+        default=None,
+        description=f"Library folder. Default: {DEFAULT_TEMPLATE_FOLDER}.",
+    ),
+) -> LibraryTemplateListResponse:
+    """Public list of Word templates in the library (SQL catalog plus Blob/disk files).
+
+    Default folder is `ipp_pricing_default_template`
+    (`templates/ipp_pricing_default_template/` on Azure Blob).
+    No admin key required. Upload still uses `/api/v1/admin/templates`.
+    """
+    from ip_api.storage.template_store import TemplateNameError
+
+    folder = folder_name or DEFAULT_TEMPLATE_FOLDER
+    try:
+        records = templates.list_library(folder_name=folder)
+    except TemplateNameError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return LibraryTemplateListResponse(
+        folder_name=folder,
+        count=len(records),
+        storage_backend=templates.backend,
+        templates=[
+            {
+                "folder_name": rec.folder_name,
+                "template_name": rec.template_name,
+                "location": rec.location,
+                "storage_backend": rec.storage_backend,
+            }
+            for rec in records
+        ],
+    )
+
+
 @router.post(
     "/documents/jobs",
     response_model=JobAcceptedResponse,
@@ -365,7 +408,7 @@ async def create_document_job(
     ),
     folder_name: str | None = Form(
         default=None,
-        description="Library folder for a stored template. Defaults to ipp_default_template.",
+        description=f"Library folder for a stored template. Defaults to {DEFAULT_TEMPLATE_FOLDER}.",
     ),
     template_name: str | None = Form(
         default=None,
@@ -532,9 +575,12 @@ def list_document_jobs(store: JobStoreDep, limit: int = 50) -> JobListResponse:
             elapsed=row.get("elapsed"),
         )
         download_url = None
+        accuracy_pdf_url = None
         out = row.get("output_path")
         if _download_ready(row.get("status"), out):
             download_url = f"/api/v1/documents/jobs/{row['job_id']}/download"
+        if row.get("status") == "completed":
+            accuracy_pdf_url = f"/api/v1/documents/jobs/{row['job_id']}/accuracy.pdf"
         jobs.append(
             JobStatusResponse(
                 job_id=row["job_id"],
@@ -557,6 +603,7 @@ def list_document_jobs(store: JobStoreDep, limit: int = 50) -> JobListResponse:
                 elapsed_ms=elapsed_ms,
                 elapsed=elapsed,
                 download_url=download_url,
+                accuracy_pdf_url=accuracy_pdf_url,
                 sqlite_persisted=True,
             )
         )
@@ -565,8 +612,11 @@ def list_document_jobs(store: JobStoreDep, limit: int = 50) -> JobListResponse:
 
 def _job_status_response(job: JobRecord, store: JobStore | None = None) -> JobStatusResponse:
     download_url = None
+    accuracy_pdf_url = None
     if _download_ready(job.status, job.output_path):
         download_url = f"/api/v1/documents/jobs/{job.id}/download"
+    if job.status == "completed":
+        accuracy_pdf_url = f"/api/v1/documents/jobs/{job.id}/accuracy.pdf"
 
     confidence = json.loads(job.confidence_json) if job.confidence_json else None
     validation = json.loads(job.validation_json) if job.validation_json else None
@@ -612,6 +662,7 @@ def _job_status_response(job: JobRecord, store: JobStore | None = None) -> JobSt
         elapsed_ms=elapsed_ms,
         elapsed=elapsed,
         download_url=download_url,
+        accuracy_pdf_url=accuracy_pdf_url,
         sqlite_persisted=True,
         accuracy_report=(store or get_store()).get_accuracy_report(job.id),
     )
@@ -680,6 +731,51 @@ def get_document_accuracy(job_id: str, store: JobStoreDep) -> dict[str, Any]:
     if report is None:
         raise HTTPException(status_code=404, detail=f"No accuracy report for job {job_id}")
     return report
+
+
+@router.get(
+    "/documents/jobs/{job_id}/accuracy.pdf",
+    tags=["documents"],
+    summary="Accuracy report as PDF",
+    responses={
+        200: {"content": {"application/pdf": {}}, "description": "PDF of mapper/judge scores"},
+        404: {"description": "Job or accuracy report missing."},
+    },
+)
+def download_document_accuracy_pdf(job_id: str, store: JobStoreDep) -> Response:
+    """Same metrics as GET `/accuracy` and the Gradio job report, as a downloadable PDF."""
+    from ip_api.services.accuracy_pdf import accuracy_pdf_filename, build_accuracy_report_pdf
+
+    try:
+        job = store.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    report = store.get_accuracy_report(job_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"No accuracy report for job {job_id}")
+    result = json.loads(job.result_json) if job.result_json else None
+    payload = build_accuracy_report_pdf(
+        job_id=job_id,
+        report=report,
+        job={
+            "status": job.status,
+            "xid": job.xid,
+            "mcp": job.mcp,
+            "mapper_llm": job.mapper_llm,
+            "validator_llm": job.validator_llm,
+            "elapsed": job.elapsed,
+            "result": result if isinstance(result, dict) else None,
+            "marker_detection": (result or {}).get("marker_detection")
+            if isinstance(result, dict)
+            else None,
+        },
+    )
+    filename = accuracy_pdf_filename(job_id)
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.websocket("/documents/jobs/{job_id}/ws")

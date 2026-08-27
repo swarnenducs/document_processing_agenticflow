@@ -1,8 +1,13 @@
 # Voice MCP prompts (LangChain ChatPromptTemplate YAML)
 
-Each file needs `system` + `human` strings. Variables use `{name}`; literal braces are `{{` `}}`.
+Each file needs `version`, `system`, and `human`. Variables use `{name}`; literal braces are `{{` `}}`.
+
+Required versions: `voice_enable_mcp/config/prompt_versions.json`
+(`VOICE_PROMPT_VERSIONS_FILE` to override). Files are `intent.{version}.yml` /
+`confirm.{version}.yml`.
 
 ```yaml
+version: "1.0.0"
 name: example
 system: |
   You are the voice/contract helper.

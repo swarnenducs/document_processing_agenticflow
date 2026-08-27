@@ -25,6 +25,7 @@ samples/output/*
 !samples/output/.gitkeep
 # Runtime storage only (do not ignore samples/data/)
 /data/
+UI/config/ui_runtime.json
 .DS_Store
 *.tmp
 _legacy/

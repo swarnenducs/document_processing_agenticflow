@@ -12,6 +12,7 @@ def test_orchestrator_prompt_is_chat_prompt_template() -> None:
     assert isinstance(prompt, ChatPromptTemplate)
     assert "system_instructions" in prompt.input_variables
     assert "message" in prompt.input_variables
+    assert "persona" in prompt.input_variables
 
 
 def test_format_orchestrator_turn_preserves_braces_in_system() -> None:
@@ -21,4 +22,14 @@ def test_format_orchestrator_turn_preserves_braces_in_system() -> None:
     )
     assert "document_generate_document" in system
     assert "{not a template var}" in system
-    assert human == "fill the template"
+    assert human == "Persona: analyst\n\nfill the template"
+
+
+def test_format_orchestrator_turn_includes_persona() -> None:
+    _, human = format_orchestrator_turn(
+        system_instructions="sys",
+        message="hello",
+        persona="legal",
+    )
+    assert "Persona: legal" in human
+    assert human.endswith("hello")

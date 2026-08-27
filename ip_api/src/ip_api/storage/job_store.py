@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from ip_api.core.settings import settings
@@ -119,16 +120,37 @@ class JobStore:
         self._session_factory = get_session_factory(sqlite_path=db_path)
 
     @contextmanager
-    def _session(self) -> Iterator[Session]:
+    def _session(self, *, commit: bool = True) -> Iterator[Session]:
         session = self._session_factory()
         try:
             yield session
-            session.commit()
+            if commit:
+                session.commit()
         except BaseException:
             session.rollback()
             raise
         finally:
             session.close()
+
+    def _invalidate_sql_pool(self) -> None:
+        from ip_api.storage.db import get_engine
+
+        get_engine(sqlite_path=self._sqlite_override).dispose()
+
+    def _run_read(self, fn):
+        """Read-only session: no COMMIT (Azure SQL 08S01 on dead links during commit)."""
+        last: BaseException | None = None
+        for attempt in range(2):
+            try:
+                with self._session(commit=False) as session:
+                    return fn(session)
+            except OperationalError as exc:
+                last = exc
+                self._invalidate_sql_pool()
+                if attempt:
+                    raise
+        raise last  # pragma: no cover
+
 
     def create_job_paths(
         self,
@@ -376,7 +398,7 @@ class JobStore:
             ),
             mapper_llm=mapper_llm or (confidence or {}).get("mapper_llm"),
             validator_llm=validator_llm or (confidence or {}).get("validator_llm"),
-            notes=((confidence or {}).get("notes") or "")[:500] or None,
+            notes=((confidence or {}).get("notes") or "")[:2000] or None,
             confidence_json=None,
             validation_json=json.dumps(validation) if validation else None,
             extraction_validation_json=json.dumps(extraction_validation)
@@ -403,7 +425,7 @@ class JobStore:
                 setattr(row, key, value)
 
     def get_accuracy_report(self, job_id: str) -> dict[str, Any] | None:
-        with self._session() as session:
+        def _load(session: Session) -> dict[str, Any] | None:
             row = session.get(DocumentAccuracyReport, job_id)
             if row is None:
                 return None
@@ -436,20 +458,27 @@ class JobStore:
                 "mcp": getattr(row, "mcp", None),
             }
 
+        return self._run_read(_load)
+
     def get_job(self, job_id: str) -> JobRecord:
-        with self._session() as session:
+        def _load(session: Session) -> JobRecord:
             row = session.get(DocumentJob, job_id)
             if row is None:
                 raise KeyError(f"Job not found: {job_id}")
             return _job_to_record(row)
 
+        return self._run_read(_load)
+
     def list_document_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
-        with self._session() as session:
+
+        def _load(session: Session) -> list[dict[str, Any]]:
             rows = session.scalars(
                 select(DocumentJob).order_by(DocumentJob.created_at.desc()).limit(limit)
             ).all()
             return [_job_to_record(row).to_dict() for row in rows]
+
+        return self._run_read(_load)
 
     def insert_call_log(
         self,
@@ -493,51 +522,56 @@ class JobStore:
 
     def list_call_logs_by_xid(self, xid: str, *, limit: int = 200) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
-        with self._session() as session:
+
+        def _load(session: Session) -> list[dict[str, Any]]:
             rows = session.scalars(
                 select(CallLog)
                 .where(CallLog.xid == xid)
                 .order_by(CallLog.created_at.asc())
                 .limit(limit)
             ).all()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            data = {
-                "log_id": row.id,
-                "xid": row.xid,
-                "job_id": row.job_id,
-                "kind": row.kind,
-                "name": row.name,
-                "status": row.status,
-                "provider": row.provider,
-                "model": row.model,
-                "error_message": row.error_message,
-                "latency_ms": row.latency_ms,
-                "created_at": row.created_at,
-            }
-            for key, raw in (
-                ("request", row.request_json),
-                ("response", row.response_json),
-                ("meta", row.meta_json),
-            ):
-                if raw:
-                    try:
-                        data[key] = json.loads(raw)
-                    except json.JSONDecodeError:
-                        data[key] = raw
-                else:
-                    data[key] = None
-            out.append(data)
-        return out
+            out: list[dict[str, Any]] = []
+            for row in rows:
+                data = {
+                    "log_id": row.id,
+                    "xid": row.xid,
+                    "job_id": row.job_id,
+                    "kind": row.kind,
+                    "name": row.name,
+                    "status": row.status,
+                    "provider": row.provider,
+                    "model": row.model,
+                    "error_message": row.error_message,
+                    "latency_ms": row.latency_ms,
+                    "created_at": row.created_at,
+                }
+                for key, raw in (
+                    ("request", row.request_json),
+                    ("response", row.response_json),
+                    ("meta", row.meta_json),
+                ):
+                    if raw:
+                        try:
+                            data[key] = json.loads(raw)
+                        except json.JSONDecodeError:
+                            data[key] = raw
+                    else:
+                        data[key] = None
+                out.append(data)
+            return out
+
+        return self._run_read(_load)
 
     def get_trace_by_xid(self, xid: str) -> dict[str, Any]:
-        with self._session() as session:
+        def _load(session: Session) -> list[dict[str, Any]]:
             job_rows = session.scalars(
                 select(DocumentJob)
                 .where(DocumentJob.xid == xid)
                 .order_by(DocumentJob.created_at.desc())
             ).all()
-            jobs = [_job_to_record(row).to_dict() for row in job_rows]
+            return [_job_to_record(row).to_dict() for row in job_rows]
+
+        jobs = self._run_read(_load)
         logs = self.list_call_logs_by_xid(xid)
         return {
             "xid": xid,
@@ -583,7 +617,7 @@ class JobStore:
             )
 
     def get_transcription(self, transcription_id: str) -> dict[str, Any]:
-        with self._session() as session:
+        def _load(session: Session) -> dict[str, Any]:
             row = session.get(TranscriptionJob, transcription_id)
             if row is None:
                 raise KeyError(f"Transcription not found: {transcription_id}")
@@ -598,6 +632,8 @@ class JobStore:
                 "created_at": row.created_at,
                 "completed_at": row.completed_at,
             }
+
+        return self._run_read(_load)
 
     def save_voice_contract(
         self,
@@ -644,19 +680,24 @@ class JobStore:
         return self.get_voice_contract(cid)
 
     def get_voice_contract(self, contract_id: str) -> dict[str, Any]:
-        with self._session() as session:
+        def _load(session: Session) -> dict[str, Any]:
             row = session.get(VoiceContract, contract_id)
             if row is None:
                 raise KeyError(f"Voice contract not found: {contract_id}")
             return self._voice_to_dict(row)
 
+        return self._run_read(_load)
+
     def list_voice_contracts(self, *, limit: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 200))
-        with self._session() as session:
+
+        def _load(session: Session) -> list[dict[str, Any]]:
             rows = session.scalars(
                 select(VoiceContract).order_by(VoiceContract.created_at.desc()).limit(limit)
             ).all()
             return [self._voice_to_dict(row) for row in rows]
+
+        return self._run_read(_load)
 
     @staticmethod
     def _voice_to_dict(row: VoiceContract) -> dict[str, Any]:

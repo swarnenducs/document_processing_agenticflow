@@ -8,7 +8,9 @@ from typing import Any
 
 import httpx
 
-from ui_app.core.settings import settings
+from ui_app.core.ui_config import get_admin_api_key, get_api_base_url
+
+LIBRARY_TEMPLATE_FOLDER = "ipp_pricing_default_template"
 
 
 class ApiError(Exception):
@@ -18,7 +20,17 @@ class ApiError(Exception):
 
 
 def _base_url() -> str:
-    return settings().api_base_url.rstrip("/")
+    return get_api_base_url()
+
+
+def _admin_headers() -> dict[str, str]:
+    key = get_admin_api_key()
+    if not key:
+        raise ApiError(
+            "Admin API key is empty. Set admin_api_key in the API targets JSON "
+            "(same value as ADMIN_API_KEY on the API), or set ADMIN_API_KEY in .env."
+        )
+    return {"X-Admin-Api-Key": key}
 
 
 def check_health() -> dict[str, Any]:
@@ -42,15 +54,21 @@ def check_maf_health() -> dict[str, Any]:
 
 
 def ask_central_agent(
-    message: str,
+    message: str | None = None,
     *,
     instructions: str | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
+    role: str | None = None,
+    persona: str | None = None,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     """Natural-language ask → MAF orchestrator via ``POST /api/ask``."""
-    payload: dict[str, Any] = {"message": message}
+    payload: dict[str, Any] = {}
+    question = (prompt or message or "").strip()
+    if question:
+        payload["Prompt"] = question
     if instructions and instructions.strip():
         payload["instructions"] = instructions.strip()
     if session_id:
@@ -59,6 +77,9 @@ def ask_central_agent(
         payload["user_id"] = user_id
     if user_email:
         payload["user_email"] = user_email
+    persona_val = (persona or role or "").strip()
+    if persona_val:
+        payload["Persona"] = persona_val
     with httpx.Client(timeout=320.0) as client:
         resp = client.post(f"{_base_url()}/api/ask", json=payload)
     if resp.status_code != 200:
@@ -68,6 +89,15 @@ def ask_central_agent(
         except Exception:  # noqa: BLE001
             pass
         raise ApiError(str(detail), resp.status_code)
+    return resp.json()
+
+
+def list_central_agent_prompts() -> dict[str, Any]:
+    """Validator path and min confidence via ``GET /api/ask/prompts``."""
+    with httpx.Client(timeout=15.0) as client:
+        resp = client.get(f"{_base_url()}/api/ask/prompts")
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
     return resp.json()
 
 
@@ -214,9 +244,11 @@ def run_voice_contract_audio(
 
 
 def create_document_job(
-    template_path: str | Path,
+    template_path: str | Path | None,
     data: dict[str, Any] | str | Path,
     *,
+    folder_name: str | None = None,
+    template_name: str | None = None,
     skip_validation: bool = False,
     max_retries: int | None = None,
     validation_threshold: float | None = None,
@@ -227,12 +259,14 @@ def create_document_job(
 ) -> dict[str, Any]:
     from ui_app.flow_debug import flow_breakpoint
 
-    flow_breakpoint("ui_create_document_job", template_path=str(template_path))
-    tpl = Path(template_path)
-    if not tpl.exists():
-        raise ApiError(f"Template not found: {tpl}")
+    named = (template_name or "").strip()
+    flow_breakpoint(
+        "ui_create_document_job",
+        template_path=str(template_path or ""),
+        template_name=named,
+    )
 
-    form_data = {
+    form_data: dict[str, str] = {
         "skip_validation": str(skip_validation).lower(),
         "optimized_flow": str(optimized_flow).lower(),
     }
@@ -247,9 +281,23 @@ def create_document_job(
     if user_email:
         form_data["user_email"] = user_email
 
-    files: dict[str, tuple] = {
-        "template": (tpl.name, tpl.read_bytes(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    }
+    files: dict[str, tuple] | None = None
+    if named:
+        form_data["template_name"] = named
+        form_data["folder_name"] = (folder_name or "").strip() or LIBRARY_TEMPLATE_FOLDER
+    else:
+        if template_path is None:
+            raise ApiError("Upload a .docx or choose a library template")
+        tpl = Path(template_path)
+        if not tpl.exists():
+            raise ApiError(f"Template not found: {tpl}")
+        files = {
+            "template": (
+                tpl.name,
+                tpl.read_bytes(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+        }
 
     if isinstance(data, dict):
         payload = data
@@ -270,7 +318,11 @@ def create_document_job(
     form_data["data"] = json.dumps(payload)
 
     with httpx.Client(timeout=60.0) as client:
-        resp = client.post(f"{_base_url()}/api/v1/documents/jobs", files=files, data=form_data)
+        resp = client.post(
+            f"{_base_url()}/api/v1/documents/jobs",
+            files=files,
+            data=form_data,
+        )
 
     if resp.status_code != 202:
         detail = resp.text
@@ -400,6 +452,16 @@ def download_job_output(job_id: str, dest: Path) -> Path:
     return dest
 
 
+def download_accuracy_pdf(job_id: str, dest: Path) -> Path:
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.get(f"{_base_url()}/api/v1/documents/jobs/{job_id}/accuracy.pdf")
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(resp.content)
+    return dest
+
+
 def get_trace_by_xid(xid: str) -> dict[str, Any]:
     corr = (xid or "").strip()
     if not corr:
@@ -419,4 +481,125 @@ def list_document_jobs(limit: int = 20) -> dict[str, Any]:
         )
     if resp.status_code != 200:
         raise ApiError(resp.text, resp.status_code)
+    return resp.json()
+
+
+def _raise_for_status(resp: httpx.Response, *, ok: set[int] | None = None) -> None:
+    allowed = ok or {200}
+    if resp.status_code in allowed:
+        return
+    detail = resp.text
+    try:
+        parsed = resp.json()
+        detail = parsed.get("detail", detail)
+        if isinstance(detail, list):
+            detail = "; ".join(
+                str(item.get("msg") if isinstance(item, dict) else item) for item in detail
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    raise ApiError(str(detail), resp.status_code)
+
+
+def list_library_templates(*, folder_name: str | None = None) -> dict[str, Any]:
+    params: dict[str, str] = {}
+    folder = (folder_name or "").strip() or LIBRARY_TEMPLATE_FOLDER
+    params["folder_name"] = folder
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(f"{_base_url()}/api/v1/documents/templates", params=params)
+    if resp.status_code != 200:
+        raise ApiError(resp.text, resp.status_code)
+    return resp.json()
+
+
+def list_admin_templates(*, folder_name: str | None = None) -> dict[str, Any]:
+    params: dict[str, str] = {}
+    if folder_name:
+        params["folder_name"] = folder_name
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(
+            f"{_base_url()}/api/v1/admin/templates",
+            headers=_admin_headers(),
+            params=params or None,
+        )
+    _raise_for_status(resp)
+    return resp.json()
+
+
+def upload_admin_template(
+    template_path: str | Path,
+    *,
+    folder_name: str = LIBRARY_TEMPLATE_FOLDER,
+    template_name: str | None = None,
+) -> dict[str, Any]:
+    path = Path(template_path)
+    if not path.exists():
+        raise ApiError(f"Template not found: {path}")
+    data: dict[str, str] = {"folder_name": folder_name}
+    if template_name:
+        data["template_name"] = template_name
+    with path.open("rb") as fh:
+        files = {
+            "file": (
+                path.name,
+                fh,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        }
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(
+                f"{_base_url()}/api/v1/admin/templates",
+                headers=_admin_headers(),
+                data=data,
+                files=files,
+            )
+    _raise_for_status(resp, ok={200, 201})
+    return resp.json()
+
+
+def list_master_data(*, category: str | None = None) -> dict[str, Any]:
+    params: dict[str, str] = {}
+    if category:
+        params["category"] = category
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(
+            f"{_base_url()}/api/v1/admin/master-data",
+            headers=_admin_headers(),
+            params=params or None,
+        )
+    _raise_for_status(resp)
+    return resp.json()
+
+
+def upsert_master_data(
+    *,
+    placeholder_key: str,
+    content: str,
+    category: str | None = None,
+    active: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "placeholder_key": placeholder_key,
+        "content": content,
+        "active": active,
+    }
+    if category:
+        payload["category"] = category
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            f"{_base_url()}/api/v1/admin/master-data",
+            headers=_admin_headers(),
+            json=payload,
+        )
+    _raise_for_status(resp, ok={200, 201})
+    return resp.json()
+
+
+def delete_master_data(placeholder_key: str) -> dict[str, Any]:
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.delete(
+            f"{_base_url()}/api/v1/admin/master-data/{placeholder_key}",
+            headers=_admin_headers(),
+        )
+    _raise_for_status(resp)
     return resp.json()

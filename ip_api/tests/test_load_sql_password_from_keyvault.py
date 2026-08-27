@@ -1,4 +1,4 @@
-"""Local Key Vault SQL password loader (Azure CLI)."""
+"""Local Key Vault SQL password loader (service principal, no az login)."""
 
 from __future__ import annotations
 
@@ -29,14 +29,15 @@ def _isolate_vault_env(monkeypatch):
         "AZURE_KEY_VAULT_URL",
         "AZURE_KEYVAULT_URL",
         "AZURE_SQL_PASSWORD_SECRET_NAME",
+        "AZURE_TENANT_ID",
+        "AZURE_CLIENT_ID",
+        "AZURE_CLIENT_SECRET",
     ):
         monkeypatch.delenv(key, raising=False)
 
 
 def test_vault_name_from_url() -> None:
-    assert (
-        vault_name_from_env(url="https://ipp-kv.vault.azure.net/") == "ipp-kv"
-    )
+    assert vault_name_from_env(url="https://ipp-kv.vault.azure.net/") == "ipp-kv"
     assert vault_name_from_env(name="ipp-kv") == "ipp-kv"
 
 
@@ -55,8 +56,8 @@ def test_skip_when_vault_not_configured() -> None:
 def test_fetch_sets_password(monkeypatch) -> None:
     monkeypatch.setenv("AZURE_KEY_VAULT_NAME", "ipp-kv")
     monkeypatch.setattr(
-        "scripts.load_sql_password_from_keyvault._run_az",
-        lambda args: "from-vault",
+        "scripts.load_sql_password_from_keyvault.fetch_sql_password",
+        lambda **_: "from-vault",
     )
     assert apply_sql_password_from_keyvault() is True
     assert os.environ["AZURE_SQL_PASSWORD"] == "from-vault"
@@ -66,7 +67,7 @@ def test_fetch_failure_exits(monkeypatch) -> None:
     monkeypatch.setenv("AZURE_KEY_VAULT_NAME", "ipp-kv")
 
     def _fail(*, vault_name, secret_name):
-        raise RuntimeError("az login required")
+        raise RuntimeError("Set AZURE_TENANT_ID")
 
     monkeypatch.setattr("scripts.load_sql_password_from_keyvault.fetch_sql_password", _fail)
     with pytest.raises(SystemExit) as raised:
@@ -75,8 +76,18 @@ def test_fetch_failure_exits(monkeypatch) -> None:
     assert not os.getenv("AZURE_SQL_PASSWORD")
 
 
-def test_run_az_missing_cli(monkeypatch) -> None:
-    monkeypatch.setattr("scripts.load_sql_password_from_keyvault.shutil.which", lambda _: None)
+def test_az_cli_used_when_no_app_registration(monkeypatch) -> None:
     monkeypatch.setenv("AZURE_KEY_VAULT_NAME", "ipp-kv")
+    monkeypatch.setattr(
+        "scripts.load_sql_password_from_keyvault._run_az",
+        lambda args: "from-az",
+    )
+    assert apply_sql_password_from_keyvault() is True
+    assert os.environ["AZURE_SQL_PASSWORD"] == "from-az"
+
+
+def test_missing_az_cli_exits(monkeypatch) -> None:
+    monkeypatch.setenv("AZURE_KEY_VAULT_NAME", "ipp-kv")
+    monkeypatch.setattr("scripts.load_sql_password_from_keyvault.shutil.which", lambda _: None)
     with pytest.raises(SystemExit):
         apply_sql_password_from_keyvault()

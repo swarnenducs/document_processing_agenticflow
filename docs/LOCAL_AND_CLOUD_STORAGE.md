@@ -48,7 +48,7 @@ curl -s localhost:8000/api/v1/health | jq '{storage_backend, sqlite_database_pat
 
 ### Local: SQL password from Key Vault
 
-This is the **local Azure SQL** path, not SQLite. Leave `AZURE_SQL_PASSWORD` empty and set the vault. `python run_all_components.py` fetches the secret with Azure CLI (`az login` first). If you instead want SQLite, **unset the vault name/URL and `AZURE_SQL_SERVER`** — otherwise the launcher injects the password and you stay on Azure SQL.
+This is the **local Azure SQL** path, not SQLite. Leave `AZURE_SQL_PASSWORD` empty and set the vault plus `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`. `python run_all_components.py` fetches the secret with the Azure SDK (no `az login`). If you instead want SQLite, **unset the vault name/URL and `AZURE_SQL_SERVER`** — otherwise the launcher injects the password and you stay on Azure SQL.
 
 On **Azure Web Apps**, do not use this script. Set `AZURE_SQL_PASSWORD` to a Key Vault **reference** (see [DYNACONF.md](DYNACONF.md)). Paste the example JSON from each component’s `config/azure-webapp.settings.json`.
 
@@ -57,6 +57,9 @@ AZURE_SQL_SERVER=YOUR_SQL.database.windows.net
 AZURE_SQL_USER=adminsql
 AZURE_SQL_DATABASE=ipp-app-db
 AZURE_KEY_VAULT_NAME=YOUR-VAULT
+AZURE_TENANT_ID=
+AZURE_CLIENT_ID=
+AZURE_CLIENT_SECRET=
 # AZURE_SQL_PASSWORD_SECRET_NAME=azure-sql-password   # default
 # AZURE_SQL_PASSWORD=                                 # leave empty
 ```
@@ -70,14 +73,13 @@ source scripts/load_sql_password_from_keyvault.sh
 
 ```powershell
 # Windows PowerShell
-az login
 . .\scripts\load_sql_password_from_keyvault.ps1
 python run_all_components.py
 # or: .\run.ps1
 ```
 
 The password is exported into the process environment only. It is not written to
-`.env`. Your Entra user needs **Key Vault Secrets User** on the vault.
+`.env`. The Entra app needs **Key Vault Secrets User** on the vault.
 
 Azure SQL still needs your client IP allowed on the server firewall.
 
@@ -100,8 +102,8 @@ share one database without fighting over DDL.
 
 | Component | Tables it creates |
 |---|---|
-| `ip_api` | all of them (job, accuracy, transcription, voice, call logs, sessions, `template_library`, LangGraph checkpoint tables) |
-| `document-processing-mcp` | `job_table_document_mcp`, `accuracy_report_document_mcp`, `call_logs` |
+| `ip_api` | all of them (job, accuracy, transcription, voice, call logs, sessions, `template_library`, `master_data`, LangGraph checkpoint tables) |
+| `document-processing-mcp` | `job_table_document_mcp`, `accuracy_report_document_mcp`, `call_logs`, `master_data` |
 | `voice_enable_mcp` | `voice_contracts`, `call_logs`, `lg_checkpoints`, `lg_checkpoint_blobs`, `lg_checkpoint_writes` |
 | `central-agentic-flow` | `call_logs` |
 
@@ -162,6 +164,11 @@ unconfigured deployment cannot expose template writes.
 | GET | `/api/v1/admin/templates/{folder_name}/{template_name}` | Metadata (`storage_ref` is `blob://…` on Azure) |
 | GET | `/api/v1/admin/templates/{folder_name}/{template_name}/download` | Stored .docx bytes |
 | DELETE | `/api/v1/admin/templates/{folder_name}/{template_name}` | Remove row + file |
+| POST | `/api/v1/admin/master-data` | Add or replace a legal/sales block (`placeholder_key` + `content`) |
+| GET | `/api/v1/admin/master-data` | List blocks (`?category=legal`) |
+| GET | `/api/v1/admin/master-data/{placeholder_key}` | One block |
+| PUT | `/api/v1/admin/master-data/{placeholder_key}` | Update content |
+| DELETE | `/api/v1/admin/master-data/{placeholder_key}` | Remove row |
 
 ### Upload
 
@@ -173,6 +180,13 @@ curl -X POST localhost:8000/api/v1/admin/templates/ipp_default_template \
 
 curl -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
   localhost:8000/api/v1/admin/templates/ipp_default_template
+```
+
+```bash
+curl -X POST localhost:8000/api/v1/admin/master-data \
+  -H "X-Admin-Api-Key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"placeholder_key":"Legal_Department_Master_Data","category":"legal","content":"Legal Department\n200 Connell Drive, Suite 1000\nBerkeley Heights, NJ 07922\nE-mail: pmo@ABCTec.com","active":true}'
 ```
 
 ```json

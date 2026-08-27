@@ -8,6 +8,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 DOCUMENT_MCP = "document_process_mcp"
 JOB_TABLE_DOCUMENT_MCP = "job_table_document_mcp"
 ACCURACY_TABLE_DOCUMENT_MCP = "accuracy_report_document_mcp"
+MASTER_DATA_TABLE = "master_data"
 
 
 class Base(DeclarativeBase):
@@ -69,6 +70,24 @@ class DocumentAccuracyReport(Base):
     updated_at: Mapped[str] = mapped_column(Unicode(64), nullable=False)
     elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     elapsed: Mapped[str | None] = mapped_column(Unicode(64), nullable=True)
+
+
+class MasterData(Base):
+    """Reusable template blocks (legal notice, sales attn) filled from SQL."""
+
+    __tablename__ = MASTER_DATA_TABLE
+
+    id: Mapped[str] = mapped_column(Unicode(64), primary_key=True)
+    placeholder_key: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    category: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+    content: Mapped[str] = mapped_column(UnicodeText, nullable=False)
+    active: Mapped[str] = mapped_column(Unicode(8), nullable=False, default="true")
+    updated_at: Mapped[str] = mapped_column(Unicode(64), nullable=False)
+
+    __table_args__ = (
+        Index("idx_master_data_placeholder", "placeholder_key", unique=True),
+        Index("idx_master_data_category", "category"),
+    )
 
 
 class TranscriptionJob(Base):

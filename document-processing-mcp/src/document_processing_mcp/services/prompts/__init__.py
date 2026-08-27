@@ -19,6 +19,10 @@ from document_processing_mcp.services.prompts.mapper_prompt import (
     build_mapper_prompt,
     get_mapper_system_prompt,
 )
+from document_processing_mcp.services.prompts.marker_synthesizer_prompt import (
+    build_marker_synthesizer_chain,
+    build_marker_synthesizer_prompt,
+)
 from document_processing_mcp.services.prompts.validator_prompt import (
     build_validator_chain,
     build_validator_prompt,
@@ -34,6 +38,8 @@ __all__ = [
     "get_validator_system_prompt",
     "build_mapper_prompt",
     "build_mapper_chain",
+    "build_marker_synthesizer_prompt",
+    "build_marker_synthesizer_chain",
     "build_validator_prompt",
     "build_validator_chain",
     "build_extraction_validator_prompt",

@@ -1,0 +1,234 @@
+AZURE WEB APP SETUP  (this stack)
+=================================
+Local laptop = az login + .env  (Key Vault name ai-azuse-sql-ipp).
+Azure Web Apps = do NOT use az login and do NOT set AZURE_KEY_VAULT_NAME.
+Web Apps resolve secrets with Key Vault REFERENCES + managed identity.
+
+
+A. KEY VAULT  (vault: ai-azuse-sql-ipp)
+---------------------------------------
+Create SECRETS (Objects > Secrets). Do not use Keys (RSA).
+
+  Name (suggested)                    Put this value in the secret
+  -------------------                 --------------------------------
+  azure-sql-password                  Azure SQL password for user adminsql
+  azure-storage-connection-string     Blob connection string
+  groq-api-key                        Groq key (if you use Groq)
+  openai-api-key                      OpenAI key (if you use OpenAI)
+  azure-openai-api-key                Azure OpenAI / Foundry key
+  admin-api-key                       Optional admin template API key
+
+Never paste the real secret values into git or this file.
+
+
+B. EACH WEB APP — IDENTITY + KEY VAULT ACCESS
+---------------------------------------------
+For every app that needs SQL / Blob / LLM keys (API, document MCP, voice MCP, MAF):
+
+  1. Web App > Identity > System assigned > On > Save
+  2. Key vault ai-azuse-sql-ipp > Access control (IAM)
+       Add role assignment: Key Vault Secrets User
+       Assign to the Web App managed identity
+  3. If the vault uses Access policies instead of RBAC:
+       Access policies > Get + List secrets for that identity
+
+Do this for each app separately.
+
+
+C. DO NOT SET THESE ON WEB APPS
+-------------------------------
+  AZURE_KEY_VAULT_NAME
+  AZURE_KEY_VAULT_URL
+  AZURE_TENANT_ID
+  AZURE_CLIENT_ID
+  AZURE_CLIENT_SECRET
+
+Those are for local .env / az login (or a local app registration) only.
+
+
+D. HOW TO SET APP SETTINGS
+--------------------------
+Portal: Web App > Environment variables (Configuration) > App settings
+        > Advanced edit
+
+Paste the matching JSON from the repo (replace every <placeholder>):
+
+  UI                       UI/config/azure-webapp.settings.json
+  API (ip_api)             ip_api/config/azure-webapp.settings.json
+  document MCP             document-processing-mcp/config/azure-webapp.settings.json
+  voice MCP                voice_enable_mcp/config/azure-webapp.settings.json
+  MAF (central-agentic)    central-agentic-flow/config/azure-webapp.settings.json
+
+Format is an array of { "name", "value", "slotSetting" }.
+Do not use:  az webapp config appsettings set --settings @file.json
+
+Quote Key Vault reference values if you set them with Azure CLI
+(values start with @ and CLI would treat them as files).
+
+
+E. KEY VAULT REFERENCE FORMAT  (copy into app setting VALUE)
+------------------------------------------------------------
+Vault used here: ai-azuse-sql-ipp
+
+  AZURE_SQL_PASSWORD=
+    @Microsoft.KeyVault(SecretUri=https://ai-azuse-sql-ipp.vault.azure.net/secrets/azure-sql-password/)
+
+  AZURE_STORAGE_CONNECTION_STRING=
+    @Microsoft.KeyVault(SecretUri=https://ai-azuse-sql-ipp.vault.azure.net/secrets/azure-storage-connection-string/)
+
+  GROQ_API_KEY=
+    @Microsoft.KeyVault(SecretUri=https://ai-azuse-sql-ipp.vault.azure.net/secrets/groq-api-key/)
+
+  OPENAI_API_KEY=
+    @Microsoft.KeyVault(SecretUri=https://ai-azuse-sql-ipp.vault.azure.net/secrets/openai-api-key/)
+
+  AZURE_OPENAI_API_KEY=
+    @Microsoft.KeyVault(SecretUri=https://ai-azuse-sql-ipp.vault.azure.net/secrets/azure-openai-api-key/)
+
+  ADMIN_API_KEY=
+    @Microsoft.KeyVault(SecretUri=https://ai-azuse-sql-ipp.vault.azure.net/secrets/admin-api-key/)
+
+After save, the setting should show a green check (resolved). Red = identity
+or secret name is wrong. Restart the app after it turns green.
+
+
+F. PLAIN SETTINGS TO FILL  (not secrets)
+----------------------------------------
+Shared SQL / Blob (API, document MCP, voice MCP, MAF):
+
+  AZURE_SQL_SERVER=ipp-sql-serv.database.windows.net
+  AZURE_SQL_USER=adminsql
+  AZURE_SQL_DATABASE=ipp-app-db
+  AZURE_SQL_DIALECT=pyodbc
+  AZURE_SQL_ODBC_DRIVER=ODBC Driver 18 for SQL Server
+  FILE_STORAGE_BACKEND=azure_blob
+  AZURE_BLOB_CONTAINER=docuploadsolution
+  AZURE_BLOB_PREFIX=jobs
+  AZURE_STORAGE_ACCOUNT_NAME=swarappliucationn
+
+Do NOT set SQLALCHEMY_DATABASE_URL unless you intentionally override Azure SQL.
+
+Replace hostnames below with your real Web App names:
+
+  UI
+    WEBSITES_PORT=7860
+    API_BASE_URL=https://<api-app>.azurewebsites.net
+    Startup: python -m ui_app.ui.gradio_app
+
+  API  (ip_api)
+    WEBSITES_PORT=8000
+    API_HOST=0.0.0.0
+    API_BASE_URL=https://<api-app>.azurewebsites.net
+    CENTRAL_AGENT_END_POINT=https://<maf-app>.azurewebsites.net
+    MAF_BASE_URL=https://<maf-app>.azurewebsites.net
+    DOCUMENT_MCP_URL=https://<document-mcp-app>.azurewebsites.net/mcp
+    VOICE_MCP_URL=https://<voice-mcp-app>.azurewebsites.net/mcp
+    CORS_ORIGINS=https://<ui-app>.azurewebsites.net,https://<angular-app>.azurewebsites.net
+    Startup: python -m uvicorn ip_api.api.main:app --host 0.0.0.0 --port 8000
+
+  document MCP
+    WEBSITES_PORT=8001
+    TEMPLATE / mapper LLM settings (AZURE_OPENAI_ENDPOINT, MAPPER_MODEL_ID, ...)
+    Same SQL + Blob as API
+    Startup: python -m document_processing_mcp.server --transport http --host 0.0.0.0 --port 8001
+    Never use localhost MCP URLs.
+
+  voice MCP
+    WEBSITES_PORT=8002
+    Same SQL as API
+    Startup: python -m voice_enable_mcp.server --transport http --host 0.0.0.0 --port 8002
+
+  MAF
+    WEBSITES_PORT=8003
+    TEMPLATE_PROCESSING_END_POINT=https://<document-mcp-app>.azurewebsites.net/mcp
+    VOICE_PROCESSING_END_POINT=https://<voice-mcp-app>.azurewebsites.net/mcp
+    Same SQL as API
+    MAF_MODEL_ID / AZURE_OPENAI_ENDPOINT
+    Startup: python -m uvicorn central_agentic_flow.server:app --host 0.0.0.0 --port 8003
+
+
+G. SQL FIREWALL + ODBC
+----------------------
+  Azure SQL server ipp-sql-serv > Networking
+    Allow Azure services and resources to access this server = Yes
+    Add your laptop IP for local az/ODBC tests
+
+  Linux Web Apps that use pyodbc need ODBC Driver 18 on the image
+  (or set AZURE_SQL_DIALECT=pymssql if you stay on pymssql).
+
+
+H. CHECKLIST AFTER PASTE
+------------------------
+  [ ] Secret azure-sql-password exists (Secrets, not Keys)
+  [ ] Blob / LLM secrets exist
+  [ ] Each SQL/Blob app: system identity On
+  [ ] Each identity: Key Vault Secrets User on ai-azuse-sql-ipp
+  [ ] App settings use @Microsoft.KeyVault(...) not the raw password
+  [ ] AZURE_KEY_VAULT_NAME is NOT on the Web App
+  [ ] Hostnames are https://...azurewebsites.net  (no localhost)
+  [ ] Startup command + WEBSITES_PORT match the app
+  [ ] Restart Web App
+  [ ] GET https://<api-app>.azurewebsites.net/api/v1/health
+
+
+I. LOCAL vs WEB APP (quick)
+---------------------------
+  Local:
+    az login   (tenant that owns vault ai-azuse-sql-ipp)
+    Leave AZURE_SQL_PASSWORD empty in .env
+    python run_all_components.py
+      (IPP_USE_AZURE_SQL=1 and IPP_USE_AZURE_BLOB=1 already in .env)
+
+  If az login is the wrong tenant:
+    az login --tenant <tenant-id-of-the-vault>
+
+  Web App:
+    Identity + Key Vault reference only. No az login.
+
+
+J. ZIP PACKAGES FOR WEB APP DEPLOY
+----------------------------------
+  Each component has its OWN scripts (take these when you split into separate repos):
+
+    UI/package_azure_webapp.sh                  .ps1
+    ip_api/package_azure_webapp.sh              .ps1
+    document-processing-mcp/package_azure_webapp.sh   .ps1
+    voice_enable_mcp/package_azure_webapp.sh    .ps1
+    central-agentic-flow/package_azure_webapp.sh      .ps1
+
+  From inside a component (after a split this is the only command you need):
+
+    ./package_azure_webapp.sh
+    .\package_azure_webapp.ps1
+
+  Output in that folder: dist/azure-webapp.zip
+
+  From this monorepo, package all (or some) and copy to dist/azure-webapp/<name>.zip:
+
+    ./scripts/package_azure_webapp_zips.sh
+    ./scripts/package_azure_webapp_zips.sh api ui maf
+    .\scripts\package_azure_webapp_zips.ps1
+
+  Per-component release notes (git range + uncommitted files):
+
+    ./scripts/create_release_notes.sh
+    ./scripts/create_release_notes.sh api ui maf
+    .\scripts\create_release_notes.ps1
+
+    Default output: dist/release-notes/<YYYYMMDD_HHMMSS>/{ui,api,document,voice,maf,shared}.md
+    Optional: BASE=v1.0.0  OUT_DIR=./notes  STAMP=20260828_041422
+
+    Same from a component folder (monorepo):
+    ./create_release_notes.sh
+    .\create_release_notes.ps1
+
+  Each zip includes STARTUP.txt and .deployment (SCM_DO_BUILD_DURING_DEPLOYMENT=true).
+  Zips do not include .env.
+
+  Portal: Web App > Deployment Center > Zip deploy
+  or:
+    az webapp deploy -g <rg> -n <api-app> --src-path ip_api/dist/azure-webapp.zip --type zip
+
+  Set WEBSITES_PORT and startup command from STARTUP.txt inside the zip
+  (or section F above). After first zip deploy, wait for pip install to finish
+  (Log stream), then restart.

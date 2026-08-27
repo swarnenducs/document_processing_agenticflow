@@ -81,10 +81,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"message\": \"What tools are available?\"\n}"
+              "raw": "{\n  \"Prompt\": \"how many contracts going to expire in the next quarter\",\n  \"Persona\": \"sales\"\n}"
             },
             "url": "{{baseUrl}}/api/ask",
-            "description": "Natural language to MAF. Needs MAF running. Not used for document jobs."
+            "description": "Prompt + Persona definition. Validator confidence must meet MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE (default 0.95)."
           }
         },
         {
@@ -101,6 +101,22 @@
             ],
             "url": "{{baseUrl}}/api/ask/health",
             "description": "Whether the gateway can reach MAF `/ask/health`."
+          }
+        },
+        {
+          "name": "List catalog prompts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ],
+            "url": "{{baseUrl}}/api/ask/prompts",
+            "description": "Prompt ids and allowed_roles from MAF catalog files."
           }
         }
       ],
@@ -196,6 +212,22 @@
             "method": "GET",
             "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/accuracy",
             "description": "Judge/mapper scores for `job_id`. 404 if missing.",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "{{xid}}",
+                "disabled": true,
+                "description": "Optional correlation id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Download accuracy PDF",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/v1/documents/jobs/{{job_id}}/accuracy.pdf",
+            "description": "PDF of the same accuracy report. 404 if missing.",
             "header": [
               {
                 "key": "X-Request-ID",
@@ -666,10 +698,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"message\": \"What tools are available?\"\n}"
+              "raw": "{\n  \"Prompt\": \"how many contracts going to expire in the next quarter\",\n  \"Persona\": \"sales\"\n}"
             },
             "url": "{{mafUrl}}/ask",
-            "description": "MAF chat without gateway."
+            "description": "MAF chat without gateway. Body is Prompt + Persona definition; confidence floor is config."
           }
         }
       ],
@@ -752,6 +784,69 @@
         }
       ],
       "description": "Requires header `X-Admin-Api-Key` = env `adminKey`. 503 if `ADMIN_API_KEY` is unset on the server."
+    },
+    {
+      "name": "Admin master data",
+      "item": [
+        {
+          "name": "List master data",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/admin/master-data",
+            "description": "Legal/sales notice blocks. Set `adminKey`."
+          }
+        },
+        {
+          "name": "Add legal notice block",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"placeholder_key\": \"Legal_Department_Master_Data\",\n  \"category\": \"legal\",\n  \"content\": \"Legal Department\\n200 Connell Drive, Suite 1000\\nBerkeley Heights, NJ 07922\\nE-mail: pmo@ABCTec.com\",\n  \"active\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/master-data",
+            "description": "Insert or replace the legal notice block used by document MCP."
+          }
+        },
+        {
+          "name": "Add sales excellence block",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Api-Key",
+                "value": "{{adminKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"placeholder_key\": \"Sales_Excellence_Master_Data\",\n  \"category\": \"sales\",\n  \"content\": \"Sales Excellence\\n200 Connell Drive, Suite 1000\\nBerkeley Heights, NJ 07922\\nE-mail: pmo@ABCTec.com\",\n  \"active\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/master-data"
+          }
+        }
+      ],
+      "description": "SQL master_data rows for Word placeholders. Same admin key as templates."
     }
   ]
 }

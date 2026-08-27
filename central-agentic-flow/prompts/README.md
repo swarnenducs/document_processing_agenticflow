@@ -1,10 +1,13 @@
 # MAF / central-agentic-flow prompts
 
-- `orchestrator_instructions.md` — shared system-prompt **preamble**
-- Per-MCP invoke rules and tool prompts: `../config/mcp_registry.yml`
+LLM prompts are external files. **Required versions** live in
+`config/prompt_versions.json`. The loader uses `{name}.{version}.md`.
 
-Each `/ask` turn is formatted with LangChain `ChatPromptTemplate`
-(`system` + `human`) before MAF `Agent` runs.
+- `guardrails/persona_prompt_validator.{version}.md` — LLM validator; before execute
+- `guardrails/role_access.{version}.md` — reminder for the answering agent
+- `orchestrator_instructions.{version}.md` — shared chat preamble
 
-Env: `MAF_INSTRUCTIONS` or `MAF_INSTRUCTIONS_FILE` (preamble only).
-`MAF_MCP_REGISTRY_FILE` overrides the YAML registry path.
+Persona definition is **not** a file. Send it on `/ask` as `Persona`.
+
+Override the JSON path with `MAF_PROMPT_VERSIONS_FILE`.
+Override the prompts folder with `MAF_PROMPTS_DIR`.

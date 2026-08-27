@@ -20,6 +20,20 @@ def local_sqlite_only(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def component_prompts_dir(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setenv(
+        "MAF_PROMPTS_DIR",
+        str(Path(__file__).resolve().parents[1] / "prompts"),
+    )
+    monkeypatch.setenv(
+        "MAF_PROMPT_VERSIONS_FILE",
+        str(Path(__file__).resolve().parents[1] / "config" / "prompt_versions.json"),
+    )
+
+
+@pytest.fixture(autouse=True)
 def no_llm_api_keys_in_tests(monkeypatch):
     for key in (
         "OPENAI_API_KEY",

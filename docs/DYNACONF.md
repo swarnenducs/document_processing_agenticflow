@@ -25,7 +25,7 @@ Blob resolution (`FILE_STORAGE_BACKEND`, ip_api and document MCP):
 - `local` or `azure_blob` (aliases `azure`, `blob`, `azureblob`)
 - if unset: `azure_blob` when any `AZURE_STORAGE_*` credential is present, otherwise `local`
 
-`python run_all_components.py` (via `ip_api.run_app`) also calls `scripts/load_sql_password_from_keyvault.py` **before** children start: if `AZURE_SQL_PASSWORD` is empty and `AZURE_KEY_VAULT_NAME` or `AZURE_KEY_VAULT_URL` is set, it fills the password with Azure CLI. That is a **local** convenience, not App Service.
+`python run_all_components.py` (via `ip_api.run_app`) also calls `scripts/load_sql_password_from_keyvault.py` **before** children start: if `AZURE_SQL_PASSWORD` is empty and `AZURE_KEY_VAULT_NAME` or `AZURE_KEY_VAULT_URL` is set, it fills the password with `SecretClient` + `ClientSecretCredential` (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`). That is a **local** convenience, not App Service.
 
 Inter-component hops use the **same** overlay: fill `CENTRAL_AGENT_END_POINT` (API → MAF), `TEMPLATE_PROCESSING_END_POINT` (MAF → document MCP), and `VOICE_PROCESSING_END_POINT` (MAF → voice MCP). Optional: `CHAT_MCP_END_POINT` (ask) and `METADATA_EXTRACTION_END_POINT` (jobs). Older names `MAF_BASE_URL` / `MAF_URL`, `DOCUMENT_MCP_URL`, `VOICE_MCP_URL`, `CHAT_MCP_URL`, and `METADATA_MCP_URL` stay as aliases. Dynaconf later reads those keys with `envvar_prefix=False` — no `DYNACONF_` prefix and no rename. Local `.env` keeps `127.0.0.1`; Azure JSON uses `https://<app>.azurewebsites.net` placeholders (optional MCP keys stay empty until you have those apps). Details: [ENVIRONMENT.md](ENVIRONMENT.md#inter-component-urls-fill-per-environment).
 
@@ -70,7 +70,7 @@ Azure App Settings **are** process environment variables. After Dynaconf, they s
 | Where | How `AZURE_SQL_PASSWORD` is supplied | What this repo does |
 |---|---|---|
 | **Local SQLite** | Do not set it. Also unset `AZURE_SQL_SERVER` and vault name/URL so the launcher cannot inject a password into an Azure SQL path. | SQLite at `SQLITE_DATABASE_PATH` |
-| **Local Azure SQL** | Leave `AZURE_SQL_PASSWORD` empty. Set `AZURE_KEY_VAULT_NAME` (or `AZURE_KEY_VAULT_URL`) and `AZURE_SQL_SERVER`. `az login`. | `scripts/load_sql_password_from_keyvault.py` (default secret `azure-sql-password`) |
+| **Local Azure SQL** | Leave `AZURE_SQL_PASSWORD` empty. Set `AZURE_KEY_VAULT_NAME` (or `AZURE_KEY_VAULT_URL`), `AZURE_SQL_SERVER`, and `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`. | `scripts/load_sql_password_from_keyvault.py` (default secret `azure-sql-password`) |
 | **Azure Web App** | Application setting value is a **Key Vault reference**. App Service (managed identity) resolves it **before** the process starts. | App sees a normal `AZURE_SQL_PASSWORD` string. Do **not** commit the password. Do **not** set `AZURE_KEY_VAULT_NAME` on the Web App for this purpose — that name is for the local `az` loader only. |
 
 Reference form (placeholders only; replace `<vault-name>`):
@@ -87,7 +87,7 @@ Equivalent:
 
 Default secret name in scripts: `AZURE_SQL_PASSWORD_SECRET_NAME` → `azure-sql-password`.
 
-The Web App’s managed identity needs **Key Vault Secrets User** (get) on that vault. Locally, your Entra user needs the same, plus `az login`.
+The Web App’s managed identity needs **Key Vault Secrets User** (get) on that vault. Locally, an Entra **app registration** (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`) needs the same role. `az login` is not used.
 
 ---
 

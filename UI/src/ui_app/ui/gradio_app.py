@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -11,17 +12,31 @@ from pathlib import Path
 import gradio as gr
 
 from ui_app.core.settings import settings
+from ui_app.core.ui_config import get_api_base_url
+from ui_app.ui.admin_ui import (
+    ui_api_target_caption,
+    ui_apply_api_config,
+    ui_config_json,
+    ui_delete_master,
+    ui_list_master,
+    ui_list_templates,
+    ui_save_master,
+    ui_upload_template,
+)
 from ui_app.ui.api_client import (
     ApiError,
+    LIBRARY_TEMPLATE_FOLDER,
     ask_central_agent,
     check_health,
     check_maf_health,
     confirm_voice_contract,
     create_document_job,
+    download_accuracy_pdf,
     download_job_output,
     get_job_status,
     get_trace_by_xid,
     list_document_jobs,
+    list_library_templates,
     list_maf_mcp_tools,
     run_voice_contract_audio,
     run_voice_contract_text,
@@ -29,6 +44,8 @@ from ui_app.ui.api_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+LIBRARY_PLACEHOLDER = "— select a library template —"
 
 # Allow: python -m ui_app.ui.gradio_app
 
@@ -56,7 +73,9 @@ def _resolve_gradio_path(value: object | None) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return value
+        return value.strip() or None
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, list) and value:
         return _resolve_gradio_path(value[0])
     if isinstance(value, dict):
@@ -381,6 +400,38 @@ def _overall_time_label(status: dict) -> str:
     return ""
 
 
+def _marker_detection_from_status(status: dict) -> dict | None:
+    result = status.get("result") if isinstance(status.get("result"), dict) else {}
+    acc = status.get("accuracy_report") if isinstance(status.get("accuracy_report"), dict) else {}
+    for blob in (status, result, acc):
+        if isinstance(blob, dict) and isinstance(blob.get("marker_detection"), dict):
+            return blob["marker_detection"]
+    return None
+
+
+def _unmarked_template_report_rows(status: dict) -> list[list[str]]:
+    detection = _marker_detection_from_status(status)
+    if not isinstance(detection, dict) or detection.get("had_markers") is not False:
+        return []
+    match = detection.get("library_match")
+    name = ""
+    score = None
+    if isinstance(match, dict):
+        name = str(match.get("name") or "").strip()
+        score = match.get("score")
+    closest = name or "none found"
+    if name and isinstance(score, (int, float)):
+        closest = f"{name} (similarity {score:.4f})"
+    return [
+        ["Template markers", "<strong>Unmarked</strong>"],
+        [
+            "Processing note",
+            "The template was unmarked, so the AI took extra time to understand the document.",
+        ],
+        ["Reference closest-match template", f"<code>{_html_esc(closest)}</code>"],
+    ]
+
+
 def _html_esc(value: object) -> str:
     return (
         str(value if value is not None else "")
@@ -388,6 +439,45 @@ def _html_esc(value: object) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+    )
+
+
+def _as_score_pct(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _item_score_pct(item: dict) -> float | None:
+    pct = _as_score_pct(item.get("confidence_pct"))
+    if pct is not None:
+        return pct
+    pct = _as_score_pct(item.get("confidence"))
+    if pct is not None and pct <= 1.0:
+        return pct * 100.0
+    return pct
+
+
+def _score_badge(pct: float | None, *, strong: bool = False) -> str:
+    """Color: red below 80%, green at or above 90%, amber between."""
+    if pct is None:
+        return '<span style="opacity:0.7">n/a</span>'
+    text = f"{pct:.1f}%"
+    if pct < 80:
+        bg, fg = "#7f1d1d", "#fecaca"
+    elif pct >= 90:
+        bg, fg = "#14532d", "#bbf7d0"
+    else:
+        bg, fg = "#78350f", "#fde68a"
+    weight = "800" if strong else "700"
+    inner = f"<strong>{_html_esc(text)}</strong>" if strong else _html_esc(text)
+    return (
+        f'<span style="display:inline-block;min-width:4.4rem;text-align:center;'
+        f"padding:0.2rem 0.55rem;border-radius:999px;background:{bg};color:{fg};"
+        f'font-weight:{weight};letter-spacing:0.02em">{inner}</span>'
     )
 
 
@@ -652,18 +742,59 @@ def _progress_html(job_id: str, stages: list[dict], *, working: bool = True) -> 
 """
 
 
-def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | None = None) -> str:
+def _accuracy_pdf_panel(job_id: str, pdf_path: str | None = None) -> str:
+    """Show the accuracy PDF in the job-result panel (viewer + download link)."""
+    api = get_api_base_url().rstrip("/")
+    href = f"{api}/api/v1/documents/jobs/{job_id}/accuracy.pdf"
+    viewer = ""
+    path = Path(pdf_path) if pdf_path else None
+    if path is not None and path.is_file() and path.stat().st_size > 0:
+        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        viewer = (
+            f'<object data="data:application/pdf;base64,{b64}" type="application/pdf" '
+            'style="width:100%;height:920px;border:1px solid #3a3a3a;border-radius:8px;'
+            'background:#111">'
+            f'<p style="padding:0.75rem"><a href="{_html_esc(href)}" target="_blank" '
+            'rel="noopener">Open full accuracy PDF</a></p>'
+            "</object>"
+        )
+    else:
+        viewer = (
+            f'<p style="padding:0.5rem 0"><a href="{_html_esc(href)}" target="_blank" '
+            'rel="noopener">Open full accuracy report PDF</a> '
+            "(same scores as the tables below)</p>"
+        )
+    fname = f"{job_id}.pdf"
+    return f"""
+<section style="margin:0 0 1rem 0;padding:0.85rem 1rem;border:1px solid #2a4a6b;
+                border-radius:10px;background:#101820">
+  <h4 style="margin:0 0 0.4rem 0">Full accuracy report PDF</h4>
+  <p style="opacity:0.9;font-size:0.9rem;margin:0 0 0.5rem 0">
+    File name: <code>{_html_esc(fname)}</code>
+    · <a href="{_html_esc(href)}" target="_blank" rel="noopener">Download</a>
+  </p>
+  {viewer}
+</section>
+"""
+
+
+def _build_completed_job_report(
+    job_id: str,
+    status: dict,
+    stages: list[dict] | None = None,
+    *,
+    pdf_path: str | None = None,
+) -> str:
     """Render scores already computed by Document MCP (confidence.py). UI does not score."""
     conf = status.get("confidence") or {}
     acc = status.get("accuracy_report") if isinstance(status.get("accuracy_report"), dict) else {}
     pct = status.get("scores_pct") or conf.get("scores_pct") or acc.get("scores_pct") or {}
-    validation = status.get("validation") or {}
+    validation = status.get("validation") if isinstance(status.get("validation"), dict) else {}
+    if not validation and isinstance(acc.get("validation"), dict):
+        validation = acc["validation"]
 
-    def _p(key: str) -> str:
-        val = pct.get(key)
-        if val is None:
-            return "n/a"
-        return f"{float(val):.1f}%"
+    def _p(key: str, *, strong: bool = False) -> str:
+        return _score_badge(_as_score_pct(pct.get(key)), strong=strong)
 
     def _esc(value: object) -> str:
         return _html_esc(value)
@@ -685,10 +816,12 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
         return f"""
 <section style="margin:0 0 1rem 0">
   <h4 style="margin:0 0 0.4rem 0">{_esc(title)}</h4>
+  <div style="overflow:auto;max-width:100%">
   <table style="width:100%;border-collapse:collapse;font-size:0.92rem">
     <thead><tr>{head}</tr></thead>
     <tbody>{''.join(body_rows)}</tbody>
   </table>
+  </div>
 </section>
 """
 
@@ -723,19 +856,24 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
             _job_error_messages(status) or ["Judge or pipeline reported a problem"],
         )
 
+    job_rows = [
+        ["Job ID", f"<code>{_esc(job_id)}</code>"],
+        ["MCP", _esc(status.get("mcp") or acc.get("mcp") or "document_process_mcp")],
+        ["xid", f"<code>{_esc(status.get('xid') or '')}</code>"],
+        ["Status", "<strong>completed</strong>"],
+        ["Overall time taken", f"<strong>{_esc(elapsed)}</strong>"],
+        ["Mapper LLM", f"<code>{mapper_llm or '-'}</code>"],
+        ["Validator LLM", f"<code>{validator_llm or '-'}</code>"],
+    ]
+    job_rows.extend(_unmarked_template_report_rows(status))
     sections = [
         warning,
         elapsed_banner,
+        _accuracy_pdf_panel(job_id, pdf_path),
         _table(
             "Job",
             ["Field", "Value"],
-            [
-                ["Job ID", f"<code>{_esc(job_id)}</code>"],
-                ["MCP", _esc(status.get("mcp") or acc.get("mcp") or "document_process_mcp")],
-                ["xid", f"<code>{_esc(status.get('xid') or '')}</code>"],
-                ["Status", "<strong>completed</strong>"],
-                ["Overall time taken", f"<strong>{_esc(elapsed)}</strong>"],
-            ],
+            job_rows,
         ),
         _stages_table_html(stages or []),
         _table(
@@ -750,33 +888,39 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
             "Scores (all in %)",
             ["Metric", "Score"],
             [
+                ["<strong>Overall confidence</strong>", _p("overall_confidence_pct", strong=True)],
+                ["Extraction confidence", _p("extraction_confidence_pct")],
                 [
-                    "<strong>Overall confidence</strong>",
-                    f"<strong>{_p('overall_confidence_pct')}</strong>",
+                    "Extraction placeholder detection",
+                    _p("extraction_placeholder_detection_pct"),
                 ],
+                ["Extraction structure", _p("extraction_structure_pct")],
                 [
                     "Placeholder mapping (LLM #1)",
                     _p("placeholder_mapping_confidence_pct"),
                 ],
-                [
-                    "Placeholder coverage",
-                    _p("placeholder_coverage_pct"),
-                ],
-                [
-                    "Table mapping (LLM #1)",
-                    _p("table_mapping_confidence_pct"),
-                ],
-                [
-                    "Generation integrity",
-                    _p("generation_integrity_pct"),
-                ],
+                ["Placeholder coverage", _p("placeholder_coverage_pct")],
+                ["Table mapping (LLM #1)", _p("table_mapping_confidence_pct")],
+                ["Generation integrity", _p("generation_integrity_pct")],
+                ["Generation confidence", _p("generation_confidence_pct")],
                 [
                     "<strong>Document validation (LLM #2)</strong>",
-                    f"<strong>{_p('validation_score_pct')}</strong>",
+                    _p("validation_score_pct", strong=True),
                 ],
             ],
         ),
     ]
+    sections.insert(
+        6,
+        """
+<p style="margin:0 0 0.75rem 0;font-size:0.88rem;opacity:0.9">
+  Score colors:
+  <span style="color:#fecaca">red &lt; 80%</span>
+  · amber 80–89.9%
+  · <span style="color:#bbf7d0">green ≥ 90%</span>
+</p>
+""",
+    )
 
     if validation:
         sections.append(
@@ -787,7 +931,7 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
                     ["Passed", f"<code>{_esc(validation.get('passed'))}</code>"],
                     [
                         "Score",
-                        f"<code>{_p('validation_score_pct')}</code>",
+                        _p("validation_score_pct"),
                     ],
                     ["Summary", _esc(validation.get("summary") or "-")],
                 ],
@@ -801,7 +945,8 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
                     f"<code>{_esc(issue.get('field') or '')}</code>",
                     _esc(issue.get("message") or ""),
                 ]
-                for issue in issues[:10]
+                for issue in issues
+                if isinstance(issue, dict)
             ]
             sections.append(
                 _table(
@@ -811,20 +956,44 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
                 )
             )
 
+    extraction = (
+        status.get("extraction_validation")
+        if isinstance(status.get("extraction_validation"), dict)
+        else None
+    )
+    if extraction is None and isinstance(acc.get("extraction_validation"), dict):
+        extraction = acc.get("extraction_validation")
+    if extraction:
+        missed = extraction.get("missed_placeholder_suspects") or []
+        missed_txt = ", ".join(str(x) for x in missed) if missed else "-"
+        sections.append(
+            _table(
+                "Extraction critic",
+                ["Field", "Value"],
+                [
+                    ["Passed", f"<code>{_esc(extraction.get('passed'))}</code>"],
+                    ["Summary", _esc(extraction.get("summary") or "-")],
+                    ["Missed placeholders", _esc(missed_txt)],
+                ],
+            )
+        )
+
     per_ph = pct.get("per_placeholder") or []
     if per_ph:
         ph_rows = [
             [
                 f"<code>{_esc(item.get('placeholder'))}</code>",
                 f"<code>{_esc(item.get('json_path'))}</code>",
-                f"<strong>{float(item.get('confidence_pct', 0)):.1f}%</strong>",
+                _score_badge(_item_score_pct(item) if isinstance(item, dict) else None),
+                _esc(item.get("rationale") or ""),
             ]
-            for item in per_ph[:20]
+            for item in per_ph
+            if isinstance(item, dict)
         ]
         sections.append(
             _table(
-                "Placeholder mapping confidence (LLM #1)",
-                ["Placeholder", "JSON path", "Confidence"],
+                "Placeholder mapping (LLM #1)",
+                ["Placeholder", "JSON path", "Score", "Rationale"],
                 ph_rows,
             )
         )
@@ -833,17 +1002,30 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
     if per_col:
         col_rows = [
             [
+                _esc(item.get("table_index") if item.get("table_index") is not None else ""),
                 f"<code>{_esc(item.get('header'))}</code>",
                 f"<code>{_esc(item.get('json_field'))}</code>",
-                f"<strong>{float(item.get('confidence_pct', 0)):.1f}%</strong>",
+                _score_badge(_item_score_pct(item) if isinstance(item, dict) else None),
+                f"<code>{_esc(item.get('array_json_path') or '')}</code>",
             ]
-            for item in per_col[:20]
+            for item in per_col
+            if isinstance(item, dict)
         ]
         sections.append(
             _table(
-                "Table column mapping confidence (LLM #1)",
-                ["Header", "JSON field", "Confidence"],
+                "Table column mapping (LLM #1)",
+                ["Tbl", "Header", "JSON field", "Score", "Array path"],
                 col_rows,
+            )
+        )
+
+    notes = acc.get("notes") or status.get("notes") or conf.get("notes")
+    if notes:
+        sections.append(
+            _table(
+                "Notes",
+                ["Field", "Value"],
+                [["Notes", _esc(notes)]],
             )
         )
 
@@ -864,7 +1046,25 @@ def _build_completed_job_report(job_id: str, status: dict, stages: list[dict] | 
     ).replace("${", "$&#123;").replace("{{", "{&#123;")
 
 
+def ui_library_template_dropdown():
+    """Choices from GET /documents/templates (Blob + catalog)."""
+    try:
+        payload = list_library_templates(folder_name=LIBRARY_TEMPLATE_FOLDER)
+        names = [
+            str(item.get("template_name"))
+            for item in payload.get("templates") or []
+            if item.get("template_name")
+        ]
+    except ApiError as exc:
+        logger.warning("Library template list failed: %s", exc)
+        names = []
+    choices = [LIBRARY_PLACEHOLDER, *names]
+    return gr.update(choices=choices, value=LIBRARY_PLACEHOLDER)
+
+
 def ui_generate_document(
+    template_source: str,
+    library_template: str,
     template_file: object | None,
     json_file: object | None,
     json_text: str,
@@ -880,10 +1080,10 @@ def ui_generate_document(
     flow_breakpoint("ui_generate_document", template_file=template_file, session_id=session_id)
 
     def _err(msg: str):
-        yield _error_banner("Error", msg), None, session_id
+        yield _error_banner("Error", msg), None, None, session_id
 
     # Immediate feedback so the UI is never blank while validating/uploading.
-    yield _loading_html("Checking API and preparing upload…"), None, session_id
+    yield _loading_html("Checking API and preparing upload…"), None, None, session_id
 
     try:
         health = check_health()
@@ -899,12 +1099,25 @@ def ui_generate_document(
         yield from _err(f"Cannot reach API: {exc}")
         return
 
-    template_path = _resolve_gradio_path(template_file)
-    if not template_path:
-        yield from _err("Upload a Word .docx template.")
-        return
-    if not template_path.lower().endswith(".docx"):
-        yield from _err("Template must be a .docx file.")
+    source = (template_source or "library").strip().lower()
+    use_upload = source.startswith("upload")
+    library_name = (library_template or "").strip()
+    if library_name == LIBRARY_PLACEHOLDER:
+        library_name = ""
+
+    template_path = None
+    if use_upload:
+        template_path = _resolve_gradio_path(template_file)
+        if not template_path:
+            yield from _err("Upload a Word .docx template, or switch to a library template.")
+            return
+        if not template_path.lower().endswith(".docx"):
+            yield from _err("Template must be a .docx file.")
+            return
+    elif not library_name:
+        yield from _err(
+            f"Select a template from {LIBRARY_TEMPLATE_FOLDER}, or choose Upload and pick a .docx."
+        )
         return
 
     try:
@@ -916,23 +1129,36 @@ def ui_generate_document(
         yield from _err(str(exc))
         return
 
-    yield _loading_html("Uploading template and sending JSON in the request…"), None, session_id
+    yield _loading_html("Starting document job…"), None, None, session_id
 
     try:
-        accepted = create_document_job(
-            template_path,
-            data,
-            skip_validation=skip_validation,
-            optimized_flow=bool(optimized_flow),
-            session_id=session_id,
-            user_id=user_id,
-            user_email=user_email,
-        )
+        if use_upload:
+            accepted = create_document_job(
+                template_path,
+                data,
+                skip_validation=skip_validation,
+                optimized_flow=bool(optimized_flow),
+                session_id=session_id,
+                user_id=user_id,
+                user_email=user_email,
+            )
+        else:
+            accepted = create_document_job(
+                None,
+                data,
+                folder_name=LIBRARY_TEMPLATE_FOLDER,
+                template_name=library_name,
+                skip_validation=skip_validation,
+                optimized_flow=bool(optimized_flow),
+                session_id=session_id,
+                user_id=user_id,
+                user_email=user_email,
+            )
         job_id = accepted["job_id"]
         sid = accepted.get("session_id") or session_id
         ws_url = accepted.get("ws_url")
         stages: list[dict] = []
-        yield _progress_html(job_id, stages), None, sid
+        yield _progress_html(job_id, stages), None, None, sid
 
         from ui_app.ui.api_client import (
             get_job_status,
@@ -942,7 +1168,7 @@ def ui_generate_document(
         try:
             for event in iter_job_progress(job_id, timeout=180.0, ws_url=ws_url):
                 stages = _append_ws_stage(stages, event)
-                yield _progress_html(job_id, stages), None, sid
+                yield _progress_html(job_id, stages), None, None, sid
                 if event.get("terminal") or event.get("stage") in {"completed", "failed"}:
                     break
             status = get_job_status(job_id)
@@ -950,11 +1176,11 @@ def ui_generate_document(
             logger.warning("Job WebSocket failed, falling back to long-poll: %s", exc)
             yield _loading_html(
                 "WebSocket unavailable — waiting with long-poll (still working)…"
-            ), None, sid
+            ), None, None, sid
             status = wait_for_job(job_id, timeout=180.0, ws_url=ws_url)
             for event in status.get("stages") or []:
                 stages = _append_ws_stage(stages, event)
-            yield _progress_html(job_id, stages), None, sid
+            yield _progress_html(job_id, stages), None, None, sid
     except ApiError as exc:
         yield from _err(f"API error: {exc}")
         return
@@ -963,11 +1189,11 @@ def ui_generate_document(
         return
 
     if status.get("status") != "completed":
-        yield _build_failed_job_report(job_id, status, stages), None, sid
+        yield _build_failed_job_report(job_id, status, stages), None, None, sid
         return
 
-    yield _progress_html(job_id, stages, working=True), None, sid
-    yield _loading_html("Downloading generated document…"), None, sid
+    yield _progress_html(job_id, stages, working=True), None, None, sid
+    yield _loading_html("Downloading generated document…"), None, None, sid
 
     out_name = Path(status.get("output_path") or "").name
     if not out_name.endswith(".docx"):
@@ -979,23 +1205,31 @@ def ui_generate_document(
         yield from _err(f"Generated but download failed: {exc}")
         return
 
+    pdf_path = None
+    try:
+        pdf_tmp = Path(tempfile.gettempdir()) / f"{job_id}.pdf"
+        download_accuracy_pdf(job_id, pdf_tmp)
+        pdf_path = str(pdf_tmp)
+    except ApiError as exc:
+        logger.warning("Accuracy PDF download failed for %s: %s", job_id, exc)
+
     try:
         status = get_job_status(job_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not refresh job status %s after download: %s", job_id, exc)
-    yield _build_completed_job_report(job_id, status, stages), str(tmp), sid
+    yield _build_completed_job_report(job_id, status, stages, pdf_path=pdf_path), str(tmp), pdf_path, sid
 
 
 
 def ui_health() -> str:
-    cfg = settings()
+    api_url = get_api_base_url()
     try:
         health = check_health()
     except Exception as exc:  # noqa: BLE001 — API down / network
         return (
             _error_banner("API unreachable", str(exc))
-            + f"<p>Tried <code>{_html_esc(cfg.api_base_url)}</code></p>"
-            + "<p>Start the backend:</p>"
+            + f"<p>Tried <code>{_html_esc(api_url)}</code></p>"
+            + "<p>Start the backend, or switch hosts in the <b>API targets</b> tab.</p>"
             + "<pre>python run_all_components.py</pre>"
         )
 
@@ -1109,7 +1343,7 @@ def ui_health() -> str:
     maf_meta = f"mode <code>{_html_esc(maf_mode)}</code>"
     if maf_base:
         maf_meta += f" · <code>{_html_esc(maf_base)}</code>"
-    maf_meta += f" · ask <code>{_html_esc(cfg.api_base_url)}/api/ask</code>"
+    maf_meta += f" · ask <code>{_html_esc(api_url)}/api/ask</code>"
 
     if maf_ok:
         maf_banner = (
@@ -1148,7 +1382,7 @@ def ui_health() -> str:
 
     return f"""
 <div style="font-size:0.95rem;line-height:1.45">
-  <p><strong>API:</strong> <code>{cfg.api_base_url}</code>
+  <p><strong>API:</strong> <code>{api_url}</code>
      · status <code>{health.get('status', 'ok')}</code></p>
   {maf_banner}
 
@@ -1193,6 +1427,7 @@ def ui_central_agent_ask(
     session_id: str | None = None,
     user_id: str | None = None,
     user_email: str | None = None,
+    role: str | None = None,
 ):
     """Chat turn against the MAF central orchestrator (via API /api/ask)."""
     from ui_app.flow_debug import flow_breakpoint
@@ -1201,6 +1436,7 @@ def ui_central_agent_ask(
     history = list(history or [])
     text = (message or "").strip()
     sid = (session_id or "").strip() or None
+    who = (role or "").strip() or None
     if not text:
         return history, "", sid
 
@@ -1211,6 +1447,7 @@ def ui_central_agent_ask(
             session_id=sid,
             user_id=(user_id or "").strip() or None,
             user_email=(user_email or "").strip() or None,
+            persona=who,
         )
         sid = result.get("session_id") or sid
         reply = (result.get("text") or "").strip() or "(empty MAF response)"
@@ -1220,6 +1457,18 @@ def ui_central_agent_ask(
             extra.append(f"_response_id: `{rid}`_")
         if sid:
             extra.append(f"_session_id: `{sid}`_")
+        used_role = result.get("persona") or result.get("role")
+        used_version = result.get("version")
+        validation = result.get("validation") or {}
+        if used_role:
+            extra.append(f"_persona: `{used_role}`_")
+        if used_version:
+            extra.append(f"_version: `{used_version}`_")
+        classification = validation.get("classification")
+        if classification:
+            extra.append(f"_validation: `{classification}`_")
+        if result.get("authorized") is False:
+            extra.append("_authorized: `false`_")
         if extra:
             reply = f"{reply}\n\n" + " · ".join(extra)
     except ApiError as exc:
@@ -1404,13 +1653,12 @@ def ui_lookup_trace(xid: str) -> str:
 
 
 def build_ui() -> gr.Blocks:
-    cfg = settings()
-
     with gr.Blocks(title="Document Processing Agentic Flow") as demo:
         gr.Markdown(
             "# Document Processing Agentic Flow\n"
             "Generate Word docs · Voice contracts · **Central agent (MAF)** orchestrates both MCPs"
         )
+        api_caption = gr.Markdown(value=ui_api_target_caption())
 
         with gr.Row():
             health_box = gr.HTML(value=ui_health())
@@ -1445,44 +1693,80 @@ def build_ui() -> gr.Blocks:
                 "Status banner above shows **MAF CENTRAL AGENT AVAILABLE** and the "
                 "**Available MCP tools** catalogue.\n\n"
                 "Natural-language asks go to **MAF** via "
-                f"`{cfg.api_base_url}/api/ask`, which orchestrates "
+                f"`{get_api_base_url()}/api/ask`, which orchestrates "
                 "**document-processing-mcp** and **voice_enable_mcp** tools.\n\n"
                 "Each ask creates/reuses a **session_id** (SQLite) and returns it here.\n\n"
-                "**Examples:**\n"
-                "- `Check document and voice MCP health`\n"
-                "- `Start a voice contract for legal entity AVC, reference CR-1001`\n"
-                "- `Generate a document using the default template` (if tools allow)"
+                "Paste **Persona** as the definition (scope and prohibitions). "
+                "Type the question as **Prompt**. An LLM validator runs first; "
+                "if confidence is below the configured floor (default 95%), "
+                "the assistant does not run.\n\n"
+                "**Example Prompt:** `how many contracts going to expire in the next quarter`"
             )
             maf_chat = gr.Chatbot(label="Central agent chat", height=420)
             with gr.Row():
+                maf_role = gr.Textbox(
+                    label="Persona",
+                    placeholder="Paste the persona definition (responsibilities, prohibitions, ...)",
+                    lines=5,
+                    scale=1,
+                )
+            with gr.Row():
                 maf_input = gr.Textbox(
-                    label="Ask the central agent",
-                    placeholder="Check document and voice MCP health",
+                    label="Prompt",
+                    placeholder="how many contracts going to expire in the next quarter",
                     scale=4,
                 )
                 maf_send = gr.Button("Ask", variant="primary", scale=1)
 
             maf_send.click(
                 fn=ui_central_agent_ask,
-                inputs=[maf_input, maf_chat, session_id_box, user_id_box, user_email_box],
+                inputs=[
+                    maf_input,
+                    maf_chat,
+                    session_id_box,
+                    user_id_box,
+                    user_email_box,
+                    maf_role,
+                ],
                 outputs=[maf_chat, maf_input, session_id_box],
             )
             maf_input.submit(
                 fn=ui_central_agent_ask,
-                inputs=[maf_input, maf_chat, session_id_box, user_id_box, user_email_box],
+                inputs=[
+                    maf_input,
+                    maf_chat,
+                    session_id_box,
+                    user_id_box,
+                    user_email_box,
+                    maf_role,
+                ],
                 outputs=[maf_chat, maf_input, session_id_box],
             )
 
         # ------------------------------------------------------------------ Document (1st)
         with gr.Tab("Generate Document"):
             gr.Markdown(
-                f"**Upload** a `.docx` template and **send JSON in the request** "
-                "(paste below, or pick a local `.json` to include as request data — it is not uploaded as a file). "
-                f"Job runs on `{cfg.api_base_url}/api/v1/documents/jobs` "
-                "(WebSocket live stages on `/ws`)."
+                f"Pick a template from Blob folder **`{LIBRARY_TEMPLATE_FOLDER}`**, "
+                "or **upload** a `.docx`. JSON is sent in the request "
+                "(paste below, or load a local `.json`). "
+                f"Job: `{get_api_base_url()}/api/v1/documents/jobs`."
             )
             with gr.Row():
                 with gr.Column():
+                    template_source = gr.Radio(
+                        choices=["library", "upload"],
+                        value="library",
+                        label="Template source",
+                        info=f"library = {LIBRARY_TEMPLATE_FOLDER} on Blob (or local templates dir)",
+                    )
+                    with gr.Row():
+                        library_dropdown = gr.Dropdown(
+                            label=f"Library templates ({LIBRARY_TEMPLATE_FOLDER})",
+                            choices=[LIBRARY_PLACEHOLDER],
+                            value=LIBRARY_PLACEHOLDER,
+                            interactive=True,
+                        )
+                        refresh_library_btn = gr.Button("Refresh list")
                     template_upload = gr.File(
                         label="Upload Word template (.docx)",
                         file_types=[".docx"],
@@ -1512,21 +1796,30 @@ def build_ui() -> gr.Blocks:
                         label="Job result",
                         value=(
                             '<div style="opacity:0.75;line-height:1.4">'
-                            "Upload a template, paste JSON in the request, then click "
-                            "<strong>Generate document</strong>. "
-                            "A spinner and live stages will appear here while the job runs."
+                            "Select a library template or upload a .docx, paste JSON, then "
+                            "<strong>Generate document</strong>."
+                            "A spinner and live stages will appear here. When the job "
+                            "finishes, the accuracy report PDF is shown in this panel."
                             "</div>"
                         ),
                     )
-                    output_file = gr.File(
-                        label="Download generated .docx",
-                        type="filepath",
-                        interactive=False,
-                    )
+                    with gr.Row():
+                        output_file = gr.File(
+                            label="Download generated .docx",
+                            type="filepath",
+                            interactive=False,
+                        )
+                        accuracy_pdf = gr.File(
+                            label="Download accuracy report (job_id.pdf)",
+                            type="filepath",
+                            interactive=False,
+                        )
 
             generate_btn.click(
                 fn=ui_generate_document,
                 inputs=[
+                    template_source,
+                    library_dropdown,
                     template_upload,
                     json_file_upload,
                     json_input,
@@ -1536,8 +1829,12 @@ def build_ui() -> gr.Blocks:
                     user_id_box,
                     user_email_box,
                 ],
-                outputs=[job_report, output_file, session_id_box],
+                outputs=[job_report, output_file, accuracy_pdf, session_id_box],
                 show_progress="full",
+            )
+            refresh_library_btn.click(
+                fn=ui_library_template_dropdown,
+                outputs=[library_dropdown],
             )
 
         # ------------------------------------------------------------------ Voice chat (2nd)
@@ -1695,8 +1992,104 @@ def build_ui() -> gr.Blocks:
                 outputs=[recent_jobs_box],
             )
 
+        with gr.Tab("Admin"):
+            gr.Markdown(
+                "### Admin API (templates + master data)\n"
+                "Calls `/api/v1/admin/*` on the **current API host**. "
+                "Put `admin_api_key` in **API targets** JSON (same as `ADMIN_API_KEY` on the API). "
+                "503 means the API has no admin key configured."
+            )
+            with gr.Accordion("Word templates", open=True):
+                admin_folder = gr.Textbox(
+                    label="folder_name",
+                    value="ipp_pricing_default_template",
+                    info="Blob path: templates/ipp_pricing_default_template/{name}.docx",
+                )
+                admin_tpl_name = gr.Textbox(
+                    label="template_name (optional; defaults to uploaded filename)",
+                )
+                admin_tpl_file = gr.File(
+                    label="Upload .docx into the library",
+                    file_types=[".docx"],
+                    file_count="single",
+                    type="filepath",
+                )
+                with gr.Row():
+                    admin_upload_btn = gr.Button("Upload template", variant="primary")
+                    admin_list_tpl_btn = gr.Button("List templates")
+                admin_tpl_out = gr.HTML(value="<p>Click List templates.</p>")
+                admin_upload_btn.click(
+                    fn=ui_upload_template,
+                    inputs=[admin_tpl_file, admin_folder, admin_tpl_name],
+                    outputs=[admin_tpl_out],
+                )
+                admin_list_tpl_btn.click(
+                    fn=ui_list_templates,
+                    inputs=[admin_folder],
+                    outputs=[admin_tpl_out],
+                )
+            with gr.Accordion("Master data (legal / sales notice blocks)", open=True):
+                gr.Markdown(
+                    "Fills `<Legal_Department_Master_Data>` and `<Sales_Excellence_Master_Data>` "
+                    "in document jobs unless JSON `system_instruction` override is true."
+                )
+                md_key = gr.Textbox(
+                    label="placeholder_key",
+                    value="Legal_Department_Master_Data",
+                )
+                md_cat = gr.Dropdown(
+                    label="category",
+                    choices=["legal", "sales", "general"],
+                    value="legal",
+                )
+                md_content = gr.Textbox(
+                    label="content",
+                    lines=6,
+                    value=(
+                        "Legal Department\n"
+                        "200 Connell Drive, Suite 1000\n"
+                        "Berkeley Heights, NJ 07922\n"
+                        "E-mail: pmo@ABCTec.com"
+                    ),
+                )
+                md_active = gr.Checkbox(label="active", value=True)
+                with gr.Row():
+                    md_save_btn = gr.Button("Save / replace block", variant="primary")
+                    md_list_btn = gr.Button("List blocks")
+                    md_del_btn = gr.Button("Delete placeholder_key")
+                md_out = gr.HTML(value="<p>Click List blocks.</p>")
+                md_save_btn.click(
+                    fn=ui_save_master,
+                    inputs=[md_key, md_cat, md_content, md_active],
+                    outputs=[md_out],
+                )
+                md_list_btn.click(fn=ui_list_master, outputs=[md_out])
+                md_del_btn.click(fn=ui_delete_master, inputs=[md_key], outputs=[md_out])
+
+        with gr.Tab("API targets"):
+            gr.Markdown(
+                "### JSON config for local vs deployed API\n"
+                "Set `active_target` to a key under `targets`. "
+                "Replace the Azure hostname, paste `admin_api_key` if you use Admin, "
+                "then **Apply and ping**. Saved to `UI/config/ui_runtime.json` (not committed).\n\n"
+                "Example file: `UI/config/ui_targets.example.json`."
+            )
+            api_json = gr.Code(
+                label="ui_targets.json",
+                language="json",
+                value=ui_config_json(),
+            )
+            apply_api_btn = gr.Button("Apply and ping API", variant="primary")
+            apply_api_btn.click(
+                fn=ui_apply_api_config,
+                inputs=[api_json],
+                outputs=[api_json, health_box],
+            ).then(fn=ui_api_target_caption, outputs=[api_caption])
+
         refresh_health = gr.Button("Refresh API status")
         refresh_health.click(fn=ui_health, outputs=[health_box])
+
+        demo.load(fn=ui_library_template_dropdown, outputs=[library_dropdown])
 
     return demo
 

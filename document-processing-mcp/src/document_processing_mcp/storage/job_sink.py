@@ -106,7 +106,7 @@ def _upsert_accuracy_report(
         ),
         mapper_llm=mapper_llm or (confidence or {}).get("mapper_llm"),
         validator_llm=validator_llm or (confidence or {}).get("validator_llm"),
-        notes=((confidence or {}).get("notes") or "")[:500] or None,
+        notes=((confidence or {}).get("notes") or "")[:2000] or None,
         confidence_json=None,
         validation_json=json.dumps(validation) if validation else None,
         extraction_validation_json=json.dumps(extraction_validation)

@@ -99,6 +99,110 @@ def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingSta
     return {**state, **updates}
 
 
+def synthesize_markers_node(state: DocumentProcessingState) -> DocumentProcessingState:
+    """If the Word file has no <markers>, LLM proposes them; code stamps a marked copy."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+    from document_processing_mcp.services.marker_synthesizer import synthesize_markers_if_needed
+    from document_processing_mcp.services.style_extractor import extract_word_styles
+
+    flow_breakpoint("synthesize_markers_node", status=state.get("status"))
+    errors = list(state.get("errors") or [])
+    if state.get("status") == "failed":
+        return state
+
+    extracted = state.get("extracted")
+    if extracted is None:
+        errors.append("extracted template is required before marker synthesis")
+        return {**state, "errors": errors, "status": "failed"}
+
+    try:
+        result = synthesize_markers_if_needed(
+            extracted,
+            state.get("json_data"),
+            model_id=state.get("mapper_model_id"),
+            output_dir=Path(state.get("output_path") or extracted.template_path).parent,
+        )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Marker synthesis failed: {exc}")
+        return {**state, "errors": errors, "status": "failed"}
+
+    updates: dict = {
+        "marker_detection": {
+            "had_markers": bool(result.get("skipped")),
+            "placeholder_keys": result.get("placeholder_keys") or [],
+            "reason": result.get("reason"),
+            "library_match": result.get("library_match"),
+        },
+        "errors": errors,
+    }
+    if result.get("skipped"):
+        updates["status"] = "markers_ready"
+        return {**state, **updates}
+
+    marked_path = str(result.get("template_path") or "")
+    try:
+        extracted = extract_word_styles(marked_path)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Re-extract after marker synthesis failed: {exc}")
+        return {**state, "errors": errors, "status": "failed"}
+
+    updates.update(
+        {
+            "extracted": extracted,
+            "template_path": marked_path,
+            "synthesized_template_path": marked_path,
+            "status": "markers_synthesized",
+            "marker_detection": {
+                **updates["marker_detection"],
+                "placeholder_keys": list(extracted.placeholders or []),
+                "replacements_applied": result.get("replacements_applied"),
+                "notes": result.get("plan_notes"),
+            },
+        }
+    )
+    return {**state, **updates}
+
+
+def enrich_master_data_node(state: DocumentProcessingState) -> DocumentProcessingState:
+    """Fill ``*_Master_Data`` keys from SQL unless ``system_instruction`` override is true."""
+    from document_processing_mcp.flow_debug import flow_breakpoint
+    from document_processing_mcp.services.master_data import apply_master_data_to_json
+    from document_processing_mcp.storage.db import ensure_schema
+
+    flow_breakpoint("enrich_master_data_node", status=state.get("status"))
+    errors = list(state.get("errors") or [])
+    if state.get("status") == "failed":
+        return state
+
+    json_data = state.get("json_data")
+    if not isinstance(json_data, dict):
+        errors.append("json_data is required before master-data enrichment")
+        return {**state, "errors": errors, "status": "failed"}
+
+    try:
+        ensure_schema()
+        payload, applied = apply_master_data_to_json(
+            json_data,
+            extracted=state.get("extracted"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Master-data enrichment failed: {exc}")
+        return {
+            **state,
+            "status": "master_data_skipped",
+            "errors": errors,
+            "master_data_applied": [{"placeholder": "*", "source": "error"}],
+        }
+
+    return {
+        **state,
+        "json_data": payload,
+        "master_data_applied": applied,
+        "status": "master_data_enriched",
+        "errors": errors,
+    }
+
+
 def validate_extraction_node(state: DocumentProcessingState) -> DocumentProcessingState:
     """LLM critic of extracted Word XML / placeholders (confidence on extraction)."""
     from document_processing_mcp.flow_debug import flow_breakpoint
@@ -158,6 +262,9 @@ def map_fields_node(state: DocumentProcessingState) -> DocumentProcessingState:
             json_data,
             model_id=state.get("mapper_model_id"),
         )
+        from document_processing_mcp.services.master_data import merge_master_data_into_mapping
+
+        mapping = merge_master_data_into_mapping(extracted, json_data, mapping)
     except Exception as exc:  # noqa: BLE001
         errors.append(f"Field mapping failed: {exc}")
         return {**state, "errors": errors, "status": "failed"}
@@ -229,6 +336,7 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
             state.get("generation"),
             validation,
             extraction_validation=state.get("extraction_validation"),
+            marker_detection=state.get("marker_detection"),
         )
         updates = {
             **state,
@@ -265,6 +373,7 @@ def validate_document_node(state: DocumentProcessingState) -> DocumentProcessing
         generation,
         validation,
         extraction_validation=state.get("extraction_validation"),
+        marker_detection=state.get("marker_detection"),
     )
 
     return {
@@ -289,6 +398,7 @@ def finalize_node(state: DocumentProcessingState) -> DocumentProcessingState:
             state.get("generation"),
             state.get("validation"),
             extraction_validation=state.get("extraction_validation"),
+            marker_detection=state.get("marker_detection"),
         )
     return {
         **state,

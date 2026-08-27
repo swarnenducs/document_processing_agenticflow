@@ -10,6 +10,10 @@ Import these JSON files in Postman (or Insomnia/Bruno that accept Collection v2.
 
 The collection folders: **Gateway** (health, OpenAPI JSON, chat), **Documents**, **Audio (STT only)**, **Voice**, **Agents via MAF**, **MAF direct**, **Admin templates**. Each request has a description in Postman.
 
+Chat (`POST /api/ask`) body is `{ "Prompt": "...", "Persona": "<definition>" }`.
+Validator confidence must be ≥ `MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE` (default 0.95).
+See [MAF_PROMPT_GUARDRAILS.md](MAF_PROMPT_GUARDRAILS.md).
+
 ## Import
 
 1. Start the stack (`python run_all_components.py`) or only `ip_api` + MAF + MCPs.

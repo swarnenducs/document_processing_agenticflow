@@ -14,9 +14,14 @@
     "value": "0.0.0.0",
     "slotSetting": false
   },
-  {
+    {
     "name": "MAF_PORT",
     "value": "8003",
+    "slotSetting": false
+  },
+  {
+    "name": "MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE",
+    "value": "0.95",
     "slotSetting": false
   },
   {

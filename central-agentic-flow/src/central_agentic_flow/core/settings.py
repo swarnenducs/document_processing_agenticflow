@@ -59,11 +59,27 @@ class Settings(BaseSettings):
     speech_provider: str = "groq"
     openai_whisper_model: str = "whisper-1"
     groq_whisper_model: str = "whisper-large-v3"
+    maf_persona_validator_min_confidence: float = Field(
+        default=0.95,
+        validation_alias=AliasChoices(
+            "MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE",
+            "PERSONA_VALIDATOR_MIN_CONFIDENCE",
+        ),
+        description="Minimum validator confidence (0–1 or 0–100). Below this, /ask does not execute.",
+    )
 
     @field_validator("azure_sql_dialect", "speech_provider", mode="after")
     @classmethod
     def _lower_str(cls, value: str) -> str:
         return (value or "").strip().lower()
+
+    @field_validator("maf_persona_validator_min_confidence", mode="after")
+    @classmethod
+    def _unit_confidence(cls, value: float) -> float:
+        raw = float(value)
+        if raw > 1.0:
+            raw = raw / 100.0
+        return min(1.0, max(0.0, raw))
 
     @model_validator(mode="after")
     def _normalize_storage(self) -> Self:

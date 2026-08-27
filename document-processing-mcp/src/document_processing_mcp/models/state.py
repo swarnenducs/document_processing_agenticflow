@@ -42,3 +42,6 @@ class DocumentProcessingState(TypedDict, total=False):
     optimized_flow: bool
     complexity: str
     complexity_signals: dict[str, Any]
+    master_data_applied: list[dict[str, str]]
+    synthesized_template_path: str
+    marker_detection: dict[str, Any]

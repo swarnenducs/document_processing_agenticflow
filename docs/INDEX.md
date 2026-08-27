@@ -21,12 +21,14 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | Local vs Azure SQL/Blob + admin templates | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) |
 | See every env variable (tables by component) | [ENVIRONMENT.md](ENVIRONMENT.md) |
 | Dynaconf + Azure Web App JSON + Key Vault | [DYNACONF.md](DYNACONF.md) |
+| Azure Web App checklist + zip deploy | [AZURE_WEBAPP_SETUP.txt](AZURE_WEBAPP_SETUP.txt) |
 | Estimate LLM tokens / STT cost | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) |
 | Route cheap vs strong document mappers | [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) |
 | Voice → contract HITL | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) |
 | Deploy Azure Web Apps | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) |
 | Deploy Foundry-hosted MAF | [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md) |
 | Add a chat or metadata MCP to MAF | [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md) |
+| Gate MAF prompts by Persona | [MAF_PROMPT_GUARDRAILS.md](MAF_PROMPT_GUARDRAILS.md) |
 | Prepare for interviews | [interview-prep/README.md](interview-prep/README.md) |
 
 ---
@@ -61,9 +63,11 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [MCP_AGENTS.md](MCP_AGENTS.md) | Class-based FastMCP servers for document (`:8001`) and voice (`:8002`) |
 | [FASTMCP_JSON.md](FASTMCP_JSON.md) | How FastMCP returns Pydantic JSON (`structuredContent`) vs text blocks |
 | [MAF_LOCAL.md](MAF_LOCAL.md) | Run the MAF orchestrator locally (`:8003`), prompts and registry |
+| [MAF_PROMPT_GUARDRAILS.md](MAF_PROMPT_GUARDRAILS.md) | Persona LLM prompt files + tool-calling authorize (no question catalog) |
 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Azure Web Apps + GitHub Actions for API and UI |
 | [CICD_AZURE.md](CICD_AZURE.md) | Short pointer to `DEPLOYMENT_GUIDE.md` |
 | [AZURE_DEPLOY_MAF.md](AZURE_DEPLOY_MAF.md) | Full MAF deploy: Foundry model, hosted agent, five Web Apps |
+| [AZURE_WEBAPP_SETUP.txt](AZURE_WEBAPP_SETUP.txt) | Web App settings, Key Vault refs, per-component zip scripts |
 | [FOUNDRY_HOSTED_MAF.md](FOUNDRY_HOSTED_MAF.md) | Focused runbook for Foundry-hosted MAF (chat only; jobs stay on Web App) |
 | [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md) | Attach optional chat (ask) and metadata (jobs) MCPs via config URLs |
 
@@ -86,7 +90,10 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [../document-processing-mcp/prompts/](../document-processing-mcp/prompts/) | Mapper, validator, extraction critic, optional agent YAML |
 | [../voice_enable_mcp/prompts/README.md](../voice_enable_mcp/prompts/README.md) | Voice intent + confirm YAML (LCEL) |
 | [../central-agentic-flow/prompts/README.md](../central-agentic-flow/prompts/README.md) | MAF orchestrator prompt location |
-| [../central-agentic-flow/prompts/orchestrator_instructions.md](../central-agentic-flow/prompts/orchestrator_instructions.md) | MAF system preamble (chat `/ask` only) |
+| [../central-agentic-flow/config/prompt_versions.json](../central-agentic-flow/config/prompt_versions.json) | Required MAF prompt versions |
+| [../central-agentic-flow/prompts/orchestrator_instructions.1.0.0.md](../central-agentic-flow/prompts/orchestrator_instructions.1.0.0.md) | MAF system preamble (versioned) |
+| [../central-agentic-flow/prompts/guardrails/persona_prompt_validator.1.0.0.md](../central-agentic-flow/prompts/guardrails/persona_prompt_validator.1.0.0.md) | LLM Persona Prompt Validator |
+| [../central-agentic-flow/prompts/guardrails/role_access.1.0.0.md](../central-agentic-flow/prompts/guardrails/role_access.1.0.0.md) | Execute-time reminder after validation |
 
 ---
 

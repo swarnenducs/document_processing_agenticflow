@@ -4,6 +4,18 @@
     "template_name": "GPO Agreement w. LOC",
     "generated_date": "2026-07-13"
   },
+  "system_instruction": {
+    "legal_notice_block": {
+      "override": false,
+      "placeholder": "Legal_Department_Master_Data",
+      "value": "Legal Department\n200 Connell Drive, Suite 1000\nBerkeley Heights, NJ 07922\nE-mail: pmo@ABCTec.com"
+    },
+    "sales_notice_block": {
+      "override": false,
+      "placeholder": "Sales_Excellence_Master_Data",
+      "value": "Sales Excellence\n200 Connell Drive, Suite 1000\nBerkeley Heights, NJ 07922\nE-mail: pmo@ABCTec.com"
+    }
+  },
   "agreement": {
     "gpo_name": "Acme Industrial Partners LLC",
     "gpo_address": "1200 Commerce Plaza, Chicago, IL 60601",

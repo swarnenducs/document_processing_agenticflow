@@ -8,7 +8,8 @@ import shutil
 import zipfile
 from pathlib import Path
 from typing import Any
-from xml.etree import ElementTree as ET
+
+from lxml import etree
 
 from document_processing_mcp.models.schemas import (
     ExtractedTemplate,
@@ -20,17 +21,6 @@ from document_processing_mcp.services.placeholders import PLACEHOLDER_PATTERNS
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
-
-ET.register_namespace("w", W_NS)
-ET.register_namespace(
-    "r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-)
-ET.register_namespace(
-    "wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-)
-ET.register_namespace("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006")
-ET.register_namespace("w14", "http://schemas.microsoft.com/office/word/2010/wordml")
-ET.register_namespace("w15", "http://schemas.microsoft.com/office/word/2012/wordml")
 
 
 def _qn(tag: str) -> str:
@@ -82,7 +72,7 @@ def _replace_in_text(text: str, replacements: dict[str, str]) -> tuple[str, int]
     return result, applied
 
 
-def _paragraph_full_text(paragraph: ET.Element) -> str:
+def _paragraph_full_text(paragraph: etree._Element) -> str:
     parts: list[str] = []
     for node in paragraph.iter():
         if node.tag == _qn("t") and node.text:
@@ -94,11 +84,11 @@ def _paragraph_full_text(paragraph: ET.Element) -> str:
     return "".join(parts)
 
 
-def _set_paragraph_text_preserving_style(paragraph: ET.Element, new_text: str) -> None:
+def _set_paragraph_text_preserving_style(paragraph: etree._Element, new_text: str) -> None:
     runs = paragraph.findall("w:r", NS)
     if not runs:
-        run = ET.SubElement(paragraph, _qn("r"))
-        text_el = ET.SubElement(run, _qn("t"))
+        run = etree.SubElement(paragraph, _qn("r"))
+        text_el = etree.SubElement(run, _qn("t"))
         text_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         text_el.text = new_text
         return
@@ -108,16 +98,16 @@ def _set_paragraph_text_preserving_style(paragraph: ET.Element, new_text: str) -
     for run in runs:
         paragraph.remove(run)
 
-    new_run = ET.Element(_qn("r"))
+    new_run = etree.Element(_qn("r"))
     if rpr is not None:
         new_run.append(rpr)
-    text_el = ET.SubElement(new_run, _qn("t"))
+    text_el = etree.SubElement(new_run, _qn("t"))
     text_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     text_el.text = new_text
     paragraph.append(new_run)
 
 
-def _replace_within_runs(paragraph: ET.Element, replacements: dict[str, str]) -> int:
+def _replace_within_runs(paragraph: etree._Element, replacements: dict[str, str]) -> int:
     applied = 0
     for text_el in paragraph.iter(_qn("t")):
         if not text_el.text:
@@ -140,13 +130,13 @@ def _still_has_mapped_placeholder(text: str, replacements: dict[str, str]) -> bo
     return False
 
 
-def _cell_text(cell: ET.Element) -> str:
+def _cell_text(cell: etree._Element) -> str:
     return " ".join(
         _paragraph_full_text(p).strip() for p in cell.findall("w:p", NS)
     ).strip()
 
 
-def _strip_bold_from_rpr(rpr: ET.Element) -> ET.Element:
+def _strip_bold_from_rpr(rpr: etree._Element) -> etree._Element:
     """Keep font/size/color from a run style, but force data cells to be non-bold."""
     cleaned = copy.deepcopy(rpr)
     for tag in ("b", "bCs"):
@@ -158,10 +148,10 @@ def _strip_bold_from_rpr(rpr: ET.Element) -> ET.Element:
 
 def _make_simple_cell(
     text: str,
-    template_cell: ET.Element | None = None,
+    template_cell: etree._Element | None = None,
     *,
     strip_bold: bool = True,
-) -> ET.Element:
+) -> etree._Element:
     """
     Build a table cell cloning paragraph/run style from ``template_cell``.
 
@@ -172,32 +162,32 @@ def _make_simple_cell(
         cell = copy.deepcopy(template_cell)
         for p in list(cell.findall("w:p", NS)):
             cell.remove(p)
-        p = ET.SubElement(cell, _qn("p"))
+        p = etree.SubElement(cell, _qn("p"))
         tpl_p = template_cell.find("w:p", NS)
         if tpl_p is not None:
             ppr = tpl_p.find("w:pPr", NS)
             if ppr is not None:
                 p.append(copy.deepcopy(ppr))
             tpl_r = tpl_p.find("w:r", NS)
-            r = ET.SubElement(p, _qn("r"))
+            r = etree.SubElement(p, _qn("r"))
             if tpl_r is not None:
                 rpr = tpl_r.find("w:rPr", NS)
                 if rpr is not None:
                     r.append(_strip_bold_from_rpr(rpr) if strip_bold else copy.deepcopy(rpr))
-            t = ET.SubElement(r, _qn("t"))
+            t = etree.SubElement(r, _qn("t"))
             t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
             t.text = text
         else:
-            r = ET.SubElement(p, _qn("r"))
-            t = ET.SubElement(r, _qn("t"))
+            r = etree.SubElement(p, _qn("r"))
+            t = etree.SubElement(r, _qn("t"))
             t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
             t.text = text
         return cell
 
-    cell = ET.Element(_qn("tc"))
-    p = ET.SubElement(cell, _qn("p"))
-    r = ET.SubElement(p, _qn("r"))
-    t = ET.SubElement(r, _qn("t"))
+    cell = etree.Element(_qn("tc"))
+    p = etree.SubElement(cell, _qn("p"))
+    r = etree.SubElement(p, _qn("r"))
+    t = etree.SubElement(r, _qn("t"))
     t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     t.text = text
     return cell
@@ -228,7 +218,7 @@ def _resolve_array(data: dict[str, Any], path: str) -> list[dict[str, Any]]:
 
 
 def _expand_tables_from_plans(
-    root: ET.Element,
+    root: etree._Element,
     json_data: dict[str, Any] | None,
     plans: list[TableFillPlan],
 ) -> int:
@@ -266,9 +256,16 @@ def _expand_tables_from_plans(
             style_cells = header_cells
 
         col_by_header = {c.header.strip().lower(): c.json_field for c in plan.columns}
-        field_per_col: list[str | None] = [
-            col_by_header.get(h.strip().lower()) for h in headers
-        ]
+        col_by_norm = {
+            "".join(ch for ch in c.header.lower() if ch.isalnum()): c.json_field
+            for c in plan.columns
+        }
+        field_per_col: list[str | None] = []
+        for h in headers:
+            field = col_by_header.get(h.strip().lower())
+            if not field:
+                field = col_by_norm.get("".join(ch for ch in h.lower() if ch.isalnum()))
+            field_per_col.append(field)
         if not any(field_per_col):
             continue
 
@@ -276,7 +273,7 @@ def _expand_tables_from_plans(
             table.remove(old)
 
         for row_data in rows_data:
-            new_tr = ET.Element(_qn("tr"))
+            new_tr = etree.Element(_qn("tr"))
             tr_pr = header_row.find("w:trPr", NS)
             if tr_pr is not None:
                 new_tr.append(copy.deepcopy(tr_pr))
@@ -299,7 +296,8 @@ def _apply_replacements_to_document_xml(
     json_data: dict[str, Any] | None = None,
     table_fills: list[TableFillPlan] | None = None,
 ) -> tuple[str, int]:
-    root = ET.fromstring(document_xml)
+    parser = etree.XMLParser(remove_blank_text=False, huge_tree=True)
+    root = etree.fromstring(document_xml.encode("utf-8"), parser)
     body = root.find("w:body", NS)
     if body is None:
         return document_xml, 0
@@ -322,7 +320,12 @@ def _apply_replacements_to_document_xml(
                 _set_paragraph_text_preserving_style(paragraph, updated)
                 total_applied += count
 
-    xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    xml_bytes = etree.tostring(
+        root,
+        encoding="UTF-8",
+        xml_declaration=True,
+        standalone=True,
+    )
     return xml_bytes.decode("utf-8"), total_applied
 
 

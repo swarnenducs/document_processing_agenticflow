@@ -1,0 +1,16 @@
+{
+  "prompts": {
+    "orchestrator_instructions": {
+      "required_version": "1.0.0",
+      "path": "orchestrator_instructions.{version}.md"
+    },
+    "persona_prompt_validator": {
+      "required_version": "1.0.0",
+      "path": "guardrails/persona_prompt_validator.{version}.md"
+    },
+    "role_access": {
+      "required_version": "1.0.0",
+      "path": "guardrails/role_access.{version}.md"
+    }
+  }
+}

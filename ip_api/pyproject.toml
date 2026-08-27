@@ -27,6 +27,9 @@ dependencies = [
     "pymssql>=2.2.11",
     "pyodbc>=5.0.0",
     "azure-storage-blob>=12.19.0",
+    "azure-identity>=1.19.0",
+    "azure-keyvault-secrets>=4.9.0",
+    "fpdf2>=2.8.0",
 ]
 
 [project.scripts]

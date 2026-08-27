@@ -21,6 +21,7 @@ Runtime prompts stay next to each component (`central-agentic-flow/prompts/`, `d
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice → contract HITL flow |
 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Azure Web Apps + GitHub Actions |
 | [ADD_MAF_MCP_AGENTS.md](ADD_MAF_MCP_AGENTS.md) | Optional chat (ask) and metadata (jobs) MCP slots on MAF |
+| [MAF_PROMPT_GUARDRAILS.md](MAF_PROMPT_GUARDRAILS.md) | Persona LLM prompt files on `/ask` (no question catalog) |
 | [interview-prep/](interview-prep/) | LangChain / LangGraph / MAF / MCP study notes |
 
 Setup: [../README.md](../README.md). Windows install: [../install.ps1](../install.ps1).

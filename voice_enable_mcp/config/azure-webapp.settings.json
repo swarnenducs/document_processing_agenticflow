@@ -110,6 +110,11 @@
     "slotSetting": false
   },
   {
+    "name": "AZURE_OPENAI_WHISPER_DEPLOYMENT",
+    "value": "whisper",
+    "slotSetting": false
+  },
+  {
     "name": "AZURE_OPENAI_DEPLOYMENT",
     "value": "<mapper-deployment>",
     "slotSetting": false

@@ -1,0 +1,14 @@
+{
+  "active_target": "local",
+  "admin_api_key": "",
+  "targets": {
+    "local": {
+      "label": "Local ipp_agentic_api",
+      "api_base_url": "http://127.0.0.1:8000"
+    },
+    "azure": {
+      "label": "Azure Web App (replace hostname)",
+      "api_base_url": "https://<api-app>.azurewebsites.net"
+    }
+  }
+}

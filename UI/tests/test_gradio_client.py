@@ -11,11 +11,16 @@ from ui_app.ui.api_client import ApiError, transcribe_audio_file
 from ui_app.ui.gradio_app import (
     _resolve_gradio_path,
     _resolve_json_payload,
+    _unmarked_template_report_rows,
 )
 
 
 def test_resolve_gradio_path_string() -> None:
     assert _resolve_gradio_path("/tmp/a.wav") == "/tmp/a.wav"
+
+
+def test_resolve_gradio_path_pathlib() -> None:
+    assert _resolve_gradio_path(Path("/tmp/d.docx")) == "/tmp/d.docx"
 
 
 def test_resolve_gradio_path_list() -> None:
@@ -73,3 +78,24 @@ def test_transcribe_audio_file_success(tmp_path: Path) -> None:
 def test_transcribe_audio_missing_file() -> None:
     with pytest.raises(ApiError, match="not found"):
         transcribe_audio_file("/nonexistent/audio.wav")
+
+
+def test_unmarked_template_report_rows() -> None:
+    rows = _unmarked_template_report_rows(
+        {
+            "result": {
+                "marker_detection": {
+                    "had_markers": False,
+                    "library_match": {
+                        "name": "complete_contract_template_GPO.docx",
+                        "score": 0.31,
+                    },
+                }
+            }
+        }
+    )
+    joined = " ".join(cell for row in rows for cell in row)
+    assert "Unmarked" in joined
+    assert "extra time to understand the document" in joined
+    assert "complete_contract_template_GPO.docx" in joined
+    assert _unmarked_template_report_rows({"result": {"marker_detection": {"had_markers": True}}}) == []

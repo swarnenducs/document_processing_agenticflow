@@ -56,9 +56,13 @@ Liveness plus configured storage, SQL, blob, mapper, validator, speech, MCP, MAF
 
 Natural-language chat. Proxies to MAF `POST /ask`. Business MCP tools only when `BUSINESS_MCP_URL` is set; document/voice jobs are **not** chat tools.
 
-**JSON body:** `{ "message": "...", "instructions"?, "session_id"?, "user_id"?, "user_email"? }`
+**JSON body:** `{ "Prompt": "...", "Persona": "<definition>" }`. An LLM validator scores the Prompt against that definition; confidence must meet `MAF_PERSONA_VALIDATOR_MIN_CONFIDENCE` (default 0.95). See [MAF_PROMPT_GUARDRAILS.md](MAF_PROMPT_GUARDRAILS.md).
 
-**Response:** `{ "ok", "text", "response_id", "orchestrator": "maf", "session_id", "user_id", "user_email" }`
+**Response:** `{ "ok", "text", "authorized", "validation", "persona", "prompt", "version", ... }`
+
+### `GET /api/ask/prompts`
+
+Lists validator/orchestrator paths and the configured `min_confidence`. Proxies MAF `GET /prompts`.
 
 ### `GET /api/ask/health`
 
@@ -111,6 +115,12 @@ Dedicated accuracy row from `accuracy_report_document_mcp`.
 **404** if the job exists but no report yet, or if the job id is unknown.
 
 Typical fields: `overall_confidence_pct`, extraction/mapping/coverage/generation scores, `extraction_passed`, `validation_passed`, LLM names, `notes`, JSON blobs, elapsed.
+
+### `GET /api/v1/documents/jobs/{job_id}/accuracy.pdf`
+
+Same report as JSON (scores, validation, per-placeholder, table columns) as an `application/pdf` download. Completed job status also includes `accuracy_pdf_url`.
+
+**404** if the job or report is missing.
 
 ### `GET /api/v1/documents/jobs/{job_id}/download`
 
@@ -175,6 +185,35 @@ Stored `.docx` bytes (local or blob). **410** if the row exists but the file is 
 ### `DELETE /api/v1/admin/templates/{folder_name}/{template_name}`
 
 Removes the SQL row and the file/blob.
+
+### `POST /api/v1/admin/master-data` → `201`
+
+JSON body. Inserts or replaces a `master_data` row (Azure SQL or SQLite). Document MCP fills `<Legal_Department_Master_Data>` / `<Sales_Excellence_Master_Data>` from this table unless the job JSON sets `system_instruction.*.override` to true.
+
+```json
+{
+  "placeholder_key": "Legal_Department_Master_Data",
+  "category": "legal",
+  "content": "Legal Department\n200 Connell Drive, Suite 1000\nBerkeley Heights, NJ 07922\nE-mail: pmo@ABCTec.com",
+  "active": true
+}
+```
+
+### `GET /api/v1/admin/master-data`
+
+List (`?category=legal|sales`, `?limit=`). Seeded legal/sales rows appear after first schema init.
+
+### `GET /api/v1/admin/master-data/{placeholder_key}`
+
+One row.
+
+### `PUT /api/v1/admin/master-data/{placeholder_key}`
+
+Update `content` / `category` / `active`. **404** if the key was never created.
+
+### `DELETE /api/v1/admin/master-data/{placeholder_key}`
+
+Removes the SQL row.
 
 ---
 
@@ -256,9 +295,10 @@ Clients normally go through the gateway. ip_api uses these internally.
 |---|---|---|
 | `GET` | `/health` | `{ "ok": true, "service": "maf" }` |
 | `GET` | `/ask/health` | Chat client + MCP catalogue |
+| `GET` | `/prompts` | Validator path + `min_confidence` |
 | `GET` | `/mcps` | Registered MCP servers |
 | `GET` | `/tools` | Same catalogue as `/mcps` |
-| `POST` | `/ask` | Conversational turn (business tools only) |
+| `POST` | `/ask` | Conversational turn; `Prompt` + `Persona` (definition text) |
 | `POST` | `/invoke` | Deterministic tool call: `{ "server", "tool", "arguments", "xid"? }` |
 
 `POST /invoke` is jobs-only (document + voice). Chat cannot reach those tools.

@@ -117,9 +117,19 @@ def test_generation_integrity_with_manual_mapping(tmp_path: Path) -> None:
     assert generation.generation_confidence > 0
     assert not generation.leftover_placeholders
 
-    report = build_confidence_report(mapping, generation, validation=None)
+    report = build_confidence_report(
+        mapping,
+        generation,
+        validation=None,
+        marker_detection={
+            "had_markers": False,
+            "library_match": {"name": "complete_contract_template_GPO.docx", "score": 0.5},
+        },
+    )
     assert report.overall_confidence > 0
     assert report.per_field
+    assert "unmarked" in (report.notes or "").lower()
+    assert "complete_contract_template_GPO.docx" in (report.notes or "")
 
     doc = Document(output)
     full_text = "\n".join(p.text for p in doc.paragraphs)

@@ -212,6 +212,7 @@ def run_generate_document(
             "confidence": confidence,
             "validation": validation,
             "extraction_validation": extraction,
+            "marker_detection": result.get("marker_detection"),
             **timing,
         }
 

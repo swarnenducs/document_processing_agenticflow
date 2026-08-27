@@ -185,6 +185,11 @@
     "slotSetting": false
   },
   {
+    "name": "AZURE_OPENAI_WHISPER_DEPLOYMENT",
+    "value": "whisper",
+    "slotSetting": false
+  },
+  {
     "name": "GROQ_API_KEY",
     "value": "@Microsoft.KeyVault(SecretUri=https://<vault-name>.vault.azure.net/secrets/<groq-api-key-secret>/)",
     "slotSetting": false

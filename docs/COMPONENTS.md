@@ -16,9 +16,9 @@ docker-compose.yml
 
 | Component | Folder | Env override |
 |---|---|---|
-| Document | `document-processing-mcp/prompts/` | `DOCUMENT_PROMPTS_DIR` |
-| Voice | `voice_enable_mcp/prompts/` | `VOICE_PROMPTS_DIR` |
-| MAF | `central-agentic-flow/prompts/` | `MAF_PROMPTS_DIR` / `MAF_INSTRUCTIONS_FILE` |
+| Document | `document-processing-mcp/prompts/` + `config/prompt_versions.json` | `DOCUMENT_PROMPTS_DIR` / `DOCUMENT_PROMPT_VERSIONS_FILE` |
+| Voice | `voice_enable_mcp/prompts/` + `config/prompt_versions.json` | `VOICE_PROMPTS_DIR` / `VOICE_PROMPT_VERSIONS_FILE` |
+| MAF | `central-agentic-flow/prompts/` + `config/prompt_versions.json` | `MAF_PROMPTS_DIR` / `MAF_PROMPT_VERSIONS_FILE` |
 
 ## Local (all including MAF)
 

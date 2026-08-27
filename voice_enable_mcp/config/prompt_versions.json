@@ -1,0 +1,12 @@
+{
+  "prompts": {
+    "intent": {
+      "required_version": "1.0.0",
+      "path": "intent.{version}.yml"
+    },
+    "confirm": {
+      "required_version": "1.0.0",
+      "path": "confirm.{version}.yml"
+    }
+  }
+}

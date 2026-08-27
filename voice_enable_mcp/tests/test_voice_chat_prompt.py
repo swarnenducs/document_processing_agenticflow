@@ -14,11 +14,17 @@ from voice_enable_mcp.services.voice_lcel import VoiceIntentPayload, parse_voice
 def test_chat_prompt_from_yaml(tmp_path: Path, monkeypatch) -> None:
     prompts = tmp_path / "prompts"
     prompts.mkdir()
-    (prompts / "sample.yml").write_text(
-        "name: sample\nsystem: |\n  You are a helper.\nhuman: |\n  User said: {transcript}\n",
+    (prompts / "sample.1.0.0.yml").write_text(
+        "version: \"1.0.0\"\nname: sample\nsystem: |\n  You are a helper.\nhuman: |\n  User said: {transcript}\n",
+        encoding="utf-8",
+    )
+    versions = tmp_path / "prompt_versions.json"
+    versions.write_text(
+        '{"prompts": {"sample": {"required_version": "1.0.0", "path": "sample.{version}.yml"}}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("VOICE_PROMPTS_DIR", str(prompts))
+    monkeypatch.setenv("VOICE_PROMPT_VERSIONS_FILE", str(versions))
 
     from voice_enable_mcp.prompts_loader import chat_prompt_from_yaml
 

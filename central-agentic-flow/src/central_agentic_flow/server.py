@@ -1,7 +1,7 @@
 """Standalone MAF (Microsoft Agent Framework) HTTP service.
 
 Deployable separately from FastAPI. Default: http://127.0.0.1:8003
-Routes: GET /health, POST /ask, GET /ask/health, POST /invoke, GET /tools, GET /mcps
+Routes: GET /health, POST /ask, GET /ask/health, GET /prompts, POST /invoke, GET /tools, GET /mcps
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Annotated, Any
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from central_agentic_flow.core.context import ApplicationContext, build_application_context
 from central_agentic_flow.core.dependencies import get_app_context, set_app_context
@@ -27,7 +27,17 @@ def _env_int(key: str, default: int) -> int:
 
 
 class AskRequest(BaseModel):
-    message: str = Field(..., min_length=1)
+    model_config = ConfigDict(populate_by_name=True)
+    prompt: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("Prompt", "prompt", "message"),
+        description="User question for the LLM",
+    )
+    persona: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("Persona", "persona", "role"),
+        description="Persona definition from the request (scope and prohibitions)",
+    )
     instructions: str | None = None
     session_id: str | None = Field(
         default=None,
@@ -35,6 +45,14 @@ class AskRequest(BaseModel):
     )
     user_id: str | None = None
     user_email: str | None = None
+
+    @model_validator(mode="after")
+    def _need_prompt(self) -> AskRequest:
+        if not (self.prompt or "").strip():
+            raise ValueError("Provide Prompt")
+        if not (self.persona or "").strip():
+            raise ValueError("Provide Persona")
+        return self
 
 
 class AskResponse(BaseModel):
@@ -46,6 +64,12 @@ class AskResponse(BaseModel):
     session_id: str | None = None
     user_id: str | None = None
     user_email: str | None = None
+    role: str | None = None
+    persona: str | None = None
+    prompt: str | None = None
+    version: str | None = None
+    authorized: bool = True
+    validation: dict[str, Any] | None = None
 
 
 class InvokeRequest(BaseModel):
@@ -136,14 +160,31 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"MCP invoke failed: {exc}") from exc
 
+    @app.get("/prompts")
+    async def list_prompts(_ctx: AppContextDep) -> dict[str, Any]:
+        from central_agentic_flow.persona_validator import configured_min_confidence
+        from central_agentic_flow.prompt_catalog import catalog_prompt_files, prompt_versions_path
+
+        return {
+            "prompts": catalog_prompt_files(),
+            "versions_file": str(prompt_versions_path()),
+            "min_confidence": configured_min_confidence(),
+        }
+
     @app.post("/ask", response_model=AskResponse)
     async def ask(body: AskRequest, _ctx: AppContextDep) -> AskResponse:
         from central_agentic_flow.orchestrator import ask_maf
         from central_agentic_flow.flow_debug import flow_breakpoint
 
-        flow_breakpoint("maf_http_ask", message=body.message, session_id=body.session_id)
+        flow_breakpoint("maf_http_ask", message=body.prompt, session_id=body.session_id)
         try:
-            result = await ask_maf(body.message, instructions=body.instructions)
+            result = await ask_maf(
+                prompt=body.prompt,
+                instructions=body.instructions,
+                persona=body.persona,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -151,11 +192,18 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"MAF ask failed: {exc}") from exc
         return AskResponse(
+            ok=result.authorized,
             text=result.text,
             response_id=result.response_id,
             session_id=body.session_id,
             user_id=body.user_id,
             user_email=body.user_email,
+            role=result.role,
+            persona=result.persona,
+            prompt=result.prompt,
+            version=result.version,
+            authorized=result.authorized,
+            validation=result.validation,
         )
 
     return app

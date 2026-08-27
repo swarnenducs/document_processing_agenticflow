@@ -34,13 +34,17 @@ MCP **`/mcp`** ports are not REST and are not listed in this schema.
 | --- | --- |
 | Health | `GET /api/v1/health` |
 | Create Word job | `POST /api/v1/documents/jobs` (multipart) |
+| List library templates | `GET /api/v1/documents/templates` (default folder `ipp_pricing_default_template`) |
 | Job status | `GET /api/v1/documents/jobs/{job_id}` |
 | Download Word | `GET /api/v1/documents/jobs/{job_id}/download` |
+| Accuracy JSON | `GET /api/v1/documents/jobs/{job_id}/accuracy` |
+| Accuracy PDF | `GET /api/v1/documents/jobs/{job_id}/accuracy.pdf` |
 | Live progress | WebSocket `.../documents/jobs/{job_id}/ws` |
 | Start voice contract | `POST /api/v1/voice/contract` |
 | Confirm voice HITL | `POST /api/v1/voice/contract/confirm` |
 | Chat | `POST /api/ask` |
 | Admin templates | `/api/v1/admin/templates` |
+| Admin master data | `/api/v1/admin/master-data` |
 
 ---
 
@@ -70,7 +74,7 @@ Content type: **`multipart/form-data`** (not JSON).
 | `data` | Yes | JSON **object as a string**, not a file. Example: `{"party":"AVC"}` |
 | `template` | One of template / template_name | Upload a `.docx` file |
 | `template_name` | One of template / template_name | Name already in the admin library |
-| `folder_name` | No | Library folder. Default: `ipp_default_template` |
+| `folder_name` | No | Library folder. Default: `ipp_pricing_default_template` |
 
 ### Step 2 — Read the 202 body
 
@@ -208,14 +212,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {
         "name": "admin",
         "description": (
-            "Word template library. Header `X-Admin-Api-Key` = `ADMIN_API_KEY`. "
+            "Word template library and master-data blocks (legal/sales notice text). "
+            "Header `X-Admin-Api-Key` = `ADMIN_API_KEY`. "
             "Jobs can then send `template_name` instead of uploading a file."
         ),
     },
     {
         "name": "maf",
         "description": (
-            "Chat proxy: `POST /api/ask` → MAF `/ask`. Needs MAF running. "
+            "Chat proxy: `POST /api/ask` → MAF `/ask`. Send `Prompt` + `Persona` "
+            "(persona LLM prompt file). Needs MAF running. "
             "Deterministic jobs still use `/api/v1/documents` and `/api/v1/voice`."
         ),
     },

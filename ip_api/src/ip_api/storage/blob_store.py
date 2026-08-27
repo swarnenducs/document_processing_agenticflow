@@ -204,6 +204,22 @@ class BlobStore:
         for blob in container.list_blobs(name_starts_with=prefix):
             container.delete_blob(blob.name)
 
+    def list_names(self, prefix: str) -> list[str]:
+        """Blob names under ``prefix`` (inclusive). Empty if Blob is off."""
+        if not self.enabled:
+            return []
+        prefix = (prefix or "").lstrip("/")
+        return [blob.name for blob in self._container_client().list_blobs(name_starts_with=prefix)]
+
+    def exists(self, ref_or_name: str) -> bool:
+        if not self.enabled:
+            return False
+        blob_name = self.parse_ref(ref_or_name)
+        try:
+            return bool(self._container_client().get_blob_client(blob_name).exists())
+        except Exception:  # noqa: BLE001
+            return False
+
     def persist_job_inputs(
         self,
         job_id: str,

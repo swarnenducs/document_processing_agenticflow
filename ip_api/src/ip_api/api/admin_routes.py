@@ -1,11 +1,9 @@
 """Admin routes for the default Word template library.
 
 Upload a template once to ``{folder_name}/{template_name}``. The default folder
-is ``ipp_default_template``. Jobs can then name that template instead of
-re-uploading the .docx. Storage follows ``FILE_STORAGE_BACKEND``.
-
-Every route requires the ``X-Admin-Api-Key`` header to match ``ADMIN_API_KEY``.
-When that env var is unset the whole router refuses requests.
+is ``ipp_pricing_default_template``. On Azure Blob that is
+``{AZURE_BLOB_TEMPLATE_PREFIX}/ipp_pricing_default_template/{name}.docx``.
+Jobs can then name that template instead of re-uploading the .docx.
 """
 
 from __future__ import annotations
@@ -18,11 +16,17 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 
 from ip_api.api.dependencies import get_settings_dependency, get_template_store_dep
 from ip_api.api.schemas import (
+    MasterDataDeletedResponse,
+    MasterDataListResponse,
+    MasterDataRecordResponse,
+    MasterDataUpdateRequest,
+    MasterDataUpsertRequest,
     TemplateDeletedResponse,
     TemplateListResponse,
     TemplateRecordResponse,
 )
 from ip_api.core.settings import Settings
+from ip_api.storage.master_data_store import MasterDataKeyError, MasterDataStore
 from ip_api.storage.template_store import (
     DEFAULT_TEMPLATE_FOLDER,
     TEMPLATE_CONTENT_TYPE,
@@ -123,7 +127,7 @@ def _list_for_folder(
     store: TemplateStore,
 ) -> TemplateListResponse:
     try:
-        records = store.list(folder_name=folder_name, limit=limit)
+        records = store.list_library(folder_name=folder_name, limit=limit)
     except TemplateNameError as error:
         raise _bad_name(error) from error
     return TemplateListResponse(
@@ -146,7 +150,7 @@ async def upload_template(
     file: UploadFile = File(..., description="Word .docx template"),
     folder_name: str = Form(
         default=DEFAULT_TEMPLATE_FOLDER,
-        description="Library folder. Default: ipp_default_template.",
+        description=f"Library folder. Default: {DEFAULT_TEMPLATE_FOLDER}.",
     ),
     template_name: str | None = Form(
         default=None,
@@ -158,7 +162,9 @@ async def upload_template(
     Store a Word `.docx` at `{folder_name}/{template_name}`. Re-upload replaces.
 
     Header **`X-Admin-Api-Key`** must equal env `ADMIN_API_KEY`. Multipart: `file`,
-    optional `folder_name` (default `ipp_default_template`), `template_name`, `uploaded_by`.
+    optional `folder_name` (default `ipp_pricing_default_template`), `template_name`,
+    `uploaded_by`. On Azure Blob: `templates/ipp_pricing_default_template/{name}.docx`
+    (prefix from `AZURE_BLOB_TEMPLATE_PREFIX`).
     """
     return await _save_uploaded_template(
         folder_name=folder_name,
@@ -188,7 +194,7 @@ async def upload_folder_template(
     ),
     uploaded_by: str | None = Form(default=None),
 ) -> TemplateRecordResponse:
-    """Same as POST `/templates` but folder is in the URL, e.g. `/templates/ipp_default_template`."""
+    """Same as POST `/templates` but folder is in the URL, e.g. `/templates/ipp_pricing_default_template`."""
     return await _save_uploaded_template(
         folder_name=folder_name,
         file=file,
@@ -209,7 +215,7 @@ def list_templates(
     store: TemplateStoreDep,
     folder_name: str | None = Query(
         default=None,
-        description="Filter to one folder (default library is ipp_default_template).",
+        description=f"Filter to one folder (default library is {DEFAULT_TEMPLATE_FOLDER}).",
     ),
     limit: int = Query(default=200, ge=1, le=500),
 ) -> TemplateListResponse:
@@ -315,3 +321,106 @@ def delete_template(
         template_name=record.template_name,
         location=record.location,
     )
+
+
+def _master_store() -> MasterDataStore:
+    return MasterDataStore()
+
+
+def _master_http(error: MasterDataKeyError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(error))
+
+
+@router.post(
+    "/master-data",
+    response_model=MasterDataRecordResponse,
+    status_code=201,
+    dependencies=[Depends(require_admin_key)],
+    summary="Add or replace a master-data block",
+)
+def upsert_master_data(body: MasterDataUpsertRequest) -> MasterDataRecordResponse:
+    """
+    Insert or replace a SQL `master_data` row used by document MCP for
+    `<Legal_Department_Master_Data>` / `<Sales_Excellence_Master_Data>`.
+    """
+    try:
+        row = _master_store().upsert(
+            placeholder_key=body.placeholder_key,
+            content=body.content,
+            category=body.category,
+            active=body.active,
+        )
+    except MasterDataKeyError as error:
+        raise _master_http(error) from error
+    return MasterDataRecordResponse(**row)
+
+
+@router.get(
+    "/master-data",
+    response_model=MasterDataListResponse,
+    dependencies=[Depends(require_admin_key)],
+    summary="List master-data blocks",
+)
+def list_master_data(
+    category: str | None = Query(default=None, description="Filter: legal | sales | general"),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> MasterDataListResponse:
+    items = _master_store().list(category=category, limit=limit)
+    return MasterDataListResponse(count=len(items), items=[MasterDataRecordResponse(**row) for row in items])
+
+
+@router.get(
+    "/master-data/{placeholder_key}",
+    response_model=MasterDataRecordResponse,
+    dependencies=[Depends(require_admin_key)],
+    summary="Get one master-data block",
+)
+def get_master_data(placeholder_key: str) -> MasterDataRecordResponse:
+    try:
+        row = _master_store().get(placeholder_key)
+    except MasterDataKeyError as error:
+        raise _master_http(error) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return MasterDataRecordResponse(**row)
+
+
+@router.put(
+    "/master-data/{placeholder_key}",
+    response_model=MasterDataRecordResponse,
+    dependencies=[Depends(require_admin_key)],
+    summary="Update a master-data block",
+)
+def update_master_data(
+    placeholder_key: str,
+    body: MasterDataUpdateRequest,
+) -> MasterDataRecordResponse:
+    try:
+        _master_store().get(placeholder_key)
+        row = _master_store().upsert(
+            placeholder_key=placeholder_key,
+            content=body.content,
+            category=body.category or None,
+            active=body.active,
+        )
+    except MasterDataKeyError as error:
+        raise _master_http(error) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return MasterDataRecordResponse(**row)
+
+
+@router.delete(
+    "/master-data/{placeholder_key}",
+    response_model=MasterDataDeletedResponse,
+    dependencies=[Depends(require_admin_key)],
+    summary="Delete a master-data block",
+)
+def delete_master_data(placeholder_key: str) -> MasterDataDeletedResponse:
+    try:
+        row = _master_store().delete(placeholder_key)
+    except MasterDataKeyError as error:
+        raise _master_http(error) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return MasterDataDeletedResponse(placeholder_key=row["placeholder_key"])

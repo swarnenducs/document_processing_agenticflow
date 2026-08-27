@@ -53,6 +53,10 @@ class JobStatusResponse(BaseModel):
     elapsed_ms: float | None = None
     elapsed: str | None = None
     download_url: str | None = None
+    accuracy_pdf_url: str | None = Field(
+        default=None,
+        description="GET this path for the accuracy report PDF",
+    )
     sqlite_persisted: bool = True
     accuracy_report: dict[str, Any] | None = None
 
@@ -78,6 +82,20 @@ class TemplateRecordResponse(BaseModel):
     download_url: str | None = None
 
 
+class LibraryTemplateItem(BaseModel):
+    folder_name: str
+    template_name: str
+    location: str
+    storage_backend: Literal["local", "azure_blob"]
+
+
+class LibraryTemplateListResponse(BaseModel):
+    folder_name: str
+    count: int
+    storage_backend: str
+    templates: list[LibraryTemplateItem]
+
+
 class TemplateListResponse(BaseModel):
     count: int
     storage_backend: Literal["local", "azure_blob"]
@@ -89,6 +107,43 @@ class TemplateDeletedResponse(BaseModel):
     folder_name: str
     template_name: str
     location: str
+
+
+class MasterDataUpsertRequest(BaseModel):
+    placeholder_key: str = Field(
+        description="Template token without brackets, e.g. Legal_Department_Master_Data"
+    )
+    content: str = Field(description="Block text written into the Word placeholder")
+    category: str | None = Field(
+        default=None,
+        description="legal | sales | general. Inferred from the key when omitted.",
+    )
+    active: bool = Field(default=True, description="Inactive rows are ignored by document MCP")
+
+
+class MasterDataUpdateRequest(BaseModel):
+    content: str = Field(description="Block text written into the Word placeholder")
+    category: str | None = Field(default=None)
+    active: bool = Field(default=True)
+
+
+class MasterDataRecordResponse(BaseModel):
+    id: str
+    placeholder_key: str
+    category: str
+    content: str
+    active: bool
+    updated_at: str
+
+
+class MasterDataListResponse(BaseModel):
+    count: int
+    items: list[MasterDataRecordResponse]
+
+
+class MasterDataDeletedResponse(BaseModel):
+    deleted: bool = True
+    placeholder_key: str
 
 
 class TraceByXidResponse(BaseModel):

@@ -6,6 +6,8 @@ The API persists the report; the UI only displays ``scores_pct`` from job status
 
 from __future__ import annotations
 
+from typing import Any
+
 from document_processing_mcp.models.schemas import (
     ConfidenceReport,
     ExtractionValidationResult,
@@ -33,6 +35,31 @@ def _table_mapping_confidence(mapping: MappingResult | None) -> float:
     return sum(confs) / len(confs)
 
 
+UNMARKED_TEMPLATE_NOTE = (
+    "The template was unmarked, so the AI took extra time to understand the document."
+)
+
+
+def marker_detection_note_parts(marker_detection: dict[str, Any] | None) -> list[str]:
+    """Human lines for reports when the upload had no fill markers."""
+    if not isinstance(marker_detection, dict) or marker_detection.get("had_markers") is not False:
+        return []
+    parts = [UNMARKED_TEMPLATE_NOTE]
+    match = marker_detection.get("library_match")
+    if isinstance(match, dict) and str(match.get("name") or "").strip():
+        name = str(match["name"]).strip()
+        score = match.get("score")
+        if isinstance(score, (int, float)):
+            parts.append(
+                f"Reference closest-match template: {name} (similarity {score:.4f})"
+            )
+        else:
+            parts.append(f"Reference closest-match template: {name}")
+    else:
+        parts.append("Reference closest-match template: none found")
+    return parts
+
+
 def build_confidence_report(
     mapping: MappingResult | None,
     generation: GenerationResult | None,
@@ -40,6 +67,7 @@ def build_confidence_report(
     weights: dict[str, float] | None = None,
     *,
     extraction_validation: ExtractionValidationResult | None = None,
+    marker_detection: dict[str, Any] | None = None,
 ) -> ConfidenceReport:
     """
     Combine component scores into an overall generator confidence (0-1),
@@ -149,6 +177,7 @@ def build_confidence_report(
             notes_parts.append(f"validator={validation.validator_source}")
     if validation and not validation.passed:
         notes_parts.append("validation_failed")
+    notes_parts.extend(marker_detection_note_parts(marker_detection))
 
     mapper_llm = None
     if mapping and mapping.mapper_provider and mapping.mapper_model:
