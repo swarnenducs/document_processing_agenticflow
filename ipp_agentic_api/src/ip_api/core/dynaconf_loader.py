@@ -13,7 +13,7 @@ from typing import Any
 
 from dynaconf import Dynaconf
 
-# core/ → package → src → ip_api folder
+# core/ → package → src → ipp_agentic_api folder
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3]
 _MONOREPO_ROOT = _PACKAGE_ROOT.parent
 

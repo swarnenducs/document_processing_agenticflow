@@ -101,7 +101,7 @@ if (-not $SkipEnvCopy) {
         "document-processing-mcp",
         "voice_enable_mcp",
         "central-agentic-flow",
-        "ip_api",
+        "ipp_agentic_api",
         "UI"
     )
     foreach ($name in $components) {

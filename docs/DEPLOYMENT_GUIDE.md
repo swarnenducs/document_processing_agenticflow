@@ -115,7 +115,7 @@ Example JSON (placeholders only, Portal Advanced-edit format) lives next to each
 | App | File |
 |---|---|
 | UI | [`UI/config/azure-webapp.settings.json`](../UI/config/azure-webapp.settings.json) |
-| ip_api | [`ip_api/config/azure-webapp.settings.json`](../ip_api/config/azure-webapp.settings.json) |
+| ip_api | [`ipp_agentic_api/config/azure-webapp.settings.json`](../ipp_agentic_api/config/azure-webapp.settings.json) |
 | document MCP | [`document-processing-mcp/config/azure-webapp.settings.json`](../document-processing-mcp/config/azure-webapp.settings.json) |
 | voice MCP | [`voice_enable_mcp/config/azure-webapp.settings.json`](../voice_enable_mcp/config/azure-webapp.settings.json) |
 | MAF | [`central-agentic-flow/config/azure-webapp.settings.json`](../central-agentic-flow/config/azure-webapp.settings.json) |

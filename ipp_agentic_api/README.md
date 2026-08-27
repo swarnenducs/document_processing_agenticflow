@@ -1,4 +1,4 @@
-# ip_api
+# ipp_agentic_api
 
 FastAPI gateway (`:8000`). Copy this folder to its own git. Talks to MAF over HTTP only.
 

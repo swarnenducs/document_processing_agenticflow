@@ -50,7 +50,7 @@ Paste into Portal **Advanced edit**, or flatten to `NAME=VALUE` for `az webapp c
 | Component | File |
 |---|---|
 | UI `:7860` | [`UI/config/azure-webapp.settings.json`](../UI/config/azure-webapp.settings.json) |
-| ip_api `:8000` | [`ip_api/config/azure-webapp.settings.json`](../ip_api/config/azure-webapp.settings.json) |
+| ip_api `:8000` | [`ipp_agentic_api/config/azure-webapp.settings.json`](../ipp_agentic_api/config/azure-webapp.settings.json) |
 | document-processing-mcp `:8001` | [`document-processing-mcp/config/azure-webapp.settings.json`](../document-processing-mcp/config/azure-webapp.settings.json) |
 | voice_enable_mcp `:8002` | [`voice_enable_mcp/config/azure-webapp.settings.json`](../voice_enable_mcp/config/azure-webapp.settings.json) |
 | central-agentic-flow `:8003` | [`central-agentic-flow/config/azure-webapp.settings.json`](../central-agentic-flow/config/azure-webapp.settings.json) |
@@ -91,7 +91,7 @@ Chat and business are siblings (both `modes: [ask]`). Metadata is jobs-only, lik
 | Component | Port | Standalone template | Role |
 |---|---|---|---|
 | **UI** | `:7860` | [`UI/.env.example`](../UI/.env.example) | Gradio. HTTP client only — no SQL, Blob, or LLM keys |
-| **ip_api** | `:8000` | [`ip_api/.env.example`](../ip_api/.env.example) | FastAPI gateway, jobs, admin templates, speech, proxies to MAF |
+| **ip_api** | `:8000` | [`ipp_agentic_api/.env.example`](../ipp_agentic_api/.env.example) | FastAPI gateway, jobs, admin templates, speech, proxies to MAF |
 | **document-mcp** | `:8001` | [`document-processing-mcp/.env.example`](../document-processing-mcp/.env.example) | Word LangGraph: mapper + critics |
 | **voice-mcp** | `:8002` | [`voice_enable_mcp/.env.example`](../voice_enable_mcp/.env.example) | Voice → contract HITL LangGraph |
 | **MAF** | `:8003` | [`central-agentic-flow/.env.example`](../central-agentic-flow/.env.example) | Chat orchestrator; jobs via `POST /invoke` |

@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug: API (ip_api :8000)",
+      "name": "Debug: API (ipp_agentic_api :8000)",
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
@@ -10,7 +10,7 @@
       "cwd": "${workspaceFolder}",
       "justMyCode": true,
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/document-processing-mcp/src${pathSeparator}${workspaceFolder}/voice_enable_mcp/src${pathSeparator}${workspaceFolder}/central-agentic-flow/src${pathSeparator}${workspaceFolder}/ip_api/src${pathSeparator}${workspaceFolder}/UI/src${pathSeparator}${workspaceFolder}"
+        "PYTHONPATH": "${workspaceFolder}/document-processing-mcp/src${pathSeparator}${workspaceFolder}/voice_enable_mcp/src${pathSeparator}${workspaceFolder}/central-agentic-flow/src${pathSeparator}${workspaceFolder}/ipp_agentic_api/src${pathSeparator}${workspaceFolder}/UI/src${pathSeparator}${workspaceFolder}"
       }
     },
     {
@@ -22,7 +22,7 @@
       "cwd": "${workspaceFolder}",
       "justMyCode": true,
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/document-processing-mcp/src${pathSeparator}${workspaceFolder}${pathSeparator}${workspaceFolder}/ip_api/src"
+        "PYTHONPATH": "${workspaceFolder}/document-processing-mcp/src${pathSeparator}${workspaceFolder}${pathSeparator}${workspaceFolder}/ipp_agentic_api/src"
       }
     },
     {
@@ -67,7 +67,7 @@
         "Debug: Document MCP (:8001)",
         "Debug: Voice MCP (:8002)",
         "Debug: MAF (:8003)",
-        "Debug: API (ip_api :8000)",
+        "Debug: API (ipp_agentic_api :8000)",
         "Debug: UI Gradio (:7860)"
       ],
       "stopAll": true

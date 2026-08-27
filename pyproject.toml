@@ -1,7 +1,7 @@
 [project]
 name = "document-processing-agenticflow"
 version = "0.2.0"
-description = "Monorepo: self-contained UI, ip_api, document/voice MCPs, central-agentic-flow (MAF)"
+description = "Monorepo: self-contained UI, ipp_agentic_api, document/voice MCPs, central-agentic-flow (MAF)"
 readme = "README.md"
 requires-python = ">=3.11"
 # Local workspace members only — NOT published to PyPI.
@@ -30,7 +30,7 @@ members = [
     "document-processing-mcp",
     "voice_enable_mcp",
     "central-agentic-flow",
-    "ip_api",
+    "ipp_agentic_api",
     "UI",
 ]
 
@@ -50,13 +50,13 @@ testpaths = [
     "document-processing-mcp/tests",
     "voice_enable_mcp/tests",
     "central-agentic-flow/tests",
-    "ip_api/tests",
+    "ipp_agentic_api/tests",
     "UI/tests",
 ]
 pythonpath = [
     "document-processing-mcp/src",
     "voice_enable_mcp/src",
     "central-agentic-flow/src",
-    "ip_api/src",
+    "ipp_agentic_api/src",
     "UI/src",
 ]

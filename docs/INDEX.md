@@ -75,7 +75,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 
 | Document | Description |
 |----------|-------------|
-| [../ip_api/README.md](../ip_api/README.md) | FastAPI gateway (`:8000`) — install and run this package alone |
+| [../ipp_agentic_api/README.md](../ipp_agentic_api/README.md) | FastAPI gateway (`:8000`) — install and run this package alone |
 | [../document-processing-mcp/README.md](../document-processing-mcp/README.md) | Document LangGraph FastMCP (`:8001`) |
 | [../voice_enable_mcp/README.md](../voice_enable_mcp/README.md) | Voice contract FastMCP (`:8002`) |
 | [../central-agentic-flow/README.md](../central-agentic-flow/README.md) | MAF orchestrator (`:8003`) |

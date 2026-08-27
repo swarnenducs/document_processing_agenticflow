@@ -70,7 +70,7 @@ services:
 
   ip-api:
     build:
-      context: ./ip_api
+      context: ./ipp_agentic_api
       dockerfile: Dockerfile
     ports:
       - "8000:8000"

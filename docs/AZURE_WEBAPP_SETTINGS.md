@@ -49,7 +49,7 @@ UI has no SQL, Blob, or LLM keys.
 
 ## ip_api (`:8000`)
 
-File: [ip_api/config/azure-webapp.settings.json](../ip_api/config/azure-webapp.settings.json)
+File: [ipp_agentic_api/config/azure-webapp.settings.json](../ipp_agentic_api/config/azure-webapp.settings.json)
 
 Startup:
 

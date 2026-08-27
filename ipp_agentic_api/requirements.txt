@@ -1,7 +1,7 @@
 # Pinned runtime deps for this folder as a standalone project.
 #   python -m pip install -r requirements.txt
 # Regenerate from the monorepo root:
-#   uv export --package ip-api --no-dev --no-hashes --output-file ip_api/requirements.txt
+#   uv export --package ip-api --no-dev --no-hashes --output-file ipp_agentic_api/requirements.txt
 -e .
 aiofile==3.12.3
     # via py-key-value-aio

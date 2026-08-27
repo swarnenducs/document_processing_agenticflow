@@ -38,8 +38,8 @@ Restart the services after changing env. Lines look like:
 
 ```text
 [FLOW] enabled mode=trace (file + method)
-[FLOW]   ip_api/src/ip_api/api/routes.py:331 create_document_job  [create_document_job]
-[FLOW]     ip_api/src/ip_api/services/pipeline_runner.py:18 run_document_job
+[FLOW]   ipp_agentic_api/src/ip_api/api/routes.py:331 create_document_job  [create_document_job]
+[FLOW]     ipp_agentic_api/src/ip_api/services/pipeline_runner.py:18 run_document_job
 ```
 
 Helper: [`flow_debug.py`](../../flow_debug.py) at repo root (same module in each package).
@@ -206,7 +206,7 @@ mcp_start_voice_contract,mcp_confirm_voice_contract
 | You clicked a breakpoint in… | Start this debug config |
 |---|---|
 | `UI/src/...` | Debug: UI Gradio |
-| `ip_api/src/...` | Debug: API |
+| `ipp_agentic_api/src/...` | Debug: API |
 | `document-processing-mcp/...` (MCP tool path) | Debug: Document MCP |
 | `document-processing-mcp/...` (UI Generate Document button) | Debug: Document MCP (API only forwards blob refs) |
 | `voice_enable_mcp/...` (Voice tab) | Debug: API |

@@ -5,7 +5,7 @@ Start ALL deployable components locally (outside component folders).
   document-processing-mcp (:8001)
   voice_enable_mcp        (:8002)
   central-agentic-flow    (:8003)  ← MAF
-  ip_api                  (:8000)
+  ipp_agentic_api         (:8000)
   UI                      (:7860)
 
 Usage:
@@ -31,7 +31,7 @@ SRC_ROOTS = [
     ROOT / "document-processing-mcp" / "src",
     ROOT / "voice_enable_mcp" / "src",
     ROOT / "central-agentic-flow" / "src",
-    ROOT / "ip_api" / "src",
+    ROOT / "ipp_agentic_api" / "src",
     ROOT / "UI" / "src",
 ]
 

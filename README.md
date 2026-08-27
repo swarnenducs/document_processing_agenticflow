@@ -112,7 +112,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 .\install.ps1 -Run    # same, then start all components
 ```
 
-Each component also has its own `.env.example` for a future split repo (`document-processing-mcp/`, `voice_enable_mcp/`, `central-agentic-flow/`, `ip_api/`, `UI/`). Copy that file to `.env` in the same folder; it is loaded first. The root `.env` fills any keys the component file does not set.
+Each component also has its own `.env.example` for a future split repo (`document-processing-mcp/`, `voice_enable_mcp/`, `central-agentic-flow/`, `ipp_agentic_api/`, `UI/`). Copy that file to `.env` in the same folder; it is loaded first. The root `.env` fills any keys the component file does not set.
 
 For plain `pip` installs (Azure zip deploy, CI without UV), use the exported lock files:
 
@@ -155,7 +155,7 @@ See `.env.example` for the copy-paste template. Tables of **what each variable d
 |------|------|
 | Root `.env` (from `.env.example`) | `python run_all_components.py` — shared keys + storage + one section per process |
 | `UI/.env.example` | Gradio only (no SQL) |
-| `ip_api/.env.example` | Gateway — SQLite or Azure SQL + Blob |
+| `ipp_agentic_api/.env.example` | Gateway — SQLite or Azure SQL + Blob |
 | `document-processing-mcp/.env.example` | Document MCP — SQLite or Azure SQL + Blob |
 | `voice_enable_mcp/.env.example` | Voice MCP — SQLite or Azure SQL; optional Redis HITL |
 | `central-agentic-flow/.env.example` | MAF — SQLite or Azure SQL (traces) |

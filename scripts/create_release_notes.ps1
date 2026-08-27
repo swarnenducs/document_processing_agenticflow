@@ -17,7 +17,7 @@ Set-Location $Root
 
 $Dir = @{
     ui       = "UI"
-    api      = "ip_api"
+    api      = "ipp_agentic_api"
     document = "document-processing-mcp"
     voice    = "voice_enable_mcp"
     maf      = "central-agentic-flow"
@@ -26,7 +26,7 @@ $Dir = @{
 
 $Label = @{
     ui       = "UI (Gradio)"
-    api      = "ip_api (gateway API)"
+    api      = "ipp_agentic_api (gateway API)"
     document = "document-processing-mcp"
     voice    = "voice_enable_mcp"
     maf      = "central-agentic-flow (MAF)"
@@ -36,7 +36,7 @@ $Label = @{
 function Resolve-Name([string]$arg) {
     switch ($arg.ToLowerInvariant()) {
         { $_ -in @("ui", "ui-app") } { return "ui" }
-        { $_ -in @("api", "ip_api", "ip-api") } { return "api" }
+        { $_ -in @("api", "ip_api", "ip-api", "ipp_agentic_api", "ipp-agentic-api") } { return "api" }
         { $_ -in @("document", "document-processing-mcp", "document-mcp") } { return "document" }
         { $_ -in @("voice", "voice_enable_mcp", "voice-mcp") } { return "voice" }
         { $_ -in @("maf", "central-agentic-flow", "central_agentic_flow") } { return "maf" }

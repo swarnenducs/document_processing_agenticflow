@@ -69,5 +69,5 @@ A: Yes — trace MAF + mapper + validator (+ MCP tool spans). Details in the val
 
 - `document-processing-mcp/src/document_processing_mcp/server.py`
 - `voice_enable_mcp/src/voice_enable_mcp/server.py`
-- `ip_api/src/ip_api/mcp_client.py`
+- `ipp_agentic_api/src/ip_api/mcp_client.py`
 - `docs/MCP_AGENTS.md`

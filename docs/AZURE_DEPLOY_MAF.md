@@ -118,7 +118,7 @@ az acr login -n <ACR_NAME>
 docker build -t $ACR/document-mcp:latest ./document-processing-mcp
 docker build -t $ACR/voice-mcp:latest ./voice_enable_mcp
 docker build -t $ACR/maf:latest ./central-agentic-flow
-docker build -t $ACR/ip-api:latest ./ip_api
+docker build -t $ACR/ip-api:latest ./ipp_agentic_api
 docker build -t $ACR/ui:latest ./UI
 
 docker push $ACR/document-mcp:latest

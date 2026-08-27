@@ -6,7 +6,7 @@
 -e ./document-processing-mcp
 -e ./voice_enable_mcp
 -e ./central-agentic-flow
--e ./ip_api
+-e ./ipp_agentic_api
 -e ./UI
 agent-framework-core==1.13.0
     # via

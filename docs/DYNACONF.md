@@ -44,7 +44,7 @@ Do **not** require a `DYNACONF_` prefix. `envvar_prefix=False` so `AZURE_SQL_SER
 
 | Package | Loader | Settings |
 |---|---|---|
-| ip_api | `ip_api/src/ip_api/core/dynaconf_loader.py` | `ip_api/src/ip_api/core/settings.py` |
+| ip_api | `ipp_agentic_api/src/ip_api/core/dynaconf_loader.py` | `ipp_agentic_api/src/ip_api/core/settings.py` |
 | central-agentic-flow | `central-agentic-flow/src/central_agentic_flow/core/dynaconf_loader.py` | `.../core/settings.py` |
 | document-processing-mcp | `document-processing-mcp/src/document_processing_mcp/core/dynaconf_loader.py` | `.../core/settings.py` |
 | voice_enable_mcp | `voice_enable_mcp/src/voice_enable_mcp/core/dynaconf_loader.py` | `.../core/settings.py` |
@@ -106,7 +106,7 @@ Committed **examples** (no real secrets). Portal Advanced edit format: `{name, v
 | Component | Port | File |
 |---|---|---|
 | UI | `:7860` | [`UI/config/azure-webapp.settings.json`](../UI/config/azure-webapp.settings.json) |
-| ip_api | `:8000` | [`ip_api/config/azure-webapp.settings.json`](../ip_api/config/azure-webapp.settings.json) |
+| ip_api | `:8000` | [`ipp_agentic_api/config/azure-webapp.settings.json`](../ipp_agentic_api/config/azure-webapp.settings.json) |
 | document-processing-mcp | `:8001` | [`document-processing-mcp/config/azure-webapp.settings.json`](../document-processing-mcp/config/azure-webapp.settings.json) |
 | voice_enable_mcp | `:8002` | [`voice_enable_mcp/config/azure-webapp.settings.json`](../voice_enable_mcp/config/azure-webapp.settings.json) |
 | central-agentic-flow | `:8003` | [`central-agentic-flow/config/azure-webapp.settings.json`](../central-agentic-flow/config/azure-webapp.settings.json) |
@@ -130,7 +130,7 @@ To apply a whole example file, flatten then pass `--settings` (do not print the 
 
 ```bash
 python3 -c "import json,sys; print(' '.join(x['name']+'='+x['value'] for x in json.load(open(sys.argv[1]))))" \
-  ip_api/config/azure-webapp.settings.json
+  ipp_agentic_api/config/azure-webapp.settings.json
 # Review, replace placeholders, then:
 az webapp config appsettings set -g <rg> -n <app> --settings <flattened NAME=VALUE...>
 ```
@@ -141,7 +141,7 @@ Hop URLs to fill (same names Dynaconf will overlay; preferred name first):
 
 | Component JSON | Preferred | Alias you can omit if the preferred name is set |
 |---|---|---|
-| `ip_api/config/azure-webapp.settings.json` | `CENTRAL_AGENT_END_POINT=https://<maf-app>.azurewebsites.net` | `MAF_BASE_URL` |
+| `ipp_agentic_api/config/azure-webapp.settings.json` | `CENTRAL_AGENT_END_POINT=https://<maf-app>.azurewebsites.net` | `MAF_BASE_URL` |
 | `central-agentic-flow/config/azure-webapp.settings.json` | `TEMPLATE_PROCESSING_END_POINT=https://<document-mcp-app>.azurewebsites.net/mcp` | `DOCUMENT_MCP_URL` |
 | same | `VOICE_PROCESSING_END_POINT=https://<voice-mcp-app>.azurewebsites.net/mcp` | `VOICE_MCP_URL` |
 | same | `CHAT_MCP_END_POINT=` (optional ask MCP; fill `https://<chat-mcp-app>.azurewebsites.net/mcp`) | `CHAT_MCP_URL` |

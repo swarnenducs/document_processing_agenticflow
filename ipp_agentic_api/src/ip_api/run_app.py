@@ -22,12 +22,12 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]  # ip_api/src/ip_api -> repo root
+PROJECT_ROOT = Path(__file__).resolve().parents[3]  # ipp_agentic_api/src/ip_api -> repo root
 SRC_ROOTS = [
     PROJECT_ROOT / "document-processing-mcp" / "src",
     PROJECT_ROOT / "voice_enable_mcp" / "src",
     PROJECT_ROOT / "central-agentic-flow" / "src",
-    PROJECT_ROOT / "ip_api" / "src",
+    PROJECT_ROOT / "ipp_agentic_api" / "src",
     PROJECT_ROOT / "UI" / "src",
 ]
 

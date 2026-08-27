@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPONENT_LABEL="ip_api (gateway API)"
+COMPONENT_LABEL="ipp_agentic_api (gateway API)"
 WEBSITES_PORT="8000"
 STARTUP="python run.py"
 STARTUP_ALT="python -m uvicorn ip_api.api.main:app --host 0.0.0.0 --port 8000"

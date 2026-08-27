@@ -1039,7 +1039,7 @@ dev = [
 requires-dist = [
     { name = "central-agentic-flow", editable = "central-agentic-flow" },
     { name = "document-processing-mcp", editable = "document-processing-mcp" },
-    { name = "ip-api", editable = "ip_api" },
+    { name = "ip-api", editable = "ipp_agentic_api" },
     { name = "ui-app", editable = "UI" },
     { name = "voice-enable-mcp", editable = "voice_enable_mcp" },
 ]
@@ -1839,7 +1839,7 @@ wheels = [
 [[package]]
 name = "ip-api"
 version = "0.1.0"
-source = { editable = "ip_api" }
+source = { editable = "ipp_agentic_api" }
 dependencies = [
     { name = "azure-identity" },
     { name = "azure-keyvault-secrets" },

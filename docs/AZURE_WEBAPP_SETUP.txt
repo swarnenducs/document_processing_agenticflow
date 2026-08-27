@@ -54,7 +54,7 @@ Portal: Web App > Environment variables (Configuration) > App settings
 Paste the matching JSON from the repo (replace every <placeholder>):
 
   UI                       UI/config/azure-webapp.settings.json
-  API (ip_api)             ip_api/config/azure-webapp.settings.json
+  API (ip_api)             ipp_agentic_api/config/azure-webapp.settings.json
   document MCP             document-processing-mcp/config/azure-webapp.settings.json
   voice MCP                voice_enable_mcp/config/azure-webapp.settings.json
   MAF (central-agentic)    central-agentic-flow/config/azure-webapp.settings.json
@@ -191,7 +191,7 @@ J. ZIP PACKAGES FOR WEB APP DEPLOY
   Each component has its OWN scripts (take these when you split into separate repos):
 
     UI/package_azure_webapp.sh                  .ps1
-    ip_api/package_azure_webapp.sh              .ps1
+    ipp_agentic_api/package_azure_webapp.sh              .ps1
     document-processing-mcp/package_azure_webapp.sh   .ps1
     voice_enable_mcp/package_azure_webapp.sh    .ps1
     central-agentic-flow/package_azure_webapp.sh      .ps1
@@ -227,7 +227,7 @@ J. ZIP PACKAGES FOR WEB APP DEPLOY
 
   Portal: Web App > Deployment Center > Zip deploy
   or:
-    az webapp deploy -g <rg> -n <api-app> --src-path ip_api/dist/azure-webapp.zip --type zip
+    az webapp deploy -g <rg> -n <api-app> --src-path ipp_agentic_api/dist/azure-webapp.zip --type zip
 
   Set WEBSITES_PORT and startup command from STARTUP.txt inside the zip
   (or section F above). After first zip deploy, wait for pip install to finish

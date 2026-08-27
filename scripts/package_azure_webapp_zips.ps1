@@ -15,7 +15,7 @@ Set-Location $Root
 
 $Dir = @{
     ui         = "UI"
-    api        = "ip_api"
+    api        = "ipp_agentic_api"
     document   = "document-processing-mcp"
     voice      = "voice_enable_mcp"
     maf        = "central-agentic-flow"
@@ -24,7 +24,7 @@ $Dir = @{
 function Resolve-Name([string]$arg) {
     switch ($arg.ToLowerInvariant()) {
         { $_ -in @("ui", "ui-app") } { return "ui" }
-        { $_ -in @("api", "ip_api", "ip-api") } { return "api" }
+        { $_ -in @("api", "ip_api", "ip-api", "ipp_agentic_api", "ipp-agentic-api") } { return "api" }
         { $_ -in @("document", "document-processing-mcp", "document-mcp") } { return "document" }
         { $_ -in @("voice", "voice_enable_mcp", "voice-mcp") } { return "voice" }
         { $_ -in @("maf", "central-agentic-flow", "central_agentic_flow") } { return "maf" }
@@ -54,7 +54,7 @@ foreach ($name in $names) {
 Write-Host ""
 Write-Host "Component scripts (use these after a repo split):"
 Write-Host "  UI\package_azure_webapp.ps1"
-Write-Host "  ip_api\package_azure_webapp.ps1"
+Write-Host "  ipp_agentic_api\package_azure_webapp.ps1"
 Write-Host "  document-processing-mcp\package_azure_webapp.ps1"
 Write-Host "  voice_enable_mcp\package_azure_webapp.ps1"
 Write-Host "  central-agentic-flow\package_azure_webapp.ps1"

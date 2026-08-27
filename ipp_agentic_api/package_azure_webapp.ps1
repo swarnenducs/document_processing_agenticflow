@@ -13,7 +13,7 @@
 $ErrorActionPreference = "Stop"
 
 $Root = $PSScriptRoot
-$ComponentLabel = "ip_api (gateway API)"
+$ComponentLabel = "ipp_agentic_api (gateway API)"
 $WebsitesPort = "8000"
 $Startup = "python run.py"
 $StartupAlt = "python -m uvicorn ip_api.api.main:app --host 0.0.0.0 --port 8000"

@@ -3,7 +3,7 @@
     "document-processing-mcp/src",
     "voice_enable_mcp/src",
     "central-agentic-flow/src",
-    "ip_api/src",
+    "ipp_agentic_api/src",
     "UI/src",
     "."
   ]

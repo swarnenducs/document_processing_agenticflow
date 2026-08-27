@@ -13,7 +13,7 @@ cd "$ROOT"
 folder_for() {
   case "$1" in
     ui) echo UI ;;
-    api) echo ip_api ;;
+    api) echo ipp_agentic_api ;;
     document) echo document-processing-mcp ;;
     voice) echo voice_enable_mcp ;;
     maf) echo central-agentic-flow ;;
@@ -25,7 +25,7 @@ resolve_name() {
   key="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   case "$key" in
     ui|ui-app) echo ui ;;
-    api|ip_api|ip-api) echo api ;;
+    api|ip_api|ip-api|ipp_agentic_api|ipp-agentic-api) echo api ;;
     document|document-processing-mcp|document-mcp) echo document ;;
     voice|voice_enable_mcp|voice-mcp) echo voice ;;
     maf|central-agentic-flow|central_agentic_flow) echo maf ;;
@@ -57,7 +57,7 @@ done
 echo
 echo "Component scripts (use these after a repo split):"
 echo "  UI/package_azure_webapp.sh"
-echo "  ip_api/package_azure_webapp.sh"
+echo "  ipp_agentic_api/package_azure_webapp.sh"
 echo "  document-processing-mcp/package_azure_webapp.sh"
 echo "  voice_enable_mcp/package_azure_webapp.sh"
 echo "  central-agentic-flow/package_azure_webapp.sh"

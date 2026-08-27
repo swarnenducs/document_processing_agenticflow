@@ -172,7 +172,7 @@ Speech then start: `POST /api/v1/voice/contract/from-audio`.
 ## Postman
 
 Import `postman/IPP.postman_collection.json` and
-`postman/local.postman_environment.json` (copies also under `ip_api/postman/`).
+`postman/local.postman_environment.json` (copies also under `ipp_agentic_api/postman/`).
 Do not put secrets in the collection.
 """
 

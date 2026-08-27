@@ -7,7 +7,7 @@
 - WebSockets for job progress
 - Thin gateway in front of MCP / MAF
 
-**Component:** `ip_api/` → `uv run doc-api` → `:8000`
+**Component:** `ipp_agentic_api/` → `uv run doc-api` → `:8000`
 
 ## Concepts you must explain
 
@@ -75,7 +75,7 @@ A: `/api/v1` prefix; keep `/api/ask` as product surface for NL orchestration.
 
 ## Point to code
 
-- `ip_api/src/ip_api/api/main.py` — app + xid middleware
-- `ip_api/src/ip_api/api/routes.py` — documents/jobs
-- `ip_api/src/ip_api/api/ask_routes.py` — MAF proxy
-- `ip_api/src/ip_api/api/mcp_routes.py` — MCP proxy
+- `ipp_agentic_api/src/ip_api/api/main.py` — app + xid middleware
+- `ipp_agentic_api/src/ip_api/api/routes.py` — documents/jobs
+- `ipp_agentic_api/src/ip_api/api/ask_routes.py` — MAF proxy
+- `ipp_agentic_api/src/ip_api/api/mcp_routes.py` — MCP proxy
