@@ -5,6 +5,8 @@ description = "ipp_agentic_api — FastAPI gateway (self-contained; talks to MCP
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "dynaconf>=3.2.0",
     "python-dotenv>=1.0.0",
     "typing-extensions>=4.0.0",
     "pyyaml>=6.0.0",

@@ -20,7 +20,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | Read Swagger (`/docs`) on the gateway | [POSTMAN.md](POSTMAN.md) (same collection; open `:8000/docs`) |
 | Local vs Azure SQL/Blob + admin templates | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) |
 | See every env variable (tables by component) | [ENVIRONMENT.md](ENVIRONMENT.md) |
-| Dynaconf later + Azure Web App JSON + Key Vault | [DYNACONF.md](DYNACONF.md) |
+| Dynaconf + Azure Web App JSON + Key Vault | [DYNACONF.md](DYNACONF.md) |
 | Estimate LLM tokens / STT cost | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) |
 | Route cheap vs strong document mappers | [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) |
 | Voice → contract HITL | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) |
@@ -53,7 +53,7 @@ Runtime prompts (edit to change model behaviour) live next to each component —
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice/text → intent → catalog lookup → HITL confirm → contract file |
 | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) | SQLite + local files vs Azure SQL + Blob; default admin template library (`ipp_default_template`) |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | Env variables in tables: what each does and which process reads it (`DEBUG_FLOW` included) |
-| [DYNACONF.md](DYNACONF.md) | Env overlay for Dynaconf later; Key Vault; Azure Web App example JSON per component |
+| [DYNACONF.md](DYNACONF.md) | API, MAF, MCPs: Dynaconf + Pydantic BaseSettings from env; Key Vault; Azure Web App JSON |
 | [api-details-information.md](api-details-information.md) | Catalogue of gateway, MAF, document MCP, and voice MCP APIs |
 | [POSTMAN.md](POSTMAN.md) | Import Postman collection; gateway REST + MAF `/invoke` |
 | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) | Estimated tokens (and Whisper minutes) per component, with cost knobs |

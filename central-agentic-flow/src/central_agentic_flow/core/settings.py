@@ -1,25 +1,17 @@
-"""Application settings loaded from environment variables."""
+"""Application settings: Dynaconf loads ``.env``, Pydantic ``BaseSettings`` reads env."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
-from dotenv import load_dotenv
+from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# core/ → package → src → <component folder>
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-load_dotenv(_PROJECT_ROOT / ".env")
-_monorepo = _PROJECT_ROOT.parent
-if (_monorepo / "run_all_components.py").is_file():
-    load_dotenv(_monorepo / ".env", override=False)
-load_dotenv(override=False)
+from central_agentic_flow.core.dynaconf_loader import apply_dynaconf_from_env_files
 
-
-def _path_from_env(key: str, default: str) -> Path:
-    raw = os.getenv(key, default)
-    return Path(raw).expanduser().resolve()
+apply_dynaconf_from_env_files()
 
 
 def force_sqlite_from_env() -> bool:
@@ -27,42 +19,67 @@ def force_sqlite_from_env() -> bool:
     return (os.getenv("IPP_FORCE_SQLITE") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-@dataclass(frozen=True)
-class Settings:
-    """Central config — storage paths and API behaviour."""
+class Settings(BaseSettings):
+    """Central config — same env names as Azure App Settings and ``.env``."""
 
-    # File storage (blobs: template, output .docx, audio uploads)
-    storage_base_path: Path
-    jobs_subdirectory: str
-    audio_subdirectory: str
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        extra="ignore",
+        frozen=True,
+        populate_by_name=True,
+        env_ignore_empty=True,
+        case_sensitive=False,
+    )
 
-    # SQLite fallback when Azure SQL is not configured
-    sqlite_database_path: Path
+    storage_base_path: Path = Field(default=Path("./data/storage"))
+    jobs_subdirectory: str = "jobs"
+    audio_subdirectory: str = "audio"
+    sqlite_database_path: Path = Field(default=Path("./data/app.db"))
 
-    # SQLAlchemy / Azure SQL
-    sqlalchemy_database_url: str | None
-    azure_sql_server: str | None
-    azure_sql_user: str
-    azure_sql_password: str | None
-    azure_sql_database: str
-    azure_sql_dialect: str
-    azure_sql_odbc_driver: str
+    sqlalchemy_database_url: str | None = None
+    azure_sql_server: str | None = None
+    azure_sql_user: str = Field(
+        default="adminsql",
+        validation_alias=AliasChoices("AZURE_SQL_USER", "AZURE_SQL_ADMIN"),
+    )
+    azure_sql_password: str | None = None
+    azure_sql_database: str = "ipp-app-db"
+    azure_sql_dialect: str = "pyodbc"
+    azure_sql_odbc_driver: str = "ODBC Driver 18 for SQL Server"
 
-    # API
-    api_host: str
-    api_port: int
-    api_base_url: str
-    max_upload_mb: int
-    job_ttl_hours: int
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    api_base_url: str = "http://127.0.0.1:8000"
+    max_upload_mb: int = 25
+    job_ttl_hours: int = 24
 
-    # Gradio UI
-    gradio_host: str
-    gradio_port: int
+    gradio_host: str = "127.0.0.1"
+    gradio_port: int = 7860
 
-    # Speech-to-text (voice → natural language text)
-    speech_provider: str  # auto | openai | groq
-    openai_whisper_model: str
-    groq_whisper_model: str
+    speech_provider: str = "groq"
+    openai_whisper_model: str = "whisper-1"
+    groq_whisper_model: str = "whisper-large-v3"
+
+    @field_validator("azure_sql_dialect", "speech_provider", mode="after")
+    @classmethod
+    def _lower_str(cls, value: str) -> str:
+        return (value or "").strip().lower()
+
+    @model_validator(mode="after")
+    def _normalize_storage(self) -> Self:
+        storage = self.storage_base_path.expanduser().resolve()
+        if (os.getenv("SQLITE_DATABASE_PATH") or "").strip():
+            sqlite_path = Path(self.sqlite_database_path).expanduser().resolve()
+        else:
+            sqlite_path = (storage.parent / "app.db").resolve()
+
+        object.__setattr__(self, "storage_base_path", storage)
+        object.__setattr__(self, "sqlite_database_path", sqlite_path)
+        if force_sqlite_from_env():
+            object.__setattr__(self, "sqlalchemy_database_url", None)
+            object.__setattr__(self, "azure_sql_server", None)
+            object.__setattr__(self, "azure_sql_password", None)
+        return self
 
     @property
     def uses_azure_sql(self) -> bool:
@@ -90,40 +107,7 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    storage_base = _path_from_env("STORAGE_BASE_PATH", "./data/storage")
-    sqlite_default = str(storage_base.parent / "app.db")
-    force_sqlite = force_sqlite_from_env()
-    return Settings(
-        storage_base_path=storage_base,
-        jobs_subdirectory=os.getenv("JOBS_SUBDIRECTORY", "jobs"),
-        audio_subdirectory=os.getenv("AUDIO_SUBDIRECTORY", "audio"),
-        sqlite_database_path=_path_from_env("SQLITE_DATABASE_PATH", sqlite_default),
-        sqlalchemy_database_url=(
-            None if force_sqlite else ((os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip() or None)
-        ),
-        azure_sql_server=(
-            None if force_sqlite else ((os.getenv("AZURE_SQL_SERVER") or "").strip() or None)
-        ),
-        azure_sql_user=(
-            os.getenv("AZURE_SQL_USER") or os.getenv("AZURE_SQL_ADMIN") or "adminsql"
-        ).strip(),
-        azure_sql_password=(
-            None if force_sqlite else ((os.getenv("AZURE_SQL_PASSWORD") or "").strip() or None)
-        ),
-        azure_sql_database=(os.getenv("AZURE_SQL_DATABASE") or "ipp-app-db").strip(),
-        azure_sql_dialect=(os.getenv("AZURE_SQL_DIALECT") or "pyodbc").strip().lower(),
-        azure_sql_odbc_driver=os.getenv("AZURE_SQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),
-        api_host=os.getenv("API_HOST", "0.0.0.0"),
-        api_port=int(os.getenv("API_PORT", "8000")),
-        api_base_url=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
-        max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "25")),
-        job_ttl_hours=int(os.getenv("JOB_TTL_HOURS", "24")),
-        gradio_host=os.getenv("GRADIO_HOST", "127.0.0.1"),
-        gradio_port=int(os.getenv("GRADIO_PORT", "7860")),
-        speech_provider=os.getenv("SPEECH_PROVIDER", "groq").lower(),
-        openai_whisper_model=os.getenv("OPENAI_WHISPER_MODEL", "whisper-1"),
-        groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
-    )
+    return Settings()
 
 
 _settings: Settings | None = None
@@ -138,7 +122,7 @@ def settings() -> Settings:
 
 
 def reload_settings() -> Settings:
-    """Re-read env (useful in tests)."""
+    """Re-read process env (tests / launcher). Does not re-apply ``.env`` files."""
     global _settings
     _settings = None
     try:

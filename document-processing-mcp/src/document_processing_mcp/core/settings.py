@@ -1,46 +1,39 @@
-"""Application settings loaded from environment variables."""
+"""Application settings: Dynaconf loads ``.env``, Pydantic ``BaseSettings`` reads env."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 
-from dotenv import load_dotenv
+from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# core/ → package → src → <component folder>
+from document_processing_mcp.core.dynaconf_loader import apply_dynaconf_from_env_files
+
+apply_dynaconf_from_env_files()
+
 _PACKAGE_ROOT = Path(__file__).resolve().parents[3]
-load_dotenv(_PACKAGE_ROOT / ".env")
-_monorepo = _PACKAGE_ROOT.parent
-if (_monorepo / "run_all_components.py").is_file():
-    load_dotenv(_monorepo / ".env", override=False)
-load_dotenv(override=False)
 
 
-def _path_from_env(key: str, default: str) -> Path:
-    raw = os.getenv(key, default)
-    return Path(raw).expanduser().resolve()
+def force_sqlite_from_env() -> bool:
+    """Launcher sets IPP_FORCE_SQLITE=1 so child dotenv cannot reopen Azure SQL."""
+    return (os.getenv("IPP_FORCE_SQLITE") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_clamped_int(keys: tuple[str, ...], *, default: int, lo: int, hi: int) -> int:
-    for key in keys:
-        raw = (os.getenv(key) or "").strip()
-        if not raw:
-            continue
-        try:
-            return max(lo, min(hi, int(raw)))
-        except ValueError:
-            break
-    return default
-
-
-def _env_bool(keys: tuple[str, ...], *, default: bool = False) -> bool:
-    for key in keys:
-        raw = os.getenv(key)
-        if raw is None or not str(raw).strip():
-            continue
-        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-    return default
+def _has_blob_creds(
+    connection_string: str | None,
+    account_name: str | None,
+    account_key: str | None,
+    sas_token: str | None,
+    sas_url: str | None,
+) -> bool:
+    return bool(
+        (connection_string or "").strip()
+        or ((account_name or "").strip() and (account_key or "").strip())
+        or ((account_name or "").strip() and (sas_token or "").strip())
+        or (sas_url or "").strip()
+    )
 
 
 def _optimization_config_path() -> Path:
@@ -55,75 +48,130 @@ def _optimization_config_path() -> Path:
     return _PACKAGE_ROOT / "config" / "llm_optimization.json"
 
 
-def _env_clamped_float(
-    keys: tuple[str, ...], *, default: float, lo: float, hi: float
-) -> float:
-    for key in keys:
-        raw = (os.getenv(key) or "").strip()
-        if not raw:
-            continue
-        try:
-            return max(lo, min(hi, float(raw)))
-        except ValueError:
-            break
-    return default
+class Settings(BaseSettings):
+    """Central config — same env names as Azure App Settings and ``.env``."""
 
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        extra="ignore",
+        frozen=True,
+        populate_by_name=True,
+        env_ignore_empty=True,
+        case_sensitive=False,
+    )
 
-def force_sqlite_from_env() -> bool:
-    """Launcher sets IPP_FORCE_SQLITE=1 so child dotenv cannot reopen Azure SQL."""
-    return (os.getenv("IPP_FORCE_SQLITE") or "").strip().lower() in {"1", "true", "yes", "on"}
+    storage_base_path: Path = Field(default=Path("./data/storage"))
+    jobs_subdirectory: str = "jobs"
+    audio_subdirectory: str = "audio"
+    sqlite_database_path: Path = Field(default=Path("./data/app.db"))
 
+    sqlalchemy_database_url: str | None = None
+    azure_sql_server: str | None = None
+    azure_sql_user: str = Field(
+        default="adminsql",
+        validation_alias=AliasChoices("AZURE_SQL_USER", "AZURE_SQL_ADMIN"),
+    )
+    azure_sql_password: str | None = None
+    azure_sql_database: str = "ipp-app-db"
+    azure_sql_dialect: str = "pyodbc"
+    azure_sql_odbc_driver: str = "ODBC Driver 18 for SQL Server"
 
-@dataclass(frozen=True)
-class Settings:
-    """Central config — storage paths and API behaviour."""
+    file_storage_backend: str = Field(
+        default="",
+        validation_alias=AliasChoices("FILE_STORAGE_BACKEND", "STORAGE_BACKEND"),
+    )
+    azure_storage_connection_string: str | None = None
+    azure_storage_account_name: str | None = None
+    azure_storage_account_key: str | None = None
+    azure_storage_sas_token: str | None = None
+    azure_storage_sas_url: str | None = None
+    azure_blob_container: str = "docuploadsolution"
+    azure_blob_prefix: str = "jobs"
 
-    # File storage (blobs: template, output .docx, audio uploads)
-    storage_base_path: Path
-    jobs_subdirectory: str
-    audio_subdirectory: str
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    api_base_url: str = "http://127.0.0.1:8000"
+    max_upload_mb: int = 25
+    job_ttl_hours: int = 24
+    document_max_retries: int = Field(
+        default=1,
+        validation_alias=AliasChoices("DOCUMENT_MAX_RETRIES", "MAX_RETRIES"),
+    )
+    document_validation_threshold: float = Field(
+        default=0.7,
+        validation_alias=AliasChoices(
+            "DOCUMENT_VALIDATION_THRESHOLD",
+            "DOCUMENT_ACCURACY_THRESHOLD",
+            "VALIDATION_THRESHOLD",
+        ),
+    )
+    document_llm_optimization_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "DOCUMENT_LLM_OPTIMIZATION_ENABLED",
+            "DOCUMENT_LLM_ROUTING_ENABLED",
+        ),
+    )
+    document_llm_optimization_config: Path = Field(default=Path("config/llm_optimization.json"))
 
-    # SQLite fallback when Azure SQL is not configured
-    sqlite_database_path: Path
+    gradio_host: str = "127.0.0.1"
+    gradio_port: int = 7860
 
-    # SQLAlchemy / Azure SQL (same tables as ip_api)
-    sqlalchemy_database_url: str | None
-    azure_sql_server: str | None
-    azure_sql_user: str
-    azure_sql_password: str | None
-    azure_sql_database: str
-    azure_sql_dialect: str
-    azure_sql_odbc_driver: str
+    speech_provider: str = "groq"
+    openai_whisper_model: str = "whisper-1"
+    groq_whisper_model: str = "whisper-large-v3"
 
-    # Azure Blob (template, JSON, generated .docx)
-    file_storage_backend: str  # local | azure_blob
-    azure_storage_connection_string: str | None
-    azure_storage_account_name: str | None
-    azure_storage_account_key: str | None
-    azure_storage_sas_token: str | None
-    azure_storage_sas_url: str | None
-    azure_blob_container: str
-    azure_blob_prefix: str
+    @field_validator("document_max_retries", mode="after")
+    @classmethod
+    def _clamp_retries(cls, value: int) -> int:
+        return max(0, min(3, value))
 
-    # API
-    api_host: str
-    api_port: int
-    api_base_url: str
-    max_upload_mb: int
-    job_ttl_hours: int
-    document_max_retries: int
-    document_validation_threshold: float
-    document_llm_optimization_enabled: bool
-    document_llm_optimization_config: Path
+    @field_validator("document_validation_threshold", mode="after")
+    @classmethod
+    def _clamp_threshold(cls, value: float) -> float:
+        return max(0.0, min(1.0, value))
 
-    # Gradio UI
-    gradio_host: str
-    gradio_port: int
+    @field_validator("azure_sql_dialect", "speech_provider", "file_storage_backend", mode="after")
+    @classmethod
+    def _lower_str(cls, value: str) -> str:
+        return (value or "").strip().lower()
 
-    # Speech-to-text (voice → natural language text)
-    speech_provider: str  # auto | openai | groq
-    openai_whisper_model: str
-    groq_whisper_model: str
+    @model_validator(mode="after")
+    def _normalize_storage(self) -> Self:
+        storage = self.storage_base_path.expanduser().resolve()
+        if (os.getenv("SQLITE_DATABASE_PATH") or "").strip():
+            sqlite_path = Path(self.sqlite_database_path).expanduser().resolve()
+        else:
+            sqlite_path = (storage.parent / "app.db").resolve()
+
+        backend = (self.file_storage_backend or "").strip().lower()
+        if backend in {"azure", "blob", "azureblob"}:
+            backend = "azure_blob"
+        force_sqlite = force_sqlite_from_env()
+        if force_sqlite:
+            backend = "local"
+        elif not backend:
+            backend = (
+                "azure_blob"
+                if _has_blob_creds(
+                    self.azure_storage_connection_string,
+                    self.azure_storage_account_name,
+                    self.azure_storage_account_key,
+                    self.azure_storage_sas_token,
+                    self.azure_storage_sas_url,
+                )
+                else "local"
+            )
+
+        object.__setattr__(self, "storage_base_path", storage)
+        object.__setattr__(self, "sqlite_database_path", sqlite_path)
+        object.__setattr__(self, "file_storage_backend", backend)
+        object.__setattr__(self, "document_llm_optimization_config", _optimization_config_path())
+        if force_sqlite:
+            object.__setattr__(self, "sqlalchemy_database_url", None)
+            object.__setattr__(self, "azure_sql_server", None)
+            object.__setattr__(self, "azure_sql_password", None)
+        return self
 
     @property
     def uses_azure_sql(self) -> bool:
@@ -151,86 +199,7 @@ class Settings:
 
 
 def get_settings() -> Settings:
-    storage_base = _path_from_env("STORAGE_BASE_PATH", "./data/storage")
-    sqlite_default = str(storage_base.parent / "app.db")
-    blob_backend = (os.getenv("FILE_STORAGE_BACKEND") or os.getenv("STORAGE_BACKEND") or "").strip().lower()
-    if blob_backend in {"azure", "blob", "azureblob"}:
-        blob_backend = "azure_blob"
-    has_blob_creds = bool(
-        (os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip()
-        or (
-            (os.getenv("AZURE_STORAGE_ACCOUNT_NAME") or "").strip()
-            and (os.getenv("AZURE_STORAGE_ACCOUNT_KEY") or "").strip()
-        )
-        or (
-            (os.getenv("AZURE_STORAGE_ACCOUNT_NAME") or "").strip()
-            and (os.getenv("AZURE_STORAGE_SAS_TOKEN") or "").strip()
-        )
-        or (os.getenv("AZURE_STORAGE_SAS_URL") or "").strip()
-    )
-    if not blob_backend:
-        blob_backend = "azure_blob" if has_blob_creds else "local"
-    force_sqlite = force_sqlite_from_env()
-    if force_sqlite:
-        blob_backend = "local"
-    return Settings(
-        storage_base_path=storage_base,
-        jobs_subdirectory=os.getenv("JOBS_SUBDIRECTORY", "jobs"),
-        audio_subdirectory=os.getenv("AUDIO_SUBDIRECTORY", "audio"),
-        sqlite_database_path=_path_from_env("SQLITE_DATABASE_PATH", sqlite_default),
-        sqlalchemy_database_url=(
-            None if force_sqlite else ((os.getenv("SQLALCHEMY_DATABASE_URL") or "").strip() or None)
-        ),
-        azure_sql_server=(
-            None if force_sqlite else ((os.getenv("AZURE_SQL_SERVER") or "").strip() or None)
-        ),
-        azure_sql_user=(os.getenv("AZURE_SQL_USER") or os.getenv("AZURE_SQL_ADMIN") or "adminsql").strip(),
-        azure_sql_password=(
-            None if force_sqlite else ((os.getenv("AZURE_SQL_PASSWORD") or "").strip() or None)
-        ),
-        azure_sql_database=(os.getenv("AZURE_SQL_DATABASE") or "ipp-app-db").strip(),
-        azure_sql_dialect=(os.getenv("AZURE_SQL_DIALECT") or "pyodbc").strip().lower(),
-        azure_sql_odbc_driver=os.getenv("AZURE_SQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),
-        file_storage_backend=blob_backend,
-        azure_storage_connection_string=(os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip() or None,
-        azure_storage_account_name=(os.getenv("AZURE_STORAGE_ACCOUNT_NAME") or "").strip() or None,
-        azure_storage_account_key=(os.getenv("AZURE_STORAGE_ACCOUNT_KEY") or "").strip() or None,
-        azure_storage_sas_token=(os.getenv("AZURE_STORAGE_SAS_TOKEN") or "").strip() or None,
-        azure_storage_sas_url=(os.getenv("AZURE_STORAGE_SAS_URL") or "").strip() or None,
-        azure_blob_container=(os.getenv("AZURE_BLOB_CONTAINER") or "docuploadsolution").strip(),
-        azure_blob_prefix=(os.getenv("AZURE_BLOB_PREFIX") or "jobs").strip(),
-        api_host=os.getenv("API_HOST", "0.0.0.0"),
-        api_port=int(os.getenv("API_PORT", "8000")),
-        api_base_url=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
-        max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "25")),
-        job_ttl_hours=int(os.getenv("JOB_TTL_HOURS", "24")),
-        document_max_retries=_env_clamped_int(
-            ("DOCUMENT_MAX_RETRIES", "MAX_RETRIES"),
-            default=1,
-            lo=0,
-            hi=3,
-        ),
-        document_validation_threshold=_env_clamped_float(
-            (
-                "DOCUMENT_VALIDATION_THRESHOLD",
-                "DOCUMENT_ACCURACY_THRESHOLD",
-                "VALIDATION_THRESHOLD",
-            ),
-            default=0.7,
-            lo=0.0,
-            hi=1.0,
-        ),
-        document_llm_optimization_enabled=_env_bool(
-            ("DOCUMENT_LLM_OPTIMIZATION_ENABLED", "DOCUMENT_LLM_ROUTING_ENABLED"),
-            default=False,
-        ),
-        document_llm_optimization_config=_optimization_config_path(),
-        gradio_host=os.getenv("GRADIO_HOST", "127.0.0.1"),
-        gradio_port=int(os.getenv("GRADIO_PORT", "7860")),
-        speech_provider=os.getenv("SPEECH_PROVIDER", "groq").lower(),
-        openai_whisper_model=os.getenv("OPENAI_WHISPER_MODEL", "whisper-1"),
-        groq_whisper_model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
-    )
+    return Settings()
 
 
 _settings: Settings | None = None
@@ -245,7 +214,7 @@ def settings() -> Settings:
 
 
 def reload_settings() -> Settings:
-    """Re-read env (useful in tests)."""
+    """Re-read process env (tests / launcher). Does not re-apply ``.env`` files."""
     global _settings
     _settings = None
     try:

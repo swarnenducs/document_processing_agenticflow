@@ -637,11 +637,13 @@ source = { editable = "central-agentic-flow" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "agent-framework-openai" },
+    { name = "dynaconf" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "langchain-core" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pymssql" },
     { name = "pyodbc" },
     { name = "python-dotenv" },
@@ -672,11 +674,13 @@ requires-dist = [
     { name = "agent-framework-foundry-hosting", marker = "extra == 'foundry'", specifier = ">=1.0.0b260813" },
     { name = "agent-framework-openai", specifier = ">=1.12.0" },
     { name = "azure-identity", marker = "extra == 'foundry'", specifier = ">=1.26.0b2" },
+    { name = "dynaconf", specifier = ">=3.2.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=3.4.6" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "langchain-core", specifier = ">=0.3.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pymssql", specifier = ">=2.2.11" },
     { name = "pyodbc", specifier = ">=5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -1029,6 +1033,7 @@ version = "0.1.0"
 source = { editable = "document-processing-mcp" }
 dependencies = [
     { name = "azure-storage-blob" },
+    { name = "dynaconf" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "langchain" },
@@ -1038,6 +1043,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "lxml" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pymssql" },
     { name = "pyodbc" },
     { name = "python-docx" },
@@ -1060,6 +1066,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "azure-storage-blob", specifier = ">=12.19.0" },
+    { name = "dynaconf", specifier = ">=3.2.0" },
     { name = "fastmcp", specifier = ">=3.4.6" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "langchain", specifier = ">=0.3.0" },
@@ -1069,6 +1076,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.4.0" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pymssql", specifier = ">=2.2.11" },
     { name = "pyodbc", specifier = ">=5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -1082,6 +1090,15 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]
+
+[[package]]
+name = "dynaconf"
+version = "3.3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/e4/723ba469856bb493c948985e5bd562c8a65f2b93e70c896e9764ab76de00/dynaconf-3.3.5.tar.gz", hash = "sha256:a08f6ab44025034ef3c9f86b32548ab01efd4039094a74bd9f028a43c63d016f", size = 333426, upload-time = "2026-08-05T19:50:25.16Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/41/b38501c34c40c3261868a2af8ed5fffe3e6d889c680638708de27eb57788/dynaconf-3.3.5-py3-none-any.whl", hash = "sha256:b3b4a753d5c866fc85466b65fc58d4954f6ed7dc8aa67f2b15bcbfd85d184687", size = 271426, upload-time = "2026-08-05T19:50:23.802Z" },
+]
 
 [[package]]
 name = "email-validator"
@@ -1739,6 +1756,7 @@ version = "0.1.0"
 source = { editable = "ip_api" }
 dependencies = [
     { name = "azure-storage-blob" },
+    { name = "dynaconf" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "httpx" },
@@ -1749,6 +1767,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "lxml" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pymssql" },
     { name = "pyodbc" },
     { name = "python-docx" },
@@ -1774,6 +1793,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "azure-storage-blob", specifier = ">=12.19.0" },
+    { name = "dynaconf", specifier = ">=3.2.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "fastmcp", specifier = ">=3.4.6" },
     { name = "httpx", specifier = ">=0.28.0" },
@@ -1784,6 +1804,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.4.0" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pymssql", specifier = ">=2.2.11" },
     { name = "pyodbc", specifier = ">=5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -4950,6 +4971,7 @@ name = "voice-enable-mcp"
 version = "0.1.0"
 source = { editable = "voice_enable_mcp" }
 dependencies = [
+    { name = "dynaconf" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "langchain" },
@@ -4958,6 +4980,7 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pymssql" },
     { name = "pyodbc" },
     { name = "python-docx" },
@@ -4982,6 +5005,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dynaconf", specifier = ">=3.2.0" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.23.0" },
     { name = "fastmcp", specifier = ">=3.4.6" },
     { name = "httpx", specifier = ">=0.28.0" },
@@ -4991,6 +5015,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=0.4.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pymssql", specifier = ">=2.2.11" },
     { name = "pyodbc", specifier = ">=5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },

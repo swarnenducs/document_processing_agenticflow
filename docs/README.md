@@ -15,7 +15,7 @@ Runtime prompts stay next to each component (`central-agentic-flow/prompts/`, `d
 | [POSTMAN.md](POSTMAN.md) | Postman collection + local/Azure environments |
 | [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AND_CLOUD_STORAGE.md) | SQLite/local files vs Azure SQL/Blob, admin templates |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | Env variables: what they do, which component, including `DEBUG_FLOW` |
-| [DYNACONF.md](DYNACONF.md) | Dynaconf later (same env keys); Azure Web App JSON; Key Vault |
+| [DYNACONF.md](DYNACONF.md) | API, MAF, MCPs: Dynaconf + Pydantic BaseSettings (same env keys); Azure JSON; Key Vault |
 | [TOKEN_CONSUMPTION.md](TOKEN_CONSUMPTION.md) | Estimated LLM tokens (and STT minutes) per component |
 | [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) | Cheap vs strong mapper: complexity score + retry cascade (opt-in) |
 | [VOICE_CONTRACT_FLOW.md](VOICE_CONTRACT_FLOW.md) | Voice → contract HITL flow |

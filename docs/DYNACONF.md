@@ -8,13 +8,11 @@ Related: [ENVIRONMENT.md](ENVIRONMENT.md), [LOCAL_AND_CLOUD_STORAGE.md](LOCAL_AN
 
 ---
 
-## Today (no Dynaconf in the process)
+## Today (API, MAF, document MCP, voice MCP)
 
-Each component loads settings the same way:
-
-1. `python-dotenv` reads the **component** `.env`, then the **root** `.env` (`override=False`, so the folder file wins).
-2. `get_settings()` builds a frozen **dataclass** from `os.getenv`.
-3. `settings()` caches that object. FastAPI injects it as `SettingsDep` / `get_settings_dependency()`.
+1. **Dynaconf** loads component `.env` then repo-root `.env` (`envvar_prefix=False`, no `DYNACONF_` prefix). It copies values into `os.environ` **only when the key is missing**, so Azure App Settings and the local launcher win.
+2. **Pydantic `BaseSettings`** reads those env vars. FastAPI still injects `SettingsDep` in `ip_api`. MAF and both MCPs keep `settings()` / `reload_settings()`.
+3. **UI** still uses dotenv + dataclass (Gradio-only; no Azure SQL/Blob switch in that package).
 
 SQLAlchemy URL resolution (`build_database_url()` in each `storage/db.py`):
 
@@ -33,33 +31,23 @@ Inter-component hops use the **same** overlay: fill `CENTRAL_AGENT_END_POINT` (A
 
 ---
 
-## Target path (when Dynaconf is added later)
+## Path
 
 ```
-local:   .env  →  Dynaconf  →  get_settings() / SettingsDep  →  app
-Azure:   Web App Application settings  →  process env  →  Dynaconf overlay  →  same get_settings() / SettingsDep
+local:   .env  →  Dynaconf (fill missing keys)  →  Pydantic BaseSettings  →  settings() / SettingsDep
+Azure:   Web App Application settings (process env)  →  Dynaconf skips those keys  →  same BaseSettings
 ```
 
-Keep the public API identical: `settings()`, `reload_settings()`, `get_settings_dependency()`, `SettingsDep`. Callers must not need to know Dynaconf exists.
+`settings()`, `reload_settings()`, and (in ip_api) `get_settings_dependency()` / `SettingsDep` are unchanged for callers.
 
-Do **not** require a `DYNACONF_` prefix on app keys. Configure Dynaconf with an empty / disabled envvar prefix so `AZURE_SQL_SERVER` stays `AZURE_SQL_SERVER`.
+Do **not** require a `DYNACONF_` prefix. `envvar_prefix=False` so `AZURE_SQL_SERVER` stays `AZURE_SQL_SERVER`.
 
-Suggested constructor (not wired in this pass):
-
-```python
-from dynaconf import Dynaconf
-
-dynaconf_settings = Dynaconf(
-    envvar_prefix=False,       # no DYNACONF_ prefix; same names as today
-    load_dotenv=True,          # local .env
-    environments=False,        # optional later; not required for the SQL/Blob switch
-    settings_files=[],         # optional defaults.toml; env still wins
-)
-```
-
-If Dynaconf is introduced as a thin loader, it should **export into `os.environ`** (or `get_settings()` should read the same names from Dynaconf). Either way, `build_database_url()` keeps using `cfg.azure_sql_server` / `cfg.azure_sql_password` from the dataclass.
-
-Pydantic `BaseSettings` can replace the dataclass later. It also reads process env by default. The SQLite vs Azure SQL switch still works as long as the field names map to the same env vars (no `DYNACONF_` prefix, no renamed keys).
+| Package | Loader | Settings |
+|---|---|---|
+| ip_api | `ip_api/src/ip_api/core/dynaconf_loader.py` | `ip_api/src/ip_api/core/settings.py` |
+| central-agentic-flow | `central-agentic-flow/src/central_agentic_flow/core/dynaconf_loader.py` | `.../core/settings.py` |
+| document-processing-mcp | `document-processing-mcp/src/document_processing_mcp/core/dynaconf_loader.py` | `.../core/settings.py` |
+| voice_enable_mcp | `voice_enable_mcp/src/voice_enable_mcp/core/dynaconf_loader.py` | `.../core/settings.py` |
 
 ---
 

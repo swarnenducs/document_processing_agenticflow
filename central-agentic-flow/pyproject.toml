@@ -5,6 +5,8 @@ description = "MAF orchestrator (self-contained; own prompts/)"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "dynaconf>=3.2.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.28.0",
     "agent-framework-core>=1.13.0",
