@@ -40,7 +40,8 @@ Set on every `ip_api` request; echoed on the response.
 | `X-Session-Id` | Client session (created if omitted) |
 | `X-User-Id` | Optional user id |
 | `X-User-Email` | Optional user email |
-| `X-Admin-Api-Key` | Required on all `/api/v1/admin/*` routes |
+| `X-Admin-Api-Key` | Admin routes: env `ADMIN_API_KEY` **or** a PyJWT from `POST /api/v1/admin/token`. |
+| `Authorization: Bearer` | Same JWT. Preferred for the Angular admin UI. |
 
 ---
 
@@ -140,13 +141,26 @@ Live pipeline stages (`accepted`, extraction, mapped, validated, `completed` / `
 
 ## C. Gateway — admin default templates
 
-All routes require `X-Admin-Api-Key` matching `ADMIN_API_KEY`. Unset key → **503**. Wrong key → **401**.
+Mint a short-lived **PyJWT** first: `POST /api/v1/admin/token` (or `GET /api/v1/admin/token`).
+Then send `Authorization: Bearer <access_token>` or `X-Admin-Api-Key: <access_token>`.
 
-Layout: `{folder_name}/{template_name}.docx` under `STORAGE_BASE_PATH/templates/` or blob prefix `AZURE_BLOB_TEMPLATE_PREFIX` (default `templates`). The default folder is `ipp_default_template`.
+**No certificate.** Algorithm is **HS256** (HMAC shared secret). The API signs and
+verifies with `ADMIN_JWT_SECRET`, else `ADMIN_API_KEY`, else a process-local secret
+(local only; tokens die on restart). Azure App Service TLS is unrelated.
+
+If env `ADMIN_API_KEY` is **set**, that key still works as `X-Admin-Api-Key`, and
+minting a JWT requires it. If it is **empty**, `/admin/token` is open (local UI
+bootstrap) and other admin routes return **401** until a valid JWT is sent.
+
+Layout: `{folder_name}/{template_name}.docx` under `STORAGE_BASE_PATH/templates/` or blob prefix `AZURE_BLOB_TEMPLATE_PREFIX` (default `templates`). The default folder is `ipp_pricing_default_template`.
+
+### `POST /api/v1/admin/token` → `200` (also `GET`)
+
+JSON optional: `{ "admin_key", "ttl_seconds" }`. Returns `{ "access_token", "token_type": "Bearer", "expires_in", "expires_at" }`.
 
 ### `POST /api/v1/admin/templates` → `201`
 
-Upload. `folder_name` in the form defaults to `ipp_default_template`.
+Upload. `folder_name` in the form defaults to `ipp_pricing_default_template`.
 
 **Form:** `file` (`.docx`), optional `folder_name` (`ipp_default_template`), optional `template_name`, `uploaded_by`.
 

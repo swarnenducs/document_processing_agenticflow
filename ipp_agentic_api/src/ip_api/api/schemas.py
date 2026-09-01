@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -144,6 +144,30 @@ class MasterDataListResponse(BaseModel):
 class MasterDataDeletedResponse(BaseModel):
     deleted: bool = True
     placeholder_key: str
+
+
+class AdminTokenRequest(BaseModel):
+    admin_key: str | None = Field(
+        default=None,
+        description="Required when env ADMIN_API_KEY is set. Same value as X-Admin-Api-Key.",
+    )
+    ttl_seconds: int | None = Field(
+        default=None,
+        ge=60,
+        le=604800,
+        description="Override ADMIN_TOKEN_TTL_SECONDS (60 seconds – 7 days).",
+    )
+
+
+class AdminTokenResponse(BaseModel):
+    access_token: str = Field(description="PyJWT HS256 compact token")
+    token_type: Literal["Bearer"] = "Bearer"
+    expires_in: int = Field(description="Seconds until exp")
+    expires_at: str = Field(description="UTC ISO-8601 expiry")
+    token_header: str = Field(
+        default="Authorization: Bearer <access_token>  or  X-Admin-Api-Key: <access_token>",
+        description="How to send the token on later admin calls",
+    )
 
 
 class TraceByXidResponse(BaseModel):

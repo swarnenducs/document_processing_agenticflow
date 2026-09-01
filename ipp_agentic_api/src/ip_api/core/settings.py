@@ -101,6 +101,12 @@ class Settings(BaseSettings):
         ),
     )
     admin_api_key: str | None = None
+    admin_jwt_secret: str | None = None
+    admin_token_ttl_seconds: int = Field(
+        default=28800,
+        validation_alias=AliasChoices("ADMIN_TOKEN_TTL_SECONDS"),
+        description="Admin JWT lifetime in seconds (default 8 hours).",
+    )
     gradio_host: str = "127.0.0.1"
     gradio_port: int = 7860
     speech_provider: str = "groq"
@@ -111,6 +117,11 @@ class Settings(BaseSettings):
     @classmethod
     def _clamp_retries(cls, value: int) -> int:
         return max(0, min(3, value))
+
+    @field_validator("admin_token_ttl_seconds", mode="after")
+    @classmethod
+    def _clamp_admin_ttl(cls, value: int) -> int:
+        return max(60, min(int(value), 7 * 24 * 3600))
 
     @field_validator("document_validation_threshold", mode="after")
     @classmethod
@@ -236,6 +247,12 @@ def reload_settings() -> Settings:
         from ip_api.api.dependencies import reset_app_context
 
         reset_app_context()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ip_api.services.admin_jwt import reset_jwt_fallback_secret
+
+        reset_jwt_fallback_secret()
     except Exception:  # noqa: BLE001
         pass
     return settings()

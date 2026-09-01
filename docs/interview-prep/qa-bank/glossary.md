@@ -16,6 +16,7 @@
 | **Specialist** | Domain worker (document/voice graphs) |
 | **TPM** | Tokens per minute (rate limit) |
 | **xid** | Correlation / request id |
+| **JWT / PyJWT** | Signed admin access token (HS256, no cert). `POST /api/v1/admin/token` |
 | **OOXML** | Word document XML format |
 | **LCEL** | LangChain Expression Language (`a \| b`) |
 | **Checkpoint** | Saved graph state for resume |

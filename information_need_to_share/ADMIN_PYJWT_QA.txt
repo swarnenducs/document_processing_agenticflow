@@ -1,0 +1,233 @@
+Admin PyJWT — Q&A (so you can answer any question)
+==================================================
+What we built: short-lived admin access tokens with the PyJWT library.
+Where: ipp_agentic_api (FastAPI gateway :8000)
+Share with UI: also see UI_API_INTEGRATION_GUIDE.txt section 9.
+
+
+1. One-minute answer (say this first)
+-------------------------------------
+Admin used to be a single static env key (ADMIN_API_KEY) on every call.
+If that key was empty, admin returned 503.
+
+Now the UI can mint a JWT first:
+
+  POST /api/v1/admin/token   →  { access_token, token_type: Bearer, expires_in, expires_at }
+
+Then every admin call sends:
+
+  Authorization: Bearer <access_token>
+  (or X-Admin-Api-Key: <access_token>)
+
+The token is signed with PyJWT, algorithm HS256 (HMAC + shared secret).
+The same API process signs and verifies. No public/private key. No certificate.
+Default lifetime 8 hours (ADMIN_TOKEN_TTL_SECONDS=28800).
+
+
+2. Why we did it
+----------------
+Q: Why not keep only ADMIN_API_KEY?
+A: The Angular UI asked for a token concept — get a random pass key, then use it.
+   A JWT expires; a static env key does not. The UI does not have to store a
+   long-lived master secret in the browser if we mint a short-lived token.
+
+Q: Why PyJWT instead of a random string in a dictionary?
+A: PyJWT is a signed, self-contained token. The API can verify it without a
+   shared in-memory map, so it still works across workers if they share the
+   same signing secret. Random opaque tokens need a store (memory/Redis/SQL)
+   and die when that store is gone.
+
+Q: Why not OAuth / Azure AD?
+A: This is an internal admin lock for template + master-data routes, not
+   user login. PyJWT is enough. Azure AD can come later as the mint gate.
+
+
+3. Certificate? TLS? Keys?
+--------------------------
+Q: Do we need a certificate for this JWT?
+A: No. HS256 is symmetric. One secret string signs and verifies.
+
+Q: When WOULD we need a certificate?
+A: Only if we switched to RS256/ES256 (asymmetric): private key to sign,
+   public cert/JWKS to verify. We did not do that.
+
+Q: What about HTTPS?
+A: Azure App Service already has a TLS cert for https://...azurewebsites.net.
+   That protects the wire. It does not sign the JWT. Do not confuse the two.
+
+Q: Does the Angular app install a .pem / .crt?
+A: No. The UI only stores the access_token string and sends it as Bearer.
+
+
+4. How the UI must call it
+--------------------------
+Step 0 — mint (once per session, or when 401 / expiry):
+
+  POST /api/v1/admin/token
+  Content-Type: application/json
+  {}
+
+  If the server has ADMIN_API_KEY set, also send:
+    X-Admin-Api-Key: <ADMIN_API_KEY>
+    or JSON { "admin_key": "<ADMIN_API_KEY>", "ttl_seconds": 28800 }
+
+  GET /api/v1/admin/token?ttl_seconds=28800   is the same (Swagger-friendly).
+
+Step 1 — use it:
+
+  GET/POST/PUT/DELETE /api/v1/admin/templates...
+  GET/POST/PUT/DELETE /api/v1/admin/master-data...
+  Header: Authorization: Bearer <access_token>
+
+Public job routes (POST /api/v1/documents/jobs, GET templates library) do
+NOT need this JWT.
+
+
+5. What is inside the JWT (claims)
+----------------------------------
+Header:  { "alg": "HS256", "typ": "JWT" }
+
+Payload we put in:
+  iss  ipp_agentic_api     who issued it
+  aud  ipp-admin           who may accept it
+  sub  admin               subject / role
+  typ  admin_access        our custom type (not a user id token)
+  iat  unix time           issued at
+  nbf  unix time           not before (same as iat)
+  exp  unix time           expiry
+  jti  random id           unique token id
+
+Verify (jwt.decode) checks: signature, exp, nbf, aud, iss, then we also
+require typ=admin_access and sub=admin. Forged tokens with a wrong secret
+fail. Expired tokens fail.
+
+
+6. Signing secret (order)
+-------------------------
+  1. ADMIN_JWT_SECRET     if set (best: dedicated secret in Key Vault)
+  2. ADMIN_API_KEY        if set
+  3. process-local random secrets.token_urlsafe(48)
+     only for laptop when both of the above are empty
+     lost on API restart → old JWTs become invalid (401)
+
+Q: Can the UI read the secret?
+A: No. Only the API has it. The UI only sees the compact JWT string.
+
+
+7. ADMIN_API_KEY still works
+----------------------------
+Two valid credentials on admin routes:
+
+  A) Static env ADMIN_API_KEY as X-Admin-Api-Key   (old behaviour)
+  B) PyJWT as Bearer or as X-Admin-Api-Key
+
+If ADMIN_API_KEY is SET:
+  minting a JWT requires that key (so strangers cannot mint).
+If ADMIN_API_KEY is EMPTY (local default):
+  POST /token is open so the UI can bootstrap without ops setting env.
+  Other admin routes return 401 until a valid JWT is sent.
+  That 503 "Admin API is disabled" path is gone.
+
+Q: Is open minting safe on Azure?
+A: No. On Azure set ADMIN_API_KEY (Key Vault). Then only someone who has
+   that key can mint. CORS is not enough protection.
+
+
+8. Status codes you may be asked
+--------------------------------
+200  token minted; list templates
+201  template / master-data created
+401  missing, expired, forged, or wrong JWT/key
+     (this replaced 503 for “admin off”)
+400  bad folder/name
+413  file too large
+
+
+9. Code map (if they ask “where?”)
+----------------------------------
+  ipp_agentic_api/src/ip_api/services/admin_jwt.py
+      issue_admin_jwt(), jwt_is_valid(), signing_secret()
+      import jwt   ← this is PyJWT
+
+  ipp_agentic_api/src/ip_api/api/admin_routes.py
+      POST/GET /token   (no require_admin_key)
+      require_admin_key() on every other admin route
+      accepts X-Admin-Api-Key or Authorization: Bearer
+
+  ipp_agentic_api/src/ip_api/api/schemas.py
+      AdminTokenRequest, AdminTokenResponse
+
+  ipp_agentic_api/src/ip_api/core/settings.py
+      admin_api_key, admin_jwt_secret, admin_token_ttl_seconds
+
+  Tests:
+      ipp_agentic_api/tests/test_admin_jwt.py
+      ipp_agentic_api/tests/test_admin_templates.py  (bootstrap + mint-with-key)
+
+  Library:
+      PyJWT>=2.8.0  (also already pulled in by mcp as pyjwt==2.13.0)
+
+
+10. Design questions (interview-style)
+--------------------------------------
+Q: Is the token stateful or stateless?
+A: Stateless. We do not store issued JWTs. Verification is signature + claims.
+   There is no revoke list. To “log out”, drop the token in the UI and wait
+   for exp, or rotate ADMIN_JWT_SECRET (invalidates every token).
+
+Q: Why not put the user email in the JWT?
+A: These tokens are role=admin for template library, not per-user identity.
+   Session/user still go on X-Session-Id / X-User-Id for jobs.
+
+Q: Timing-safe compare?
+A: Static ADMIN_API_KEY is compared with secrets.compare_digest (same length
+   first, because compare_digest errors on length mismatch). JWT uses PyJWT
+   cryptographic verify, not string equality of the compact token.
+
+Q: Algorithm confusion attack?
+A: jwt.decode(..., algorithms=["HS256"]) — we pin the algorithm so a token
+   marked "alg":"none" or RS256 cannot slip through.
+
+Q: Multi-instance Azure?
+A: All instances must share ADMIN_JWT_SECRET or ADMIN_API_KEY. The
+   process-local fallback is only for a single local process.
+
+Q: Why 8 hours?
+A: Default ADMIN_TOKEN_TTL_SECONDS=28800. Clamped 60 seconds – 7 days.
+   UI can pass ttl_seconds on mint. Shorter is safer for a browser.
+
+Q: Can someone decode the JWT in jwt.io?
+A: The payload is Base64, not encrypted. Anyone can READ iss/aud/exp.
+   They cannot FORGE a valid signature without the secret. Do not put
+   passwords in claims (we don't).
+
+Q: JWT vs session cookie?
+A: We send a Bearer header. CORS allowlist (localhost:4200) applies to REST.
+   We are not setting an HttpOnly cookie for this token.
+
+Q: Document jobs JWT?
+A: No. POST /api/v1/documents/jobs is the public (or session) job API.
+   JWT is only /api/v1/admin/*.
+
+
+11. Env cheat sheet
+-------------------
+ADMIN_API_KEY              optional static key; required to mint if set
+ADMIN_JWT_SECRET           optional dedicated HS256 secret (Key Vault)
+ADMIN_TOKEN_TTL_SECONDS    default 28800
+
+Local .env may leave ADMIN_API_KEY empty → UI mints freely.
+Azure JSON already has ADMIN_API_KEY as a Key Vault reference.
+
+
+12. Quick demo lines
+--------------------
+# mint
+curl -sS -X POST http://127.0.0.1:8000/api/v1/admin/token \
+  -H 'Content-Type: application/json' -d '{}'
+
+# use
+curl -s http://127.0.0.1:8000/api/v1/admin/templates \
+  -H "Authorization: Bearer eyJ..."
+
+Swagger: http://127.0.0.1:8000/docs  → POST /api/v1/admin/token

@@ -1,0 +1,138 @@
+API route check + Azure SQL config
+==================================
+Date: 2026-09-01
+API process was NOT listening on :8000 at check time (nothing bound to the port).
+Checks used: FastAPI TestClient against create_app(), plus pytest.
+
+1. Route check summary
+----------------------
+OpenAPI registered paths: 33
+Requests probed (including /, /docs, /openapi.json, WebSocket): 46
+Wired correctly after catalogue 503 fix: 46 / 46
+pytest (openapi, jobs, admin, agents, websocket, sessions): 46 passed
+
+Gateway routes that work without MAF (HTTP 200/400/404/422 as designed):
+  GET  /
+  GET  /docs  /redoc  /openapi.json
+  GET  /api/v1/health                         200
+  GET  /api/v1/documents/templates            200
+  GET  /api/v1/documents/jobs                 200
+  GET  /api/v1/documents/jobs/{id}            404 for unknown id
+  POST /api/v1/documents/jobs                 400 for invalid JSON in `data`
+  GET  /api/v1/documents/jobs/{id}/download   404 unknown
+  GET  /api/v1/documents/jobs/{id}/accuracy   404 unknown
+  GET  /api/v1/documents/jobs/{id}/accuracy.pdf  404 unknown
+  DELETE /api/v1/documents/jobs/{id}          204 (idempotent)
+  WS   /api/v1/documents/jobs/{id}/ws         101; unknown job sends terminal failed
+  GET  /api/v1/traces/{xid}                   200 (empty logs)
+  POST /api/v1/audio/transcribe               422 without file
+  GET  /api/v1/audio/transcriptions/{id}      404 unknown
+  POST /api/v1/voice/contract/from-audio      422 without file
+
+Admin:
+  POST/GET /api/v1/admin/token mints a PyJWT (HS256). No certificate.
+  If ADMIN_API_KEY is empty, minting is open; other admin routes need that JWT
+  (Authorization: Bearer or X-Admin-Api-Key) and return 401 without it.
+  If ADMIN_API_KEY is set, send it to mint, or keep using it as the static header.
+  Signing secret: ADMIN_JWT_SECRET, else ADMIN_API_KEY, else a process-local secret.
+
+  Earlier probe (before JWT): all /api/v1/admin/* returned 503 when ADMIN_API_KEY
+  was empty. That 503 path is gone.
+
+Downstream-dependent (MAF was not running; routes still answered):
+  POST /api/ask                               503
+  GET  /api/ask/prompts                       503
+  GET  /api/ask/health                        200 with ok=false-style payload
+  POST /api/v1/voice/contract                 502
+  POST /api/v1/voice/contract/confirm         502
+  GET  /api/v1/voice/contracts                502
+  GET  /api/v1/voice/contracts/{id}           502
+  GET  /api/v1/voice/contracts/{id}/download  502
+  GET  /api/v1/agents/health                  503
+  GET  /api/v1/agents/tools                   503
+  GET  /api/v1/agents/document/tools          503
+  GET  /api/v1/agents/voice/tools             503
+  POST /api/v1/agents/document/generate       502
+  POST /api/v1/agents/voice/contract          502
+  POST /api/v1/agents/voice/contract/confirm  502
+
+Fix applied during this check:
+  GET /api/v1/agents/health, /document/tools, /voice/tools used to throw an
+  uncaught ConnectError when MAF was down. They now return HTTP 503, same as
+  GET /api/v1/agents/tools.
+
+End-to-end Word generation / voice HITL still need:
+  API :8000 + MAF :8003 + document MCP :8001 + voice MCP :8002 + LLM keys.
+  Start with: python run_all_components.py
+  Then re-hit GET /api/v1/health and confirm maf_available / document_mcp_available
+  / voice_mcp_available are true.
+
+
+2. Azure SQL config — YES, it is present
+----------------------------------------
+This is env-only. No code change is required to switch SQLite vs Azure SQL.
+
+A) Code
+  ipp_agentic_api/src/ip_api/core/settings.py
+    AZURE_SQL_SERVER, AZURE_SQL_USER, AZURE_SQL_PASSWORD, AZURE_SQL_DATABASE
+    AZURE_SQL_DIALECT (default pyodbc), AZURE_SQL_ODBC_DRIVER
+    uses_azure_sql = SQLALCHEMY_DATABASE_URL set, OR (SERVER and PASSWORD both set)
+
+  ipp_agentic_api/src/ip_api/storage/db.py
+    build_database_url(): explicit URL > Azure SQL parts > SQLite file
+    mssql+pyodbc (ODBC Driver 18) or mssql+pymssql
+    ensure_schema() creates tables + Azure SQL NVARCHAR migrations / overview views
+
+  Same AZURE_SQL_* pattern in:
+    document-processing-mcp, voice_enable_mcp, central-agentic-flow
+
+B) Azure Web App settings JSON (placeholders, Key Vault for password)
+  Present in:
+    ipp_agentic_api/config/azure-webapp.settings.json
+    document-processing-mcp/config/azure-webapp.settings.json
+    voice_enable_mcp/config/azure-webapp.settings.json
+    central-agentic-flow/config/azure-webapp.settings.json
+  Keys: AZURE_SQL_SERVER, AZURE_SQL_USER=adminsql, AZURE_SQL_DATABASE=ipp-app-db,
+        AZURE_SQL_DIALECT=pyodbc, AZURE_SQL_ODBC_DRIVER=ODBC Driver 18 for SQL Server,
+        AZURE_SQL_PASSWORD=@Microsoft.KeyVault(.../secrets/azure-sql-password/)
+  UI/config/azure-webapp.settings.json has NO Azure SQL keys (correct — UI has no DB).
+
+C) Local .env (repo root) — present, but password is empty
+  AZURE_SQL_SERVER          set  (hostname ends with .database.windows.net)
+  AZURE_SQL_USER            set
+  AZURE_SQL_DATABASE        set
+  AZURE_SQL_DIALECT         set
+  AZURE_SQL_ODBC_DRIVER     set
+  AZURE_KEY_VAULT_NAME      set
+  AZURE_KEY_VAULT_URL       set
+  AZURE_SQL_PASSWORD_SECRET_NAME  set
+  AZURE_SQL_PASSWORD        EMPTY (meant to be filled from Key Vault)
+  IPP_USE_AZURE_SQL         1
+  FILE_STORAGE_BACKEND      azure_blob
+
+  Because the password string is empty, Settings.uses_azure_sql is false until
+  scripts/load_sql_password_from_keyvault.py fills AZURE_SQL_PASSWORD.
+
+D) Local launcher behaviour
+  python run_all_components.py defaults to SQLite unless --azure-sql or IPP_USE_AZURE_SQL=1.
+  This repo's .env has IPP_USE_AZURE_SQL=1, so a full local start WILL try Azure SQL
+  (and Key Vault for the password). Azure Web Apps do not use that launcher; they
+  use the JSON settings + Key Vault reference.
+
+E) How the API reports it
+  GET /api/v1/health
+    azure_sql_server / azure_sql_database   populated only when MSSQL is active
+    azure_sql_available                     true/false after SELECT 1, or null on SQLite
+
+
+3. How to run the API locally for the UI team
+---------------------------------------------
+SQLite (recommended on a laptop):
+  python run_all_components.py
+  (if IPP_USE_AZURE_SQL=1 in .env, pass nothing extra only if you really want Azure SQL)
+  To force SQLite even with that flag: unset IPP_USE_AZURE_SQL, do not pass --azure-sql.
+
+API only:
+  python -m ip_api.run_app --api-only --no-mcp --no-maf
+
+Then open http://127.0.0.1:8000/docs

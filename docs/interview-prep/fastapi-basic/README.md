@@ -62,6 +62,13 @@ Interview: “pub/sub in-process is fine for single replica; Redis if multi-inst
 
 API can stay thin: auth, uploads, status, orchestration entry — heavy work in MCP.
 
+### 8. Admin PyJWT (HS256, no certificate)
+
+`POST /api/v1/admin/token` mints a short-lived JWT. Later admin calls send
+`Authorization: Bearer`. Same API signs and verifies with a shared secret
+(`ADMIN_JWT_SECRET` / `ADMIN_API_KEY`). Not RS256 — no .pem / cert.
+Spoken Q&A: `information_need_to_share/ADMIN_PYJWT_QA.txt`.
+
 ## Common interview Qs
 
 **Q: FastAPI vs Flask?**  
@@ -73,9 +80,14 @@ A: Prefer `asyncio.to_thread` / background task / separate worker so event loop 
 **Q: How do you version APIs?**  
 A: `/api/v1` prefix; keep `/api/ask` as product surface for NL orchestration.
 
+**Q: Admin JWT — certificate?**  
+A: No. PyJWT **HS256** with a shared secret. UI mints via `POST /api/v1/admin/token`. RS256 would need a cert; we did not use it.
+
 ## Point to code
 
 - `ipp_agentic_api/src/ip_api/api/main.py` — app + xid middleware
 - `ipp_agentic_api/src/ip_api/api/routes.py` — documents/jobs
 - `ipp_agentic_api/src/ip_api/api/ask_routes.py` — MAF proxy
 - `ipp_agentic_api/src/ip_api/api/mcp_routes.py` — MCP proxy
+- `ipp_agentic_api/src/ip_api/services/admin_jwt.py` — PyJWT issue/verify
+- `ipp_agentic_api/src/ip_api/api/admin_routes.py` — `/admin/token` + Bearer gate

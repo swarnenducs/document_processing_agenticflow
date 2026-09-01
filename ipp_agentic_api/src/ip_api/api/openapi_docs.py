@@ -57,7 +57,7 @@ All of these are **optional** except the admin key on admin routes.
 | `X-Request-ID` or `X-Correlation-ID` | Correlation **xid**. Echoed on the response. Generated if omitted. |
 | `X-Session-Id` | Reuse a session; otherwise the API may create one. |
 | `X-User-Id` / `X-User-Email` | Optional identity stored with the session. |
-| `X-Admin-Api-Key` | **Required** on `/api/v1/admin/*`. Must match env `ADMIN_API_KEY`. If that env is empty, admin returns **503**. |
+| `X-Admin-Api-Key` | **Required** on `/api/v1/admin/*` except `/admin/token`. Either env `ADMIN_API_KEY` **or** a PyJWT from `POST /api/v1/admin/token`. `Authorization: Bearer` is accepted too. |
 
 ---
 
@@ -213,7 +213,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         "name": "admin",
         "description": (
             "Word template library and master-data blocks (legal/sales notice text). "
-            "Header `X-Admin-Api-Key` = `ADMIN_API_KEY`. "
+            "Mint a PyJWT via `POST /api/v1/admin/token`, then send "
+            "`Authorization: Bearer` or `X-Admin-Api-Key`. "
+            "If env `ADMIN_API_KEY` is set, that key is also accepted and is required to mint. "
             "Jobs can then send `template_name` instead of uploading a file."
         ),
     },

@@ -69,6 +69,9 @@ A: Primary path is structured JSON→Word mapping via LangGraph, not vector RAG.
 
 ## FastAPI
 
+**Q: How is admin auth done?**  
+A: Optional static `ADMIN_API_KEY`, plus **PyJWT HS256**. UI calls `POST /api/v1/admin/token`, then sends `Authorization: Bearer`. **No certificate** (HMAC shared secret, not RS256). Full answers: `information_need_to_share/ADMIN_PYJWT_QA.txt`.
+
 **Q: Why async jobs?**  
 A: LLM+DOCX are slow; return job_id; progress via WebSocket/poll.
 

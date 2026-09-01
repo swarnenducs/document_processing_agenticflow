@@ -242,12 +242,58 @@ def test_admin_routes_require_the_api_key(admin_client) -> None:
     )
 
 
+def test_admin_jwt_bootstrap_when_no_static_key(tmp_path: Path, monkeypatch) -> None:
+    _isolate_local(tmp_path, monkeypatch, admin_key=None)
+    with TestClient(create_app()) as client:
+        blocked = client.get("/api/v1/admin/templates")
+        assert blocked.status_code == 401
+
+        minted = client.post("/api/v1/admin/token", json={})
+        assert minted.status_code == 200, minted.text
+        body = minted.json()
+        token = body["access_token"]
+        assert body["token_type"] == "Bearer"
+        assert token.count(".") == 2
+
+        listed = client.get(
+            "/api/v1/admin/templates",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert listed.status_code == 200, listed.text
+
+        listed_header = client.get(
+            "/api/v1/admin/templates",
+            headers={"X-Admin-Api-Key": token},
+        )
+        assert listed_header.status_code == 200
+
+    from ip_api.core.settings import reload_settings
+
+    reload_settings()
+
+
+def test_admin_jwt_mint_requires_static_key_when_configured(admin_client) -> None:
+    client, _ = admin_client
+    denied = client.post("/api/v1/admin/token", json={})
+    assert denied.status_code == 401
+
+    minted = client.post("/api/v1/admin/token", headers=HEADERS, json={})
+    assert minted.status_code == 200, minted.text
+    token = minted.json()["access_token"]
+    listed = client.get(
+        "/api/v1/admin/templates",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.status_code == 200
+
+
 def test_admin_routes_disabled_without_configured_key(tmp_path: Path, monkeypatch) -> None:
+    """Static ADMIN_API_KEY is optional; a JWT from /admin/token is required instead."""
     _isolate_local(tmp_path, monkeypatch, admin_key=None)
     with TestClient(create_app()) as client:
         resp = client.get("/api/v1/admin/templates", headers=HEADERS)
-    assert resp.status_code == 503
-    assert "ADMIN_API_KEY" in resp.json()["detail"]
+    assert resp.status_code == 401
+    assert "token" in resp.json()["detail"].lower() or "Invalid" in resp.json()["detail"]
 
     from ip_api.core.settings import reload_settings
 

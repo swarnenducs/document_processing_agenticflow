@@ -12,10 +12,12 @@ import secrets
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
 
 from ip_api.api.dependencies import get_settings_dependency, get_template_store_dep
 from ip_api.api.schemas import (
+    AdminTokenRequest,
+    AdminTokenResponse,
     MasterDataDeletedResponse,
     MasterDataListResponse,
     MasterDataRecordResponse,
@@ -26,6 +28,7 @@ from ip_api.api.schemas import (
     TemplateRecordResponse,
 )
 from ip_api.core.settings import Settings
+from ip_api.services.admin_jwt import issue_admin_jwt, jwt_is_valid
 from ip_api.storage.master_data_store import MasterDataKeyError, MasterDataStore
 from ip_api.storage.template_store import (
     DEFAULT_TEMPLATE_FOLDER,
@@ -37,6 +40,7 @@ from ip_api.storage.template_store import (
 )
 
 ADMIN_KEY_HEADER = "X-Admin-Api-Key"
+AUTH_HEADER = "Authorization"
 
 router = APIRouter(
     prefix="/admin",
@@ -47,22 +51,90 @@ TemplateStoreDep = Annotated[TemplateStore, Depends(get_template_store_dep)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dependency)]
 
 
+def _matches_static_key(presented: str, expected: str) -> bool:
+    if not presented or not expected or len(presented) != len(expected):
+        return False
+    return secrets.compare_digest(presented, expected)
+
+
+def _presented_admin_secret(
+    x_admin_api_key: str | None,
+    authorization: str | None,
+) -> str | None:
+    raw = (x_admin_api_key or "").strip()
+    if raw:
+        return raw
+    auth = (authorization or "").strip()
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        return token or None
+    return None
+
+
 def require_admin_key(
     cfg: SettingsDep,
     x_admin_api_key: str | None = Header(
         default=None,
         alias=ADMIN_KEY_HEADER,
-        description="Must match env ADMIN_API_KEY. Admin is 503 if that env is empty.",
+        description=(
+            "Env ADMIN_API_KEY, or a PyJWT from POST /api/v1/admin/token. "
+            "Authorization: Bearer is also accepted."
+        ),
+    ),
+    authorization: str | None = Header(
+        default=None,
+        alias=AUTH_HEADER,
+        description="Bearer <PyJWT from POST /api/v1/admin/token>",
     ),
 ) -> None:
-    configured = cfg.admin_api_key
-    if not configured:
+    presented = _presented_admin_secret(x_admin_api_key, authorization)
+    configured = (cfg.admin_api_key or "").strip()
+    if presented and configured and _matches_static_key(presented, configured):
+        return
+    if presented and jwt_is_valid(presented, cfg):
+        return
+    if not presented:
         raise HTTPException(
-            status_code=503,
-            detail="Admin API is disabled. Set ADMIN_API_KEY to enable template management.",
+            status_code=401,
+            detail=(
+                "Missing admin credential. Call POST /api/v1/admin/token, then send "
+                f"{ADMIN_KEY_HEADER} or Authorization: Bearer <access_token>."
+            ),
         )
-    if not x_admin_api_key or not secrets.compare_digest(x_admin_api_key, configured):
-        raise HTTPException(status_code=401, detail=f"Missing or invalid {ADMIN_KEY_HEADER}")
+    raise HTTPException(
+        status_code=401,
+        detail=f"Invalid {ADMIN_KEY_HEADER} / Bearer token (expired, forged, or wrong key).",
+    )
+
+
+def _require_mint_key(
+    cfg: Settings,
+    *,
+    header_key: str | None,
+    body_key: str | None,
+) -> None:
+    """When ADMIN_API_KEY is set, minting a JWT requires that key."""
+    configured = (cfg.admin_api_key or "").strip()
+    if not configured:
+        return
+    presented = (header_key or body_key or "").strip()
+    if not _matches_static_key(presented, configured):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "ADMIN_API_KEY is set. Send it as X-Admin-Api-Key (or JSON admin_key) "
+                "to mint a JWT."
+            ),
+        )
+
+
+def _token_response(cfg: Settings, ttl_seconds: int | None) -> AdminTokenResponse:
+    token, expires_in, expires_at = issue_admin_jwt(cfg, ttl_seconds=ttl_seconds)
+    return AdminTokenResponse(
+        access_token=token,
+        expires_in=expires_in,
+        expires_at=expires_at,
+    )
 
 
 def _max_bytes(cfg: Settings) -> int:
@@ -138,6 +210,47 @@ def _list_for_folder(
 
 
 @router.post(
+    "/token",
+    response_model=AdminTokenResponse,
+    summary="Mint a PyJWT admin access token",
+)
+def issue_admin_token(
+    cfg: SettingsDep,
+    body: AdminTokenRequest = Body(default_factory=AdminTokenRequest),
+    x_admin_api_key: str | None = Header(default=None, alias=ADMIN_KEY_HEADER),
+) -> AdminTokenResponse:
+    """
+    Return a signed HS256 JWT (`access_token`) for later admin calls.
+
+    * If env `ADMIN_API_KEY` is **set**: send that key as `X-Admin-Api-Key`
+      or JSON `admin_key` to mint.
+    * If env `ADMIN_API_KEY` is **empty**: this call is open (local/UI bootstrap).
+      Set `ADMIN_API_KEY` (and optionally `ADMIN_JWT_SECRET`) in Azure.
+
+    Then call templates / master-data with
+    `Authorization: Bearer <access_token>` or `X-Admin-Api-Key: <access_token>`.
+    Default lifetime: `ADMIN_TOKEN_TTL_SECONDS` (8 hours).
+    """
+    _require_mint_key(cfg, header_key=x_admin_api_key, body_key=body.admin_key)
+    return _token_response(cfg, body.ttl_seconds)
+
+
+@router.get(
+    "/token",
+    response_model=AdminTokenResponse,
+    summary="Mint a PyJWT admin access token (GET alias)",
+)
+def issue_admin_token_get(
+    cfg: SettingsDep,
+    x_admin_api_key: str | None = Header(default=None, alias=ADMIN_KEY_HEADER),
+    ttl_seconds: int | None = Query(default=None, ge=60, le=604800),
+) -> AdminTokenResponse:
+    """Same as POST `/token`. Convenient for Swagger Try it out."""
+    _require_mint_key(cfg, header_key=x_admin_api_key, body_key=None)
+    return _token_response(cfg, ttl_seconds)
+
+
+@router.post(
     "/templates",
     response_model=TemplateRecordResponse,
     status_code=201,
@@ -161,7 +274,8 @@ async def upload_template(
     """
     Store a Word `.docx` at `{folder_name}/{template_name}`. Re-upload replaces.
 
-    Header **`X-Admin-Api-Key`** must equal env `ADMIN_API_KEY`. Multipart: `file`,
+    Header **`X-Admin-Api-Key`** or **`Authorization: Bearer`** must be env
+    `ADMIN_API_KEY` **or** a JWT from `POST /api/v1/admin/token`. Multipart: `file`,
     optional `folder_name` (default `ipp_pricing_default_template`), `template_name`,
     `uploaded_by`. On Azure Blob: `templates/ipp_pricing_default_template/{name}.docx`
     (prefix from `AZURE_BLOB_TEMPLATE_PREFIX`).

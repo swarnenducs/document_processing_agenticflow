@@ -71,10 +71,17 @@ class VoiceConfirmRequest(BaseModel):
     transcript: str | None = None
 
 
+async def _catalog_or_503() -> dict[str, Any]:
+    try:
+        return await maf_client.catalog_tools()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"central agent unavailable: {exc}") from exc
+
+
 @router.get("/health", summary="MAF catalogue ping")
 async def agents_health() -> dict[str, Any]:
     """Whether MAF answered and which MCP servers it registered. Requires MAF up."""
-    catalog = await maf_client.catalog_tools()
+    catalog = await _catalog_or_503()
     return {
         "ok": bool(catalog.get("ok")),
         "orchestrator": "maf",
@@ -85,16 +92,13 @@ async def agents_health() -> dict[str, Any]:
 @router.get("/tools", summary="List all MCP tools on MAF")
 async def all_mcp_tools() -> dict[str, Any]:
     """Tool names from every MCP registered on the central agent."""
-    try:
-        return await maf_client.catalog_tools()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=503, detail=f"central agent unavailable: {exc}") from exc
+    return await _catalog_or_503()
 
 
 @router.get("/document/tools", summary="Document MCP tools only")
 async def document_tools() -> dict[str, Any]:
     """Subset of `/tools` for the document / contract-autocreation MCP."""
-    catalog = await maf_client.catalog_tools()
+    catalog = await _catalog_or_503()
     block = catalog.get("contract_autocreation_mcp") or catalog.get("document_process_mcp") or {}
     if not block:
         raise HTTPException(status_code=503, detail="document MCP not registered on MAF")
@@ -124,7 +128,7 @@ async def document_generate_via_mcp(body: DocumentGenerateRequest) -> dict[str, 
 @router.get("/voice/tools", summary="Voice MCP tools only")
 async def voice_tools() -> dict[str, Any]:
     """Subset of `/tools` for voice_process_mcp."""
-    catalog = await maf_client.catalog_tools()
+    catalog = await _catalog_or_503()
     block = catalog.get("voice_process_mcp") or {}
     if not block:
         raise HTTPException(status_code=503, detail="voice MCP not registered on MAF")

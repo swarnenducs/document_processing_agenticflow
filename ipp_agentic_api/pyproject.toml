@@ -30,6 +30,7 @@ dependencies = [
     "azure-identity>=1.19.0",
     "azure-keyvault-secrets>=4.9.0",
     "fpdf2>=2.8.0",
+    "PyJWT>=2.8.0",
 ]
 
 [project.scripts]

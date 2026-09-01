@@ -1,0 +1,478 @@
+IPP Agentic API — UI integration guide
+======================================
+Audience: Angular (or any browser UI) talking to ipp_agentic_api.
+Checked: 2026-09-01 against the FastAPI app (OpenAPI + TestClient + pytest).
+Live Swagger: http://127.0.0.1:8000/docs
+OpenAPI JSON: http://127.0.0.1:8000/openapi.json
+ReDoc:        http://127.0.0.1:8000/redoc
+
+This is the only HTTP contract the UI should use. Do not call document MCP
+(:8001) or voice MCP (:8002) from the browser. Those are MCP, not REST.
+
+
+1. Base URL
+-----------
+Local:   http://127.0.0.1:8000
+Azure:   https://<api-app>.azurewebsites.net   (set API_BASE_URL on the API)
+
+Most routes live under /api/v1.
+Chat is the exception: POST /api/ask  (no "v1").
+
+
+2. CORS (required for Angular)
+------------------------------
+Default allowed origins (when CORS_ORIGINS is unset):
+  http://localhost:4200
+  http://127.0.0.1:4200
+  http://localhost:7860
+  http://127.0.0.1:7860
+
+On Azure, CORS_ORIGINS must include the Angular origin, comma-separated:
+  https://<angular-app>.azurewebsites.net
+
+Do not send CORS_ORIGINS=* if the UI sends credentials/cookies.
+WebSockets do not use CORS. REST does.
+
+
+3. Headers (all optional except admin)
+--------------------------------------
+X-Request-ID  or  X-Correlation-ID   Correlation xid. Generated if omitted. Echoed.
+X-Session-Id                         Reuse a session; API may mint one and echo it.
+X-User-Id                            Optional identity stored with the session.
+X-User-Email                         Optional identity stored with the session.
+X-Admin-Api-Key                      Admin: static ADMIN_API_KEY, or PyJWT from POST /api/v1/admin/token
+Authorization: Bearer <jwt>          Same as X-Admin-Api-Key for admin routes (preferred for JWT)
+
+Response also echoes X-Request-ID, X-Correlation-ID, and X-Session-Id when present.
+
+
+4. Which routes the UI should use
+---------------------------------
+USE THESE from the Angular app:
+
+  Health / banners     GET  /api/v1/health
+  Library templates    GET  /api/v1/documents/templates
+  Create Word job      POST /api/v1/documents/jobs          (multipart, not JSON)
+  List jobs            GET  /api/v1/documents/jobs
+  Job status           GET  /api/v1/documents/jobs/{job_id}
+  Long-poll status     GET  /api/v1/documents/jobs/{job_id}?wait=true&timeout=180
+  Live progress        WS   /api/v1/documents/jobs/{job_id}/ws
+  Download Word        GET  /api/v1/documents/jobs/{job_id}/download
+  Accuracy JSON        GET  /api/v1/documents/jobs/{job_id}/accuracy
+  Accuracy PDF         GET  /api/v1/documents/jobs/{job_id}/accuracy.pdf
+  Delete job           DELETE /api/v1/documents/jobs/{job_id}
+
+  Speech only          POST /api/v1/audio/transcribe        (multipart audio)
+  Saved transcript     GET  /api/v1/audio/transcriptions/{id}
+
+  Start voice HITL     POST /api/v1/voice/contract          (JSON)
+  Confirm voice HITL   POST /api/v1/voice/contract/confirm  (JSON)
+  Audio then voice     POST /api/v1/voice/contract/from-audio  (multipart)
+  List contracts       GET  /api/v1/voice/contracts
+  One contract         GET  /api/v1/voice/contracts/{contract_id}
+  Download contract    GET  /api/v1/voice/contracts/{contract_id}/download?format=docx|txt
+
+  Chat                 POST /api/ask                        (JSON Prompt + Persona)
+  Chat health          GET  /api/ask/health
+
+  Admin JWT (first)    POST /api/v1/admin/token             (or GET /api/v1/admin/token)
+  Admin templates      /api/v1/admin/templates*             (Bearer JWT or ADMIN_API_KEY)
+  Admin master-data    /api/v1/admin/master-data*           (same)
+
+DO NOT use from the browser (server-side / ops only):
+  POST /api/v1/agents/document/generate   needs file paths already on the MCP host
+  GET  /api/v1/agents/*                   MAF tool catalogue; not for file upload
+  GET  /api/v1/traces/{xid}               operator traces
+
+
+5. Health  GET /api/v1/health
+-----------------------------
+Always HTTP 200. Use JSON "status":
+  "ok"        mapper LLM key is configured
+  "degraded"  mapper LLM not configured (UI can still load; generation may fail)
+
+Useful banner flags (booleans / nullable):
+  mapper_available, validator_available, speech_available
+  document_mcp_available, voice_mcp_available, maf_available
+  azure_sql_available     null when using SQLite; true/false when Azure SQL is configured
+  azure_blob_available    null when local files; true/false when Blob is configured
+  storage_backend         "local" | "azure_blob"
+  azure_sql_server / azure_sql_database   only when Azure SQL is active (no password)
+
+
+6. Document generation (main UI flow)
+-------------------------------------
+Content-Type: multipart/form-data. NEVER application/json for this call.
+
+Step A — create
+  POST /api/v1/documents/jobs
+  Form fields:
+    data            REQUIRED. JSON object as a STRING, not a file.
+                    Example: {"party":"AVC","invoice_number":"INV-1"}
+    template        .docx file  OR
+    template_name   name already in the library
+    folder_name     optional, default ipp_pricing_default_template
+    skip_validation optional bool
+    max_retries     optional 0-3
+    validation_threshold  optional 0-1
+    optimized_flow  optional bool
+    session_id, user_id, user_email  optional
+
+  Send EITHER template upload OR template_name, not both.
+  If neither is sent: HTTP 400.
+
+  HTTP 202 body:
+    job_id, xid, session_id, status ("pending")
+    status_url     e.g. /api/v1/documents/jobs/{job_id}
+    download_url   e.g. /api/v1/documents/jobs/{job_id}/download
+    ws_url         PATH ONLY, e.g. /api/v1/documents/jobs/{job_id}/ws
+                   Build:  ws://<api-host> + ws_url
+                   On HTTPS API: wss://<api-host> + ws_url
+
+Angular example (fetch):
+
+  const form = new FormData();
+  form.append("data", JSON.stringify(payloadObject));
+  form.append("template", file, file.name);           // or template_name instead
+  // form.append("template_name", "ipp_pricing.docx");
+  // form.append("folder_name", "ipp_pricing_default_template");
+
+  const res = await fetch(`${API}/api/v1/documents/jobs`, {
+    method: "POST",
+    headers: { "X-Session-Id": sessionId || "" },
+    body: form,
+  });
+  // res.status === 202
+  const accepted = await res.json();
+
+Step B — wait until finished (pick ONE)
+
+  Option 1 — long-poll (simplest)
+    GET /api/v1/documents/jobs/{job_id}?wait=true&timeout=180
+    Holds until status is completed|failed or timeout (1-600 seconds, default 180).
+    Then read status from the JSON.
+
+  Option 2 — WebSocket (recommended for progress UI)
+    Connect to ws://<host>/api/v1/documents/jobs/{job_id}/ws
+    Client RECEIVES JSON only. Do not send messages.
+    Each event:
+      {
+        "job_id": "...",
+        "stage": "fields_mapped",
+        "message": "Fields mapped from JSON",
+        "progress": 0.55,
+        "terminal": false
+      }
+    Close when terminal === true, or stage is "completed" / "failed".
+    If the socket drops, fall back to long-poll.
+    Swagger Try-it-out cannot open WebSockets.
+
+  Job status values: pending | processing | completed | failed
+
+Step C — download
+  Only when status === "completed":
+    GET /api/v1/documents/jobs/{job_id}/download
+    Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  If still running: HTTP 409
+  If missing: HTTP 404
+
+  Accuracy:
+    GET .../accuracy        JSON scores
+    GET .../accuracy.pdf    PDF download
+    Also on job status: accuracy_pdf_url, scores_pct, elapsed, elapsed_ms
+
+List library templates (no admin key):
+  GET /api/v1/documents/templates
+  Optional ?folder_name=ipp_pricing_default_template
+  Returns { folder_name, count, storage_backend, templates: [{template_name, location, ...}] }
+
+List jobs:
+  GET /api/v1/documents/jobs?limit=50
+  Newest first. download_url is set only when the file is ready.
+
+Delete:
+  DELETE /api/v1/documents/jobs/{job_id}
+  HTTP 204 empty body. Currently idempotent (204 even if the id was already gone).
+
+
+7. Voice contract (HITL, REST only — no WebSocket)
+--------------------------------------------------
+Start from already-transcribed / typed text:
+
+  POST /api/v1/voice/contract
+  Content-Type: application/json
+  {
+    "transcript": "create contract with legal entity AVC contract reference CR-1001",
+    "auto_create": false,
+    "session_id": "...",
+    "user_id": "...",
+    "user_email": "..."
+  }
+
+  Typical response when confirmation is needed:
+    ok: false
+    status: "needs_confirmation"
+    thread_id: "<keep this>"
+    legal_entity: { code, legalName, ... }
+    contract_reference_number: "CR-1001"
+    message: "..."
+
+Confirm:
+
+  POST /api/v1/voice/contract/confirm
+  {
+    "legal_entity": "AVC",
+    "contract_reference_number": "CR-1001",
+    "thread_id": "<from start>",
+    "user_text": "yes"
+  }
+
+  Completed response includes contract_id, contract_text, contract_file, etc.
+
+From microphone / uploaded audio (transcribe then start):
+  POST /api/v1/voice/contract/from-audio
+  multipart: audio file + optional language, provider, auto_create, session_id
+  Confirm still uses POST /voice/contract/confirm.
+
+Speech only (no contract):
+  POST /api/v1/audio/transcribe
+  multipart field "audio": mp3, wav, m4a, webm, ogg, flac, mp4, mpeg, mpga
+  Returns { transcription_id, text, provider, model, language }
+
+List / download:
+  GET /api/v1/voice/contracts
+  GET /api/v1/voice/contracts/{contract_id}
+  GET /api/v1/voice/contracts/{contract_id}/download?format=docx
+  GET /api/v1/voice/contracts/{contract_id}/download?format=txt
+
+Voice routes return HTTP 502 when MAF / voice MCP is down.
+
+
+8. Chat  POST /api/ask
+----------------------
+JSON body (aliases accepted):
+  Prompt   or prompt or message     REQUIRED
+  Persona  or persona or role       REQUIRED (persona definition text)
+  instructions                      optional
+  session_id, user_id, user_email   optional
+
+Example:
+  {
+    "Prompt": "What is the status of job ...?",
+    "Persona": "You are a document operations assistant. ..."
+  }
+
+Needs MAF at CENTRAL_AGENT_END_POINT (local default http://127.0.0.1:8003).
+HTTP 503 if MAF is unreachable.
+
+Do NOT use /api/ask to create Word jobs. Use POST /api/v1/documents/jobs.
+
+Helpers:
+  GET /api/ask/health     MAF chat proxy ping (503 if MAF down)
+  GET /api/ask/prompts    validator/orchestrator paths from MAF
+
+
+9. Admin (template library + master data)
+-----------------------------------------
+Step 0 — mint a PyJWT (do this first):
+
+  POST /api/v1/admin/token
+  Content-Type: application/json
+  Body: {}     or  { "ttl_seconds": 28800, "admin_key": "<only if ADMIN_API_KEY is set>" }
+
+  GET  /api/v1/admin/token?ttl_seconds=28800
+  (same result; add X-Admin-Api-Key if the server has ADMIN_API_KEY set)
+
+  Response:
+    {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "token_type": "Bearer",
+      "expires_in": 28800,
+      "expires_at": "2026-09-01T12:00:00Z"
+    }
+
+  Store access_token in memory (not localStorage if you can avoid it).
+  HS256, iss=ipp_agentic_api, aud=ipp-admin, sub=admin, typ=admin_access.
+
+  NO CERTIFICATE. This is HMAC-SHA256 with a shared secret, not RS256.
+  The UI does not install a .pem / .crt / CA. The API signs and verifies
+  with the same string:
+    1. ADMIN_JWT_SECRET if set
+    2. else ADMIN_API_KEY
+    3. else a random secret created inside that API process (local only;
+       tokens die on API restart)
+  Azure App Service HTTPS is a separate TLS cert for the website. It is
+  not used to sign these JWTs. Do not switch to RS256 unless you want
+  a private key + public cert later.
+
+Step 1 — send the token on every admin call:
+
+  Authorization: Bearer <access_token>
+  or
+  X-Admin-Api-Key: <access_token>
+
+If env ADMIN_API_KEY is set on the API:
+  - You may keep sending that static key as X-Admin-Api-Key (old behaviour).
+  - Minting a JWT requires that same key (header or JSON admin_key).
+If ADMIN_API_KEY is empty (local default):
+  - POST /token is open so the UI can bootstrap.
+  - Other admin routes return 401 until you send a valid JWT.
+  - On Azure, set ADMIN_API_KEY (Key Vault) so strangers cannot mint tokens.
+
+Angular example:
+
+  const minted = await fetch(`${API}/api/v1/admin/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const { access_token } = await minted.json();
+  sessionStorage.setItem("admin_jwt", access_token);
+
+  const res = await fetch(`${API}/api/v1/admin/templates`, {
+    headers: { Authorization: `Bearer ${sessionStorage.getItem("admin_jwt")}` },
+  });
+
+Templates (Word .docx only):
+  POST   /api/v1/admin/templates                         upload (form: file, folder_name, template_name)
+  POST   /api/v1/admin/templates/{folder_name}           same, folder in URL
+  GET    /api/v1/admin/templates
+  GET    /api/v1/admin/templates/folders
+  GET    /api/v1/admin/templates/{folder_name}
+  GET    /api/v1/admin/templates/{folder_name}/{name}
+  GET    /api/v1/admin/templates/{folder_name}/{name}/download
+  DELETE /api/v1/admin/templates/{folder_name}/{name}
+
+Default folder: ipp_pricing_default_template
+After upload, jobs can send template_name instead of re-uploading.
+
+Master-data blocks (legal / sales notice text for placeholders):
+  POST   /api/v1/admin/master-data
+         JSON: { "placeholder_key": "Legal_Department_Master_Data", "content": "...", "category": "legal", "active": true }
+  GET    /api/v1/admin/master-data
+  GET    /api/v1/admin/master-data/{placeholder_key}
+  PUT    /api/v1/admin/master-data/{placeholder_key}
+  DELETE /api/v1/admin/master-data/{placeholder_key}
+
+The public job UI can list templates without the admin key via
+GET /api/v1/documents/templates. Upload still needs admin.
+
+
+10. Full route catalogue
+------------------------
+METHOD  PATH                                                      UI?
+GET     /                                                         no (root ping {ok, health, docs})
+GET     /docs  /redoc  /openapi.json                              operators
+
+GET     /api/v1/health                                            YES
+
+GET     /api/v1/documents/templates                               YES
+POST    /api/v1/documents/jobs                                    YES  multipart 202
+GET     /api/v1/documents/jobs                                    YES
+GET     /api/v1/documents/jobs/{job_id}                           YES  ?wait=true&timeout=
+WS      /api/v1/documents/jobs/{job_id}/ws                        YES  receive-only JSON
+GET     /api/v1/documents/jobs/{job_id}/download                  YES  .docx
+GET     /api/v1/documents/jobs/{job_id}/accuracy                  YES
+GET     /api/v1/documents/jobs/{job_id}/accuracy.pdf              YES
+DELETE  /api/v1/documents/jobs/{job_id}                           YES  204
+
+GET     /api/v1/traces/{xid}                                      ops
+
+POST    /api/v1/audio/transcribe                                  YES  multipart
+GET     /api/v1/audio/transcriptions/{transcription_id}           YES
+
+POST    /api/v1/voice/contract                                    YES  JSON
+POST    /api/v1/voice/contract/confirm                            YES  JSON
+POST    /api/v1/voice/contract/from-audio                         YES  multipart
+GET     /api/v1/voice/contracts                                   YES
+GET     /api/v1/voice/contracts/{contract_id}                     YES
+GET     /api/v1/voice/contracts/{contract_id}/download            YES
+
+GET     /api/v1/agents/health                                     no (MAF catalogue)
+GET     /api/v1/agents/tools                                      no
+GET     /api/v1/agents/document/tools                             no
+POST    /api/v1/agents/document/generate                          no (paths, not upload)
+GET     /api/v1/agents/voice/tools                                no
+POST    /api/v1/agents/voice/contract                             no (raw MCP, no session)
+POST    /api/v1/agents/voice/contract/confirm                     no
+
+POST    /api/v1/admin/token                                       YES  mint PyJWT (no admin header if ADMIN_API_KEY empty)
+GET     /api/v1/admin/token                                       YES  same as POST
+POST    /api/v1/admin/templates                                   admin UI
+POST    /api/v1/admin/templates/{folder_name}                     admin UI
+GET     /api/v1/admin/templates                                   admin UI
+GET     /api/v1/admin/templates/folders                           admin UI
+GET     /api/v1/admin/templates/{folder_name}                     admin UI
+GET     /api/v1/admin/templates/{folder_name}/{template_name}     admin UI
+GET     /api/v1/admin/templates/{folder_name}/{name}/download     admin UI
+DELETE  /api/v1/admin/templates/{folder_name}/{template_name}     admin UI
+POST    /api/v1/admin/master-data                                 admin UI
+GET     /api/v1/admin/master-data                                 admin UI
+GET     /api/v1/admin/master-data/{placeholder_key}               admin UI
+PUT     /api/v1/admin/master-data/{placeholder_key}               admin UI
+DELETE  /api/v1/admin/master-data/{placeholder_key}               admin UI
+
+POST    /api/ask                                                  YES chat
+GET     /api/ask/prompts                                          optional
+GET     /api/ask/health                                           YES banner
+
+
+11. HTTP status cheat sheet
+---------------------------
+200   OK
+201   Admin create template / master-data
+202   Document job accepted
+204   Job deleted (empty body)
+400   Bad form/JSON (invalid data, both template + template_name, missing template)
+401   Admin JWT / key missing, expired, or wrong
+404   Unknown job / template / transcription / accuracy
+409   Download called before job completed
+410   Stored template file gone from disk/blob
+413   Upload larger than MAX_UPLOAD_MB (default 25)
+422   Validation error (missing required multipart/JSON field)
+502   MAF / MCP / transcription backend failed
+503   MAF down (admin is 401 now, not 503, if the JWT/key is missing)
+
+
+12. Environment the UI must set
+-------------------------------
+API_BASE_URL     http://127.0.0.1:8000   (or Azure HTTPS)
+CORS_ORIGINS     on the API, not the UI, must include the Angular origin
+
+The UI does not need Azure SQL, Blob, LLM keys, or any JWT certificate.
+Those stay on the API. Admin JWT is HS256 (shared secret only).
+
+
+13. Quick curl checks
+---------------------
+curl -s http://127.0.0.1:8000/api/v1/health
+curl -s http://127.0.0.1:8000/api/v1/documents/templates
+curl -s http://127.0.0.1:8000/api/v1/documents/jobs
+
+# mint admin JWT (no cert). If ADMIN_API_KEY is set, add -H "X-Admin-Api-Key: $ADMIN_API_KEY"
+TOKEN=$(curl -sS -X POST http://127.0.0.1:8000/api/v1/admin/token \
+  -H 'Content-Type: application/json' -d '{}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+curl -s http://127.0.0.1:8000/api/v1/admin/templates \
+  -H "Authorization: Bearer $TOKEN"
+
+# create job (library template)
+curl -sS -X POST http://127.0.0.1:8000/api/v1/documents/jobs \
+  -F 'data={"party":"AVC"}' \
+  -F 'template_name=your-template.docx' \
+  -F 'folder_name=ipp_pricing_default_template'
+
+# create job (upload)
+curl -sS -X POST http://127.0.0.1:8000/api/v1/documents/jobs \
+  -F 'data={"party":"AVC"}' \
+  -F 'template=@/path/to/template.docx'
+
+# wait then download
+curl -s "http://127.0.0.1:8000/api/v1/documents/jobs/{job_id}?wait=true&timeout=180"
+curl -OJ "http://127.0.0.1:8000/api/v1/documents/jobs/{job_id}/download"
+
+
+14. Postman
+-----------
+ipp_agentic_api/postman/IPP.postman_collection.json
+ipp_agentic_api/postman/local.postman_environment.json
+Do not put secrets in the collection.

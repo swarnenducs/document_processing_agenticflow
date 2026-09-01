@@ -204,7 +204,9 @@ Used by whichever process actually calls that provider. UI never needs these.
 |---|---|---|---|
 | `API_HOST` | `0.0.0.0` | ip_api | Bind address |
 | `API_PORT` | `8000` | ip_api | Bind port |
-| `ADMIN_API_KEY` | empty (admin off) | ip_api | `X-Admin-Api-Key` for `/api/v1/admin/templates` and `/api/v1/admin/master-data` |
+| `ADMIN_API_KEY` | empty | ip_api | Optional static admin key. When set, required to mint JWT and still accepted as `X-Admin-Api-Key`. When empty, UI calls `POST /api/v1/admin/token` first. |
+| `ADMIN_JWT_SECRET` | unset (falls back to `ADMIN_API_KEY`, then process-local) | ip_api | HS256 signing secret. **No certificate.** |
+| `ADMIN_TOKEN_TTL_SECONDS` | `28800` (8 hours) | ip_api | Admin JWT lifetime |
 | `CORS_ORIGINS` | Angular `:4200` + Gradio `:7860` | ip_api | Browser REST (Angular). Comma-separated. WebSockets do not use CORS. |
 | `CENTRAL_AGENT_END_POINT` | `http://127.0.0.1:8003` | ip_api | API → MAF base URL for `/api/ask` and `POST {base}/invoke` (no `/invoke` suffix). Wins over `MAF_BASE_URL` / `MAF_URL`. |
 | `MAF_BASE_URL` | `http://127.0.0.1:8003` | ip_api | Alias of `CENTRAL_AGENT_END_POINT` |
