@@ -25,6 +25,11 @@
     "slotSetting": false
   },
   {
+    "name": "MAF_TEMPERATURE",
+    "value": "0",
+    "slotSetting": false
+  },
+  {
     "name": "MAF_MCP_TIMEOUT_SECONDS",
     "value": "300",
     "slotSetting": false

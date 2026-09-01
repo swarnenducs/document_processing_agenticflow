@@ -72,6 +72,14 @@ def synthesize_markers_if_needed(
             "library_match": None,
         }
 
+    from document_processing_mcp.core.settings import settings
+
+    if not settings().document_marker_synthesis_enabled:
+        raise RuntimeError(
+            "Template has no placeholders and DOCUMENT_MARKER_SYNTHESIS_ENABLED is off. "
+            "Use a tagged Word file or set DOCUMENT_MARKER_SYNTHESIS_ENABLED=true."
+        )
+
     from document_processing_mcp.services.llm_factory import MapperLLM, is_mapper_available
     from document_processing_mcp.services.prompts.marker_synthesizer_prompt import (
         build_marker_synthesizer_chain,

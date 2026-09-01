@@ -258,6 +258,8 @@ Azure Whisper: deploy model ID `whisper` in Foundry / Azure OpenAI (Audio API, 2
 | `DOCUMENT_MAX_RETRIES` | `1` | document-mcp | Env default retries when optimised flow is **off** and the request omits `max_retries` |
 | `DOCUMENT_VALIDATION_THRESHOLD` | `0.7` | document-mcp | Env default judge bar when optimised flow is off |
 | `DOCUMENT_LLM_OPTIMIZATION_ENABLED` | `false` | document-mcp | Turn on JSON mapper cascade for all jobs unless the request sets `optimized_flow=false` |
+| `DOCUMENT_MARKER_SYNTHESIS_ENABLED` | `true` | document-mcp | Unmarked Word files: LLM stamps `<field>` tokens. `false` = tagged templates only (job fails if no placeholders). |
+| `DOCUMENT_NON_TAG_ENABLED` | alias | document-mcp | Alias for `DOCUMENT_MARKER_SYNTHESIS_ENABLED` |
 | `DOCUMENT_LLM_OPTIMIZATION_CONFIG` | `document-processing-mcp/config/llm_optimization.json` | document-mcp | Path to the optimisation JSON (read only when the flow is on) |
 | `DOCUMENT_LLM_ROUTING_CONFIG` | alias | document-mcp | Alias for `DOCUMENT_LLM_OPTIMIZATION_CONFIG` |
 | `AGENT_MODEL_ID` / `AGENT_PROVIDER` / `AGENT_MODEL` / `AGENT_MAX_TOKENS` | unset | document-mcp | Optional extra agent role (not the default pipeline) |
@@ -298,6 +300,8 @@ JSON payload `system_instruction` (not an env var): `legal_notice_block` / `sale
 | `MAF_MODEL_ID` | `openai:gpt-5-mini` | MAF | Chat model for `POST /ask` only (jobs use `/invoke`, no chat model) |
 | `MAF_PROVIDER` | `openai` | MAF | Split provider |
 | `MAF_MODEL` | `gpt-5-mini` | MAF | Split model name |
+| `MAF_TEMPERATURE` | `0` | MAF | `/ask` + persona validator sampling. Falls back to `LLM_TEMPERATURE`. Foundry v1 omits `0` (GPT-5 often rejects it). |
+| `MAF_MAX_TOKENS` | unset | MAF | Optional completion cap. Falls back to `LLM_MAX_TOKENS`. |
 | `MAF_API_KEY` | unset | MAF | Override key for the orchestrator |
 | `MAF_LLM_BASE_URL` | unset | MAF | Override base URL |
 | `MAF_API_VERSION` | unset | MAF | Azure API version for MAF |
@@ -335,6 +339,7 @@ JSON payload `system_instruction` (not an env var): `legal_notice_block` / `sale
 | Log only mapper / job hops | `DEBUG_FLOW=hops` + `DEBUG_FLOW_POINTS=…` | same |
 | Pause in the IDE at hops | `DEBUG_FLOW_BREAK=1` | same + F5 |
 | Use the cheaper mapper cascade | `DOCUMENT_LLM_OPTIMIZATION_ENABLED=true` | ip_api **and** document-mcp (or root `.env`) |
+| Require tagged Word templates only | `DOCUMENT_MARKER_SYNTHESIS_ENABLED=false` | document-mcp (or root `.env`) |
 | Point at a custom optimisation JSON | `DOCUMENT_LLM_OPTIMIZATION_CONFIG` | document-mcp |
 | Change default judge retries | `DOCUMENT_MAX_RETRIES` | ip_api + document-mcp |
 | Talk to Azure SQL | `AZURE_SQL_*` (password via vault locally, Key Vault **reference** on Web Apps) | all SQL processes |

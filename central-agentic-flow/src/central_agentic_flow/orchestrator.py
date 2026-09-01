@@ -215,6 +215,44 @@ def resolve_maf_chat_client():
     return OpenAIChatClient(**kwargs)
 
 
+def maf_temperature() -> float:
+    """Sampling temperature for MAF ``/ask`` (default 0 = least random)."""
+    raw = _env("MAF_TEMPERATURE", "LLM_TEMPERATURE", default="0") or "0"
+    try:
+        return max(0.0, min(2.0, float(raw)))
+    except ValueError:
+        return 0.0
+
+
+def maf_max_tokens() -> int | None:
+    raw = _env("MAF_MAX_TOKENS", "LLM_MAX_TOKENS")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        return value if value > 0 else None
+    except ValueError:
+        return None
+
+
+def maf_default_chat_options() -> dict[str, Any]:
+    """Agent Framework ``ChatOptions`` for low-hallucination chat.
+
+    MAF does not use LangChain ``init_chat_model``; temperature goes on
+    ``Agent(..., default_options=...)``. Foundry v1 GPT-5 often rejects a
+    custom temperature, so ``0`` is omitted there (same as document-mcp).
+    """
+    options: dict[str, Any] = {}
+    temperature = maf_temperature()
+    foundry = _foundry_v1_base()
+    if not (foundry and temperature in (0, 0.0)):
+        options["temperature"] = temperature
+    max_tokens = maf_max_tokens()
+    if max_tokens is not None:
+        options["max_tokens"] = max_tokens
+    return options
+
+
 def maf_request_timeout() -> int:
     raw = _env("MAF_MCP_TIMEOUT_SECONDS", default="300") or "300"
     try:
@@ -313,6 +351,7 @@ async def ask_maf(
                 name="DocumentOrchestrator",
                 instructions=system,
                 tools=tools,
+                default_options=maf_default_chat_options(),
             )
         )
         response = await agent.run(formatted_user)

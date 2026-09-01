@@ -147,6 +147,7 @@ If mapper and validator use **different** models, split the table: extraction + 
 | `DOCUMENT_MAX_RETRIES` / API `max_retries` (default 1, max 3) | Each retry repeats **mapper + document critic** |
 | `optimized_flow` / `DOCUMENT_LLM_OPTIMIZATION_ENABLED` | Optional cheaper mapper first; see [DOCUMENT_LLM_OPTIMIZATION.md](DOCUMENT_LLM_OPTIMIZATION.md) |
 | `skip_validation` / `skip_extraction_validation` | Drops one critic (and retry if document critic is skipped) |
+| `DOCUMENT_MARKER_SYNTHESIS_ENABLED` | `false` skips the extra mapper call that stamps tags onto unmarked Word files |
 | Template / JSON size | Mapper samples JSON arrays; payload is clipped to ~11 k characters |
 | Chat history on MAF / Foundry | Unbounded unless you truncate session context |
 | Missing API keys | Mapper/voice fall back to rules → **0 LLM tokens** (quality drops) |

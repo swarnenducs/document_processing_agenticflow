@@ -100,9 +100,15 @@ def extract_styles_node(state: DocumentProcessingState) -> DocumentProcessingSta
 
 
 def synthesize_markers_node(state: DocumentProcessingState) -> DocumentProcessingState:
-    """If the Word file has no <markers>, LLM proposes them; code stamps a marked copy."""
+    """If the Word file has no <markers>, LLM proposes them; code stamps a marked copy.
+
+    Off when ``DOCUMENT_MARKER_SYNTHESIS_ENABLED=false`` (alias
+    ``DOCUMENT_NON_TAG_ENABLED``). Tagged templates still continue.
+    """
+    from document_processing_mcp.core.settings import settings
     from document_processing_mcp.flow_debug import flow_breakpoint
     from document_processing_mcp.services.marker_synthesizer import synthesize_markers_if_needed
+    from document_processing_mcp.services.placeholders import template_has_markers
     from document_processing_mcp.services.style_extractor import extract_word_styles
 
     flow_breakpoint("synthesize_markers_node", status=state.get("status"))
@@ -114,6 +120,35 @@ def synthesize_markers_node(state: DocumentProcessingState) -> DocumentProcessin
     if extracted is None:
         errors.append("extracted template is required before marker synthesis")
         return {**state, "errors": errors, "status": "failed"}
+
+    if not settings().document_marker_synthesis_enabled:
+        has, keys = template_has_markers(
+            extracted, template_path=extracted.template_path
+        )
+        marker_detection = {
+            "had_markers": has,
+            "placeholder_keys": keys,
+            "reason": "marker_synthesis_disabled",
+            "library_match": None,
+        }
+        if not has:
+            errors.append(
+                "Template has no placeholders and DOCUMENT_MARKER_SYNTHESIS_ENABLED is off. "
+                "Use a tagged Word file (<field>, {{field}}, …) or set "
+                "DOCUMENT_MARKER_SYNTHESIS_ENABLED=true."
+            )
+            return {
+                **state,
+                "errors": errors,
+                "status": "failed",
+                "marker_detection": marker_detection,
+            }
+        return {
+            **state,
+            "marker_detection": marker_detection,
+            "status": "markers_ready",
+            "errors": errors,
+        }
 
     try:
         result = synthesize_markers_if_needed(

@@ -161,6 +161,7 @@ async def validate_user_prompt(
 ) -> dict[str, Any]:
     """Run the single validator LLM prompt. Does not execute the user prompt."""
     from agent_framework import Agent
+    from central_agentic_flow.orchestrator import maf_default_chat_options
 
     definition = (persona_definition or "").strip()
     if not definition:
@@ -178,6 +179,7 @@ async def validate_user_prompt(
         name="PersonaPromptValidator",
         instructions=system,
         tools=[],
+        default_options=maf_default_chat_options(),
     ) as agent:
         response = await agent.run(human)
     raw = getattr(response, "text", None) or str(response)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from docx import Document
 
 from document_processing_mcp.services.library_match import (
@@ -97,3 +98,72 @@ def test_marker_synthesizer_prompt_versioned() -> None:
     assert "snake_case" in payload["system"]
     assert "{document_text}" in payload["human"]
     assert "{reference_placeholders_json}" in payload["human"]
+
+
+def test_unmarked_template_fails_when_synthesis_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from document_processing_mcp.core.settings import reload_settings
+    from document_processing_mcp.nodes.pipeline import synthesize_markers_node
+
+    monkeypatch.setenv("DOCUMENT_MARKER_SYNTHESIS_ENABLED", "false")
+    reload_settings()
+    path = tmp_path / "plain.docx"
+    doc = Document()
+    doc.add_paragraph("Customer Name: Acme Corporation")
+    doc.save(path)
+    extracted = extract_word_styles(path)
+    result = synthesize_markers_node(
+        {
+            "extracted": extracted,
+            "json_data": {"customer": "Acme"},
+            "output_path": str(tmp_path / "out.docx"),
+            "status": "styles_extracted",
+            "errors": [],
+        }
+    )
+    assert result["status"] == "failed"
+    assert result["marker_detection"]["reason"] == "marker_synthesis_disabled"
+    assert any("DOCUMENT_MARKER_SYNTHESIS_ENABLED is off" in e for e in result["errors"])
+
+
+def test_tagged_template_skips_synthesis_when_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from document_processing_mcp.core.settings import reload_settings
+    from document_processing_mcp.nodes.pipeline import synthesize_markers_node
+
+    monkeypatch.setenv("DOCUMENT_NON_TAG_ENABLED", "false")
+    monkeypatch.delenv("DOCUMENT_MARKER_SYNTHESIS_ENABLED", raising=False)
+    reload_settings()
+    path = build_sample_template(tmp_path / "inv.docx")
+    extracted = extract_word_styles(path)
+    result = synthesize_markers_node(
+        {
+            "extracted": extracted,
+            "json_data": {"invoice_number": "INV-1"},
+            "output_path": str(tmp_path / "out.docx"),
+            "status": "styles_extracted",
+            "errors": [],
+        }
+    )
+    assert result["status"] == "markers_ready"
+    assert result["marker_detection"]["reason"] == "marker_synthesis_disabled"
+    assert result["marker_detection"]["had_markers"] is True
+
+
+def test_synthesize_markers_if_needed_respects_env(tmp_path: Path, monkeypatch) -> None:
+    from document_processing_mcp.core.settings import reload_settings
+    from document_processing_mcp.services.marker_synthesizer import (
+        synthesize_markers_if_needed,
+    )
+
+    monkeypatch.setenv("DOCUMENT_MARKER_SYNTHESIS_ENABLED", "false")
+    reload_settings()
+    path = tmp_path / "plain.docx"
+    doc = Document()
+    doc.add_paragraph("No tags here")
+    doc.save(path)
+    extracted = extract_word_styles(path)
+    with pytest.raises(RuntimeError, match="DOCUMENT_MARKER_SYNTHESIS_ENABLED is off"):
+        synthesize_markers_if_needed(extracted, {"x": 1})

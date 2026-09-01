@@ -155,6 +155,11 @@
     "slotSetting": false
   },
   {
+    "name": "DOCUMENT_MARKER_SYNTHESIS_ENABLED",
+    "value": "true",
+    "slotSetting": false
+  },
+  {
     "name": "VALIDATOR_MAX_TOKENS",
     "value": "1024",
     "slotSetting": false

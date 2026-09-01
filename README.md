@@ -283,6 +283,8 @@ The pipeline detects placeholder **syntax** (not hardcoded field names):
 - `«field»`
 - `<DATE>` / `<ACCOUNT NAME>` (angle brackets)
 
+If the Word file has **no** placeholders, the pipeline can LLM-stamp `<snake_case>` markers onto a copy. That path is optional: `DOCUMENT_MARKER_SYNTHESIS_ENABLED=false` (alias `DOCUMENT_NON_TAG_ENABLED`) requires a tagged template and fails otherwise. Default is on.
+
 **LLM #1 decides the meaning:** it reads the template text + table headers + your JSON and produces:
 
 1. Scalar mappings (placeholder → JSON path + value)

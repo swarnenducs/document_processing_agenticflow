@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from central_agentic_flow.orchestrator import load_maf_instructions
+from central_agentic_flow.orchestrator import load_maf_instructions, maf_default_chat_options
 
 _COMPONENT_ROOT = Path(__file__).resolve().parents[2]
 _REQUIRED_SETTINGS = (
@@ -81,11 +81,13 @@ async def run_foundry_server() -> None:
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=credential,
     )
+    chat_options = maf_default_chat_options()
+    chat_options["store"] = False
     agent = Agent(
         client=client,
         instructions=build_foundry_instructions(),
         tools=FoundryToolbox(credential) if toolbox_configured() else None,
-        default_options={"store": False},
+        default_options=chat_options,
     )
     server = ResponsesHostServer(agent)
     await server.run_async()

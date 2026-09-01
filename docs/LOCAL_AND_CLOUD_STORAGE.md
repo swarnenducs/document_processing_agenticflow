@@ -250,4 +250,5 @@ Storage-related keys:
 | `DOCUMENT_MAX_RETRIES` | `1` | Judge retry cap (0–3). API form `max_retries` overrides |
 | `DOCUMENT_VALIDATION_THRESHOLD` | `0.7` | Judge accuracy bar 0–1 (`DOCUMENT_ACCURACY_THRESHOLD` alias) |
 | `DOCUMENT_LLM_OPTIMIZATION_ENABLED` | `false` | Turn on mapper optimisation for all jobs unless the request sets `optimized_flow=false` |
+| `DOCUMENT_MARKER_SYNTHESIS_ENABLED` | `true` | Unmarked Word files: LLM stamps placeholders. `false` = tagged templates only |
 | `DOCUMENT_LLM_OPTIMIZATION_CONFIG` | `document-processing-mcp/config/llm_optimization.json` | JSON used only when optimisation is on |

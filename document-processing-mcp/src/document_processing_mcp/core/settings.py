@@ -113,6 +113,17 @@ class Settings(BaseSettings):
         ),
     )
     document_llm_optimization_config: Path = Field(default=Path("config/llm_optimization.json"))
+    document_marker_synthesis_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "DOCUMENT_MARKER_SYNTHESIS_ENABLED",
+            "DOCUMENT_NON_TAG_ENABLED",
+        ),
+        description=(
+            "When true, Word files with no placeholders get LLM-stamped <markers>. "
+            "When false, unmarked templates fail; tagged templates skip that step."
+        ),
+    )
 
     gradio_host: str = "127.0.0.1"
     gradio_port: int = 7860

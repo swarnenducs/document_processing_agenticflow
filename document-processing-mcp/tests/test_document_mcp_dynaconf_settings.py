@@ -26,6 +26,28 @@ def test_pydantic_settings_reads_env(monkeypatch, tmp_path: Path) -> None:
     assert cfg.uses_azure_sql is False
     assert cfg.file_storage_backend == "local"
     assert cfg.storage_base_path == (tmp_path / "storage").resolve()
+    assert cfg.document_marker_synthesis_enabled is True
+
+
+def test_marker_synthesis_env_off(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FILE_STORAGE_BACKEND", "local")
+    monkeypatch.setenv("IPP_FORCE_SQLITE", "1")
+    monkeypatch.setenv("DOCUMENT_MARKER_SYNTHESIS_ENABLED", "false")
+    cfg = reload_settings()
+    assert cfg.document_marker_synthesis_enabled is False
+
+
+def test_marker_synthesis_alias_non_tag(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("STORAGE_BASE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "app.db"))
+    monkeypatch.setenv("FILE_STORAGE_BACKEND", "local")
+    monkeypatch.setenv("IPP_FORCE_SQLITE", "1")
+    monkeypatch.delenv("DOCUMENT_MARKER_SYNTHESIS_ENABLED", raising=False)
+    monkeypatch.setenv("DOCUMENT_NON_TAG_ENABLED", "false")
+    cfg = reload_settings()
+    assert cfg.document_marker_synthesis_enabled is False
 
 
 def test_apply_dynaconf_returns_loader() -> None:

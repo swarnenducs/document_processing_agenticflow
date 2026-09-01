@@ -83,6 +83,47 @@ def test_resolve_maf_chat_client_missing_key(monkeypatch):
         resolve_maf_chat_client()
 
 
+def test_maf_default_chat_options_temperature_zero(monkeypatch):
+    monkeypatch.setenv("MAF_TEMPERATURE", "0")
+    monkeypatch.delenv("LLM_TEMPERATURE", raising=False)
+    monkeypatch.delenv("MAF_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("LLM_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("MAF_LLM_BASE_URL", raising=False)
+
+    from central_agentic_flow.orchestrator import maf_default_chat_options
+
+    assert maf_default_chat_options() == {"temperature": 0.0}
+
+
+def test_maf_default_chat_options_omits_zero_on_foundry(monkeypatch):
+    monkeypatch.setenv("MAF_TEMPERATURE", "0")
+    monkeypatch.setenv(
+        "AZURE_OPENAI_ENDPOINT",
+        "https://demo.services.ai.azure.com/openai/v1/responses",
+    )
+    monkeypatch.delenv("MAF_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("LLM_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("MAF_LLM_BASE_URL", raising=False)
+
+    from central_agentic_flow.orchestrator import maf_default_chat_options
+
+    assert "temperature" not in maf_default_chat_options()
+
+
+def test_maf_default_chat_options_max_tokens(monkeypatch):
+    monkeypatch.setenv("MAF_TEMPERATURE", "0.2")
+    monkeypatch.setenv("MAF_MAX_TOKENS", "1024")
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("MAF_LLM_BASE_URL", raising=False)
+
+    from central_agentic_flow.orchestrator import maf_default_chat_options
+
+    assert maf_default_chat_options() == {"temperature": 0.2, "max_tokens": 1024}
+
+
 def test_mcp_urls_defaults(monkeypatch):
     monkeypatch.delenv("TEMPLATE_PROCESSING_END_POINT", raising=False)
     monkeypatch.delenv("DOCUMENT_MCP_URL", raising=False)
